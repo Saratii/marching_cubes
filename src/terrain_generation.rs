@@ -114,20 +114,12 @@ impl ChunkMap {
     }
 }
 
-fn create_simple_terrain() -> GeneratorWrapper<SafeNode> {
-    (opensimplex2().fbm(0.65, 0.5, 4, 2.5).domain_scale(0.66)
-        + position_output([0.0, 3.0, 0.0, 0.0], [0.0; 4]))
-    .domain_warp_gradient(0.2, 2.0)
-    .domain_warp_progressive(0.7, 0.5, 2, 2.5)
-    .build()
-}
-
 fn generate_height_map(
+    fbm: &Fbm<Simplex>,
     x_start: f32,
     z_start: f32,
     x_size: usize,
     z_size: usize,
-    fbm: &Fbm<Simplex>,
 ) -> Vec<f32> {
     let mut height_map = Vec::with_capacity(x_size * z_size);
     for z in 0..z_size {
@@ -149,11 +141,11 @@ pub fn generate_densities(chunk_coord: &(i32, i32, i32), fbm: &Fbm<Simplex>) -> 
         (chunk_coord.2 as f32 - 0.5) * CHUNK_SIZE,
     );
     let height_map = generate_height_map(
+        fbm,
         start_pos.x,
         start_pos.z,
         VOXELS_PER_DIM,
         VOXELS_PER_DIM,
-        fbm,
     );
     let mut densities = Vec::with_capacity(VOXELS_PER_CHUNK);
     for z in 0..VOXELS_PER_DIM {
