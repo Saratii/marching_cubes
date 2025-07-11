@@ -7,7 +7,6 @@ edition = "2024"
 bevy = "0.16.1"
 iyes_perf_ui = "0.5.0"
 bevy_flycam = { git = "https://github.com/kristoff3r/bevy_flycam.git" }
-noise = "0.9.0"
 rand = "0.9.1"
 criterion = "0.6.0"
 fastnoise2 = "0.3.1"
