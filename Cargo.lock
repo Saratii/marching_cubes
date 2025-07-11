@@ -1624,6 +1624,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b94f61472cee1439c0b966b47e3aca9ae07e45d070759512cd390ea2bebc6675"
 
 [[package]]
+name = "cmake"
+version = "0.1.54"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7caa3f9de89ddbe2c607f4101924c5abec803763ae9534e4f4d7d8f84aa81f0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "codespan-reporting"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2092,6 +2101,26 @@ checksum = "8be9f3dfaaffdae2972880079a491a1a8bb7cbed0b8dd7a347f668b4150a3b93"
 dependencies = [
  "event-listener",
  "pin-project-lite",
+]
+
+[[package]]
+name = "fastnoise2"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2ac36453c5782b03ca5714e5689367564808891398817494dd5018272c5e908"
+dependencies = [
+ "fastnoise2-sys",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "fastnoise2-sys"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6adfe2c5d297c6794a55722eb08641d5c1233d35d2433454a151e8ba352a5b24"
+dependencies = [
+ "bindgen 0.70.1",
+ "cmake",
 ]
 
 [[package]]
@@ -2845,6 +2874,7 @@ dependencies = [
  "bevy",
  "bevy_flycam",
  "criterion",
+ "fastnoise2",
  "iyes_perf_ui",
  "noise",
  "rand 0.9.1",
