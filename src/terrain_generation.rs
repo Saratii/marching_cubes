@@ -17,51 +17,41 @@ use bevy::{
 };
 
 use fastnoise2::{
-    SafeNode,
-    generator::{Generator, GeneratorWrapper, basic::position_output, simplex::opensimplex2},
+    generator::{simplex::opensimplex2, Generator, GeneratorWrapper}, SafeNode
 };
-use noise::{Fbm, MultiFractal, NoiseFn, Simplex};
 
 use crate::marching_cubes::march_cubes_for_chunk_into_mesh;
 
-pub const CHUNK_CREATION_RADIUS: i32 = 1; // Create chunks within this radius
+pub const CHUNK_CREATION_RADIUS: i32 = 6; // Create chunks within this radius
 pub const CHUNK_SIZE: f32 = 8.0; // World size in units (8×8×8 world units)
 pub const VOXELS_PER_DIM: usize = 64; // Voxels per dimension per chunk (32×32×32 voxels)
 pub const VOXEL_SIZE: f32 = CHUNK_SIZE / VOXELS_PER_DIM as f32;
 const VOXELS_PER_CHUNK: usize =
     VOXELS_PER_DIM as usize * VOXELS_PER_DIM as usize * VOXELS_PER_DIM as usize; // Total voxels in a chunk
 const NOISE_SEED: u32 = 100; // Seed for noise generation
-const NOISE_FREQUENCY: f64 = 0.02; // Frequency of the noise
-const NOISE_OCTAVES: usize = 3; // Number of octaves for the noise
-const NOISE_LACUNARITY: f64 = 2.1; // Lacunarity for the noise
-const NOISE_PERSISTENCE: f64 = 0.4; // Persistence for the noise
-const NOISE_AMPLITUDE: f32 = 8.0; // Amplitude of the noise
-const SEA_LEVEL: f32 = 0.0; // Sea level for terrain generation
+const NOISE_FREQUENCY: f64 = 0.005; // Frequency of the noise
 
 #[derive(Resource)]
-pub struct NoiseFunction(pub Fbm<Simplex>);
+pub struct NoiseFunction(pub GeneratorWrapper<SafeNode>);
 
 pub fn setup_map(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let noise_function = Fbm::<Simplex>::new(NOISE_SEED)
-        .set_frequency(NOISE_FREQUENCY)
-        .set_octaves(NOISE_OCTAVES)
-        .set_lacunarity(NOISE_LACUNARITY)
-        .set_persistence(NOISE_PERSISTENCE);
+    let fbm =
+        || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
     let mut chunk_map = ChunkMap::new();
     let entity = chunk_map.spawn_chunk(
         &mut commands,
         &mut meshes,
         &mut materials,
         (0, 0, 0),
-        &noise_function,
+        &fbm,
     );
     chunk_map.0.insert((0, 0, 0), entity);
     commands.insert_resource(chunk_map);
-    commands.insert_resource(NoiseFunction(noise_function));
+    commands.insert_resource(NoiseFunction(fbm));
 }
 
 #[derive(Resource)]
@@ -93,10 +83,10 @@ impl ChunkMap {
         meshes: &mut ResMut<Assets<Mesh>>,
         materials: &mut ResMut<Assets<StandardMaterial>>,
         chunk_coord: (i32, i32, i32),
-        simplex: &Fbm<Simplex>,
+        fbm: &GeneratorWrapper<SafeNode>,
     ) -> Entity {
         let chunk_center = Self::get_chunk_center_from_coord(chunk_coord);
-        let terrain_chunk = TerrainChunk::new(chunk_coord, simplex);
+        let terrain_chunk = TerrainChunk::new(chunk_coord, fbm);
         let chunk_mesh = march_cubes_for_chunk_into_mesh(&terrain_chunk);
         let entity = commands
             .spawn((
@@ -114,38 +104,21 @@ impl ChunkMap {
     }
 }
 
-fn generate_height_map(
-    fbm: &Fbm<Simplex>,
-    x_start: f32,
-    z_start: f32,
-    x_size: usize,
-    z_size: usize,
-) -> Vec<f32> {
-    let mut height_map = Vec::with_capacity(x_size * z_size);
-    for z in 0..z_size {
-        let world_z = z_start + z as f32 * VOXEL_SIZE;
-        for x in 0..x_size {
-            let world_x = x_start + x as f32 * VOXEL_SIZE;
-            let noise_2d = fbm.get([world_x as f64, world_z as f64]) as f32;
-            let terrain_height = SEA_LEVEL + noise_2d * NOISE_AMPLITUDE;
-            height_map.push(terrain_height);
-        }
-    }
-    height_map
-}
-
-pub fn generate_densities(chunk_coord: &(i32, i32, i32), fbm: &Fbm<Simplex>) -> Vec<f32> {
+pub fn generate_densities(chunk_coord: &(i32, i32, i32), fbm: &GeneratorWrapper<SafeNode>) -> Vec<f32> {
     let start_pos = Vec3::new(
         (chunk_coord.0 as f32 - 0.5) * CHUNK_SIZE,
         (chunk_coord.1 as f32 - 0.5) * CHUNK_SIZE,
         (chunk_coord.2 as f32 - 0.5) * CHUNK_SIZE,
     );
-    let height_map = generate_height_map(
-        fbm,
-        start_pos.x,
-        start_pos.z,
-        VOXELS_PER_DIM,
-        VOXELS_PER_DIM,
+    let mut height_map = vec![0.0; VOXELS_PER_DIM * VOXELS_PER_DIM];
+    fbm.gen_uniform_grid_2d(
+        &mut height_map,
+        chunk_coord.0 * VOXELS_PER_DIM as i32,
+        chunk_coord.2 * VOXELS_PER_DIM as i32,
+        VOXELS_PER_DIM as i32,
+        VOXELS_PER_DIM as i32,
+        NOISE_FREQUENCY as f32,
+        NOISE_SEED as i32,
     );
     let mut densities = Vec::with_capacity(VOXELS_PER_CHUNK);
     for z in 0..VOXELS_PER_DIM {
@@ -169,9 +142,9 @@ pub struct TerrainChunk {
 }
 
 impl TerrainChunk {
-    pub fn new(chunk_coord: (i32, i32, i32), simplex: &Fbm<Simplex>) -> Self {
+    pub fn new(chunk_coord: (i32, i32, i32), fbm: &GeneratorWrapper<SafeNode>) -> Self {
         Self {
-            densities: generate_densities(&chunk_coord, simplex),
+            densities: generate_densities(&chunk_coord, fbm),
             chunk_coord,
             iso_level: 0.0,
         }
