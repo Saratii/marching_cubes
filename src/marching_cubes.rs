@@ -15,7 +15,6 @@ pub fn march_cubes_for_chunk_into_mesh(terrain: &TerrainChunk) -> Mesh {
     let mut indices = Vec::new();
     let mut colors = Vec::new();
     let mut rng = rand::rng();
-
     for x in 0..VOXELS_PER_DIM - 1 {
         for y in 0..VOXELS_PER_DIM - 1 {
             for z in 0..VOXELS_PER_DIM - 1 {
