@@ -17,7 +17,8 @@ use bevy::{
 };
 
 use fastnoise2::{
-    generator::{simplex::opensimplex2, Generator, GeneratorWrapper}, SafeNode
+    SafeNode,
+    generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
 };
 
 use crate::marching_cubes::march_cubes_for_chunk_into_mesh;
@@ -42,13 +43,7 @@ pub fn setup_map(
     let fbm =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
     let mut chunk_map = ChunkMap::new();
-    let entity = chunk_map.spawn_chunk(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        (0, 0, 0),
-        &fbm,
-    );
+    let entity = chunk_map.spawn_chunk(&mut commands, &mut meshes, &mut materials, (0, 0, 0), &fbm);
     chunk_map.0.insert((0, 0, 0), entity);
     commands.insert_resource(chunk_map);
     commands.insert_resource(NoiseFunction(fbm));
@@ -104,7 +99,10 @@ impl ChunkMap {
     }
 }
 
-pub fn generate_densities(chunk_coord: &(i32, i32, i32), fbm: &GeneratorWrapper<SafeNode>) -> Vec<f32> {
+pub fn generate_densities(
+    chunk_coord: &(i32, i32, i32),
+    fbm: &GeneratorWrapper<SafeNode>,
+) -> Vec<f32> {
     let start_pos = Vec3::new(
         (chunk_coord.0 as f32 - 0.5) * CHUNK_SIZE,
         (chunk_coord.1 as f32 - 0.5) * CHUNK_SIZE,
@@ -120,14 +118,15 @@ pub fn generate_densities(chunk_coord: &(i32, i32, i32), fbm: &GeneratorWrapper<
         NOISE_FREQUENCY as f32,
         NOISE_SEED as i32,
     );
-    let mut densities = Vec::with_capacity(VOXELS_PER_CHUNK);
+    let mut densities = vec![0.0; VOXELS_PER_CHUNK];
     for z in 0..VOXELS_PER_DIM {
         for y in 0..VOXELS_PER_DIM {
             let world_y = start_pos.y + y as f32 * VOXEL_SIZE;
             for x in 0..VOXELS_PER_DIM {
                 let height_idx = z * VOXELS_PER_DIM + x;
                 let terrain_height = height_map[height_idx];
-                densities.push(terrain_height - world_y);
+                let i = z * VOXELS_PER_DIM * VOXELS_PER_DIM + y * VOXELS_PER_DIM + x;
+                densities[i] = terrain_height - world_y;
             }
         }
     }
