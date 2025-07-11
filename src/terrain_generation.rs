@@ -20,7 +20,7 @@ use noise::{Fbm, MultiFractal, NoiseFn, Simplex};
 
 use crate::marching_cubes::march_cubes_for_chunk_into_mesh;
 
-pub const CHUNK_CREATION_RADIUS: i32 = 6; // Create chunks within this radius
+pub const CHUNK_CREATION_RADIUS: i32 = 1; // Create chunks within this radius
 pub const CHUNK_SIZE: f32 = 8.0; // World size in units (8×8×8 world units)
 pub const VOXELS_PER_DIM: usize = 64; // Voxels per dimension per chunk (32×32×32 voxels)
 pub const VOXEL_SIZE: f32 = CHUNK_SIZE / VOXELS_PER_DIM as f32;
@@ -111,35 +111,21 @@ impl ChunkMap {
 }
 
 pub fn generate_densities(chunk_coord: &(i32, i32, i32), fbm: &Fbm<Simplex>) -> Vec<f32> {
-    let chunk_world_pos = Vec3::new(
-        chunk_coord.0 as f32 * CHUNK_SIZE,
-        chunk_coord.1 as f32 * CHUNK_SIZE,
-        chunk_coord.2 as f32 * CHUNK_SIZE,
+    let start_pos = Vec3::new(
+        (chunk_coord.0 as f32 - 0.5) * CHUNK_SIZE,
+        (chunk_coord.1 as f32 - 0.5) * CHUNK_SIZE,
+        (chunk_coord.2 as f32 - 0.5) * CHUNK_SIZE,
     );
-    let half_chunk = CHUNK_SIZE / 2.0;
-    let mut densities = vec![0.0; VOXELS_PER_CHUNK];
-    let start_x = chunk_world_pos.x - half_chunk;
-    let start_y = chunk_world_pos.y - half_chunk;
-    let start_z = chunk_world_pos.z - half_chunk;
-    let mut terrain_heights = vec![0.0; VOXELS_PER_DIM * VOXELS_PER_DIM];
+    let mut densities = Vec::with_capacity(VOXELS_PER_CHUNK);
     for z in 0..VOXELS_PER_DIM {
-        let world_z = start_z + z as f32 * VOXEL_SIZE;
-        let z_offset = z * VOXELS_PER_DIM;
-        for x in 0..VOXELS_PER_DIM {
-            let world_x = start_x + x as f32 * VOXEL_SIZE;
-            let noise_2d = fbm.get([world_x as f64, world_z as f64]) as f32;
-            terrain_heights[z_offset + x] = SEA_LEVEL + noise_2d * NOISE_AMPLITUDE;
-        }
-    }
-    let mut density_idx = 0;
-    for z in 0..VOXELS_PER_DIM {
-        let z_offset = z * VOXELS_PER_DIM;
+        let world_z = start_pos.z + z as f32 * VOXEL_SIZE;
         for y in 0..VOXELS_PER_DIM {
-            let world_y = start_y + y as f32 * VOXEL_SIZE;
+            let world_y = start_pos.y + y as f32 * VOXEL_SIZE;
             for x in 0..VOXELS_PER_DIM {
-                let terrain_height = terrain_heights[z_offset + x];
-                densities[density_idx] = terrain_height - world_y;
-                density_idx += 1;
+                let world_x = start_pos.x + x as f32 * VOXEL_SIZE;
+                let noise_2d = fbm.get([world_x as f64, world_z as f64]) as f32;
+                let terrain_height = SEA_LEVEL + noise_2d * NOISE_AMPLITUDE;
+                densities.push(terrain_height - world_y);
             }
         }
     }
