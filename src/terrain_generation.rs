@@ -16,6 +16,10 @@ use bevy::{
     utils::default,
 };
 
+use fastnoise2::{
+    SafeNode,
+    generator::{Generator, GeneratorWrapper, basic::position_output, simplex::opensimplex2},
+};
 use noise::{Fbm, MultiFractal, NoiseFn, Simplex};
 
 use crate::marching_cubes::march_cubes_for_chunk_into_mesh;
@@ -110,21 +114,54 @@ impl ChunkMap {
     }
 }
 
+fn create_simple_terrain() -> GeneratorWrapper<SafeNode> {
+    (opensimplex2().fbm(0.65, 0.5, 4, 2.5).domain_scale(0.66)
+        + position_output([0.0, 3.0, 0.0, 0.0], [0.0; 4]))
+    .domain_warp_gradient(0.2, 2.0)
+    .domain_warp_progressive(0.7, 0.5, 2, 2.5)
+    .build()
+}
+
+fn generate_height_map(
+    x_start: f32,
+    z_start: f32,
+    x_size: usize,
+    z_size: usize,
+    fbm: &Fbm<Simplex>,
+) -> Vec<f32> {
+    let mut height_map = Vec::with_capacity(x_size * z_size);
+    for z in 0..z_size {
+        let world_z = z_start + z as f32 * VOXEL_SIZE;
+        for x in 0..x_size {
+            let world_x = x_start + x as f32 * VOXEL_SIZE;
+            let noise_2d = fbm.get([world_x as f64, world_z as f64]) as f32;
+            let terrain_height = SEA_LEVEL + noise_2d * NOISE_AMPLITUDE;
+            height_map.push(terrain_height);
+        }
+    }
+    height_map
+}
+
 pub fn generate_densities(chunk_coord: &(i32, i32, i32), fbm: &Fbm<Simplex>) -> Vec<f32> {
     let start_pos = Vec3::new(
         (chunk_coord.0 as f32 - 0.5) * CHUNK_SIZE,
         (chunk_coord.1 as f32 - 0.5) * CHUNK_SIZE,
         (chunk_coord.2 as f32 - 0.5) * CHUNK_SIZE,
     );
+    let height_map = generate_height_map(
+        start_pos.x,
+        start_pos.z,
+        VOXELS_PER_DIM,
+        VOXELS_PER_DIM,
+        fbm,
+    );
     let mut densities = Vec::with_capacity(VOXELS_PER_CHUNK);
     for z in 0..VOXELS_PER_DIM {
-        let world_z = start_pos.z + z as f32 * VOXEL_SIZE;
         for y in 0..VOXELS_PER_DIM {
             let world_y = start_pos.y + y as f32 * VOXEL_SIZE;
             for x in 0..VOXELS_PER_DIM {
-                let world_x = start_pos.x + x as f32 * VOXEL_SIZE;
-                let noise_2d = fbm.get([world_x as f64, world_z as f64]) as f32;
-                let terrain_height = SEA_LEVEL + noise_2d * NOISE_AMPLITUDE;
+                let height_idx = z * VOXELS_PER_DIM + x;
+                let terrain_height = height_map[height_idx];
                 densities.push(terrain_height - world_y);
             }
         }
