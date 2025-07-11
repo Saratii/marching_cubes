@@ -304,11 +304,9 @@ fn screen_to_world_ray(
 }
 
 fn dig_at_position(terrain: &mut TerrainChunk, local_pos: Vec3) {
-    let half_chunk = CHUNK_SIZE / 2.0;
-    let voxel_x = ((local_pos.x + half_chunk) / VOXEL_SIZE).floor() as u32;
-    let voxel_y = ((local_pos.y + half_chunk) / VOXEL_SIZE).floor() as u32;
-    let voxel_z = ((local_pos.z + half_chunk) / VOXEL_SIZE).floor() as u32;
-    terrain.set_voxel(voxel_x, voxel_y, voxel_z, false);
+    let dig_radius = 1.0; // Adjust radius as needed
+    let dig_strength = 5.0; // Adjust strength as needed
+    terrain.dig_sphere(local_pos, dig_radius, dig_strength);
 }
 
 fn create_marching_cubes_chunk(terrain: &TerrainChunk) -> Mesh {
@@ -320,7 +318,6 @@ fn create_marching_cubes_chunk(terrain: &TerrainChunk) -> Mesh {
     for x in 0..VOXEL_RESOLUTION {
         for y in 0..VOXEL_RESOLUTION {
             for z in 0..VOXEL_RESOLUTION {
-                // Center the voxel positions around the chunk center
                 let half_chunk = CHUNK_SIZE / 2.0;
                 let pos = Vec3::new(
                     x as f32 * VOXEL_SIZE - half_chunk,
@@ -328,9 +325,10 @@ fn create_marching_cubes_chunk(terrain: &TerrainChunk) -> Mesh {
                     z as f32 * VOXEL_SIZE - half_chunk,
                 );
 
-                let cube_index = get_cube_index_voxel(terrain, x, y, z);
+                let cube_index = get_cube_index_density(terrain, x, y, z);
                 let triangles = TRIANGLE_TABLE[cube_index as usize];
                 let mut i = 0;
+
                 while triangles[i] != -1 {
                     let triangle_color = [
                         rng.random_range(0.2..1.0),
@@ -338,21 +336,25 @@ fn create_marching_cubes_chunk(terrain: &TerrainChunk) -> Mesh {
                         rng.random_range(0.2..1.0),
                         1.0,
                     ];
+
                     let edge_indices = [
                         triangles[i] as usize,
                         triangles[i + 1] as usize,
                         triangles[i + 2] as usize,
                     ];
+
                     let mut triangle_vertices = Vec::new();
                     for &edge_idx in edge_indices.iter() {
-                        let edge_vertex = get_edge_vertex_voxel(terrain, pos, edge_idx);
+                        let edge_vertex = get_edge_vertex_density(terrain, pos, edge_idx);
                         triangle_vertices.push(edge_vertex);
                     }
+
                     let base_vertex_index = vertices.len() as u32;
                     for vertex in triangle_vertices {
                         vertices.push([vertex.x, vertex.y, vertex.z]);
                         colors.push(triangle_color);
                     }
+
                     indices.extend_from_slice(&[
                         base_vertex_index,
                         base_vertex_index + 1,
@@ -364,10 +366,9 @@ fn create_marching_cubes_chunk(terrain: &TerrainChunk) -> Mesh {
         }
     }
 
-    // If no vertices were generated, return a minimal valid mesh
+    // Rest of the mesh creation code remains the same...
     if vertices.is_empty() {
         let mut empty_mesh = Mesh::new(PrimitiveTopology::TriangleList, default());
-        // Add empty attributes to prevent issues with material systems that expect them
         empty_mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, Vec::<[f32; 3]>::new());
         empty_mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, Vec::<[f32; 3]>::new());
         empty_mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, Vec::<[f32; 2]>::new());
@@ -375,6 +376,7 @@ fn create_marching_cubes_chunk(terrain: &TerrainChunk) -> Mesh {
         return empty_mesh;
     }
 
+    // Calculate normals and UVs...
     let mut normals = vec![[0.0; 3]; vertices.len()];
     for triangle in indices.chunks(3) {
         let v0 = Vec3::from(vertices[triangle[0] as usize]);
@@ -391,6 +393,7 @@ fn create_marching_cubes_chunk(terrain: &TerrainChunk) -> Mesh {
             }
         }
     }
+
     for normal in &mut normals {
         let len_squared = normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2];
         if len_squared > 0.0 {
@@ -419,7 +422,7 @@ fn create_marching_cubes_chunk(terrain: &TerrainChunk) -> Mesh {
         .with_inserted_indices(Indices::U32(indices))
 }
 
-fn get_cube_index_voxel(terrain: &TerrainChunk, x: u32, y: u32, z: u32) -> u8 {
+fn get_cube_index_density(terrain: &TerrainChunk, x: u32, y: u32, z: u32) -> u8 {
     let mut cube_index = 0u8;
     let corners = [
         (x, y, z),
@@ -432,14 +435,14 @@ fn get_cube_index_voxel(terrain: &TerrainChunk, x: u32, y: u32, z: u32) -> u8 {
         (x, y + 1, z + 1),
     ];
     for (i, (cx, cy, cz)) in corners.iter().enumerate() {
-        if !terrain.is_solid(*cx, *cy, *cz) {
+        if terrain.get_density(*cx, *cy, *cz) <= terrain.iso_level {
             cube_index |= 1 << i;
         }
     }
     cube_index
 }
 
-fn get_edge_vertex_voxel(_terrain: &TerrainChunk, pos: Vec3, edge_idx: usize) -> Vec3 {
+fn get_edge_vertex_density(terrain: &TerrainChunk, pos: Vec3, edge_idx: usize) -> Vec3 {
     let edge_vertices = [
         (Vec3::ZERO, Vec3::new(VOXEL_SIZE, 0.0, 0.0)),
         (
@@ -481,10 +484,39 @@ fn get_edge_vertex_voxel(_terrain: &TerrainChunk, pos: Vec3, edge_idx: usize) ->
             Vec3::new(0.0, VOXEL_SIZE, VOXEL_SIZE),
         ),
     ];
+
     let (v1, v2) = edge_vertices[edge_idx];
     let p1 = pos + v1;
     let p2 = pos + v2;
-    p1.lerp(p2, 0.5)
+
+    // Get densities at both endpoints
+    let voxel_coords1 = get_voxel_coords_from_local_pos(p1);
+    let voxel_coords2 = get_voxel_coords_from_local_pos(p2);
+
+    let density1 = terrain.get_density(voxel_coords1.0, voxel_coords1.1, voxel_coords1.2);
+    let density2 = terrain.get_density(voxel_coords2.0, voxel_coords2.1, voxel_coords2.2);
+
+    // Linear interpolation based on iso-level
+    let iso_level = terrain.iso_level;
+    let t = if (density2 - density1).abs() < 0.00001 {
+        0.5
+    } else {
+        ((iso_level - density1) / (density2 - density1)).clamp(0.0, 1.0)
+    };
+
+    p1.lerp(p2, t)
+}
+
+fn get_voxel_coords_from_local_pos(local_pos: Vec3) -> (u32, u32, u32) {
+    let half_chunk = CHUNK_SIZE / 2.0;
+    let x = ((local_pos.x + half_chunk) / VOXEL_SIZE).floor() as u32;
+    let y = ((local_pos.y + half_chunk) / VOXEL_SIZE).floor() as u32;
+    let z = ((local_pos.z + half_chunk) / VOXEL_SIZE).floor() as u32;
+    (
+        x.min(VOXEL_RESOLUTION - 1),
+        y.min(VOXEL_RESOLUTION - 1),
+        z.min(VOXEL_RESOLUTION - 1),
+    )
 }
 
 #[derive(Component, Clone, Debug)]
@@ -516,7 +548,8 @@ impl Default for TerrainParams {
 pub struct TerrainChunk {
     pub params: TerrainParams,
     pub chunk_coord: (i32, i32, i32),
-    pub voxels: Vec<bool>,
+    pub densities: Vec<f32>, // Changed from Vec<bool> to Vec<f32>
+    pub iso_level: f32,      // Surface threshold (typically 0.0)
 }
 
 impl TerrainChunk {
@@ -525,7 +558,8 @@ impl TerrainChunk {
         Self {
             params,
             chunk_coord,
-            voxels: vec![false; total_voxels],
+            densities: vec![0.0; total_voxels],
+            iso_level: 0.0,
         }
     }
 
@@ -543,22 +577,29 @@ impl TerrainChunk {
         );
 
         for x in 0..VOXEL_RESOLUTION {
-            for z in 0..VOXEL_RESOLUTION {
-                // Calculate world position for this voxel
-                let local_x = (x as f32 * VOXEL_SIZE) - (CHUNK_SIZE / 2.0);
-                let local_z = (z as f32 * VOXEL_SIZE) - (CHUNK_SIZE / 2.0);
-                let world_x = chunk_world_pos.x + local_x;
-                let world_z = chunk_world_pos.z + local_z;
-
-                let noise_val = fbm.get([world_x as f64, world_z as f64]) as f32;
-                let terrain_height =
-                    (self.params.base_height + noise_val * self.params.amplitude).max(0.0);
-
-                for y in 0..VOXEL_RESOLUTION {
+            for y in 0..VOXEL_RESOLUTION {
+                for z in 0..VOXEL_RESOLUTION {
+                    // Calculate world position for this voxel
+                    let local_x = (x as f32 * VOXEL_SIZE) - (CHUNK_SIZE / 2.0);
                     let local_y = (y as f32 * VOXEL_SIZE) - (CHUNK_SIZE / 2.0);
+                    let local_z = (z as f32 * VOXEL_SIZE) - (CHUNK_SIZE / 2.0);
+                    let world_x = chunk_world_pos.x + local_x;
                     let world_y = chunk_world_pos.y + local_y;
-                    let is_solid = world_y < terrain_height;
-                    self.set_voxel(x, y, z, is_solid);
+                    let world_z = chunk_world_pos.z + local_z;
+
+                    // Generate 3D noise for more organic terrain
+                    let noise_2d = fbm.get([world_x as f64, world_z as f64]) as f32;
+                    let noise_3d = fbm.get([world_x as f64, world_y as f64, world_z as f64]) as f32;
+
+                    // Combine height-based terrain with 3D noise for caves/overhangs
+                    let terrain_height = self.params.base_height + noise_2d * self.params.amplitude;
+                    let height_density = terrain_height - world_y;
+
+                    // Add 3D noise for caves and more organic shapes
+                    let cave_noise = noise_3d * 4.0; // Adjust strength as needed
+                    let final_density = height_density + cave_noise;
+
+                    self.set_density(x, y, z, final_density);
                 }
             }
         }
@@ -568,19 +609,62 @@ impl TerrainChunk {
         (z * VOXEL_RESOLUTION * VOXEL_RESOLUTION + y * VOXEL_RESOLUTION + x) as usize
     }
 
-    pub fn is_solid(&self, x: u32, y: u32, z: u32) -> bool {
+    pub fn get_density(&self, x: u32, y: u32, z: u32) -> f32 {
         if x >= VOXEL_RESOLUTION || y >= VOXEL_RESOLUTION || z >= VOXEL_RESOLUTION {
-            return false;
+            return -1.0; // Outside chunk is considered empty
         }
         let index = self.get_voxel_index(x, y, z);
-        self.voxels[index]
+        self.densities[index]
     }
 
-    pub fn set_voxel(&mut self, x: u32, y: u32, z: u32, solid: bool) {
+    pub fn set_density(&mut self, x: u32, y: u32, z: u32, density: f32) {
         if x >= VOXEL_RESOLUTION || y >= VOXEL_RESOLUTION || z >= VOXEL_RESOLUTION {
             return;
         }
         let index = self.get_voxel_index(x, y, z);
-        self.voxels[index] = solid;
+        self.densities[index] = density;
+    }
+
+    pub fn is_solid(&self, x: u32, y: u32, z: u32) -> bool {
+        self.get_density(x, y, z) > self.iso_level
+    }
+
+    // Smooth digging function
+    pub fn dig_sphere(&mut self, center: Vec3, radius: f32, strength: f32) {
+        let half_chunk = CHUNK_SIZE / 2.0;
+        let center_voxel = Vec3::new(
+            (center.x + half_chunk) / VOXEL_SIZE,
+            (center.y + half_chunk) / VOXEL_SIZE,
+            (center.z + half_chunk) / VOXEL_SIZE,
+        );
+
+        let voxel_radius = radius / VOXEL_SIZE;
+        let min_x = ((center_voxel.x - voxel_radius).floor() as i32).max(0) as u32;
+        let max_x =
+            ((center_voxel.x + voxel_radius).ceil() as i32).min(VOXEL_RESOLUTION as i32 - 1) as u32;
+        let min_y = ((center_voxel.y - voxel_radius).floor() as i32).max(0) as u32;
+        let max_y =
+            ((center_voxel.y + voxel_radius).ceil() as i32).min(VOXEL_RESOLUTION as i32 - 1) as u32;
+        let min_z = ((center_voxel.z - voxel_radius).floor() as i32).max(0) as u32;
+        let max_z =
+            ((center_voxel.z + voxel_radius).ceil() as i32).min(VOXEL_RESOLUTION as i32 - 1) as u32;
+
+        for x in min_x..=max_x {
+            for y in min_y..=max_y {
+                for z in min_z..=max_z {
+                    let voxel_pos = Vec3::new(x as f32, y as f32, z as f32);
+                    let distance = voxel_pos.distance(center_voxel);
+
+                    if distance <= voxel_radius {
+                        let falloff = 1.0 - (distance / voxel_radius).clamp(0.0, 1.0);
+                        let dig_amount = strength * falloff;
+
+                        let current_density = self.get_density(x, y, z);
+                        let new_density = current_density - dig_amount;
+                        self.set_density(x, y, z, new_density);
+                    }
+                }
+            }
+        }
     }
 }
