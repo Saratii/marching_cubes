@@ -48,13 +48,21 @@ fn main() {
 pub struct ChunkManager {
     chunks: HashMap<(i32, i32, i32), Entity>,
     terrain_params: TerrainParams,
+    noise_generator: Fbm<Perlin>,
 }
 
 impl ChunkManager {
     fn new() -> Self {
+        let params = TerrainParams::default();
+        let noise_generator = Fbm::<Perlin>::new(params.seed)
+            .set_frequency(params.frequency)
+            .set_octaves(params.octaves)
+            .set_lacunarity(params.lacunarity)
+            .set_persistence(params.persistence);
         Self {
             chunks: HashMap::new(),
-            terrain_params: TerrainParams::default(),
+            terrain_params: params,
+            noise_generator,
         }
     }
 
@@ -83,10 +91,9 @@ impl ChunkManager {
         if self.chunks.contains_key(&chunk_coord) {
             return;
         }
-
         let chunk_center = Self::get_chunk_center_from_coord(chunk_coord);
         let mut terrain_chunk = TerrainChunk::new(self.terrain_params.clone(), chunk_coord);
-        terrain_chunk.generate_terrain();
+        terrain_chunk.generate_terrain(&self.noise_generator);
         let chunk_mesh = create_marching_cubes_chunk(&terrain_chunk);
 
         let entity = commands
@@ -103,6 +110,10 @@ impl ChunkManager {
             .id();
 
         self.chunks.insert(chunk_coord, entity);
+        println!(
+            "Created chunk at ({}, {}, {})",
+            chunk_coord.0, chunk_coord.1, chunk_coord.2
+        );
     }
 
     fn should_create_chunk(&self, player_pos: Vec3, chunk_coord: (i32, i32, i32)) -> bool {
@@ -111,7 +122,7 @@ impl ChunkManager {
         let dy = (chunk_coord.1 - player_chunk.1).abs();
         let dz = (chunk_coord.2 - player_chunk.2).abs();
 
-        dx <= CHUNK_CREATION_RADIUS && dy <= CHUNK_CREATION_RADIUS && dz <= CHUNK_CREATION_RADIUS
+        dx <= CHUNK_CREATION_RADIUS && dz <= CHUNK_CREATION_RADIUS && dy <= 2
     }
 }
 
@@ -122,8 +133,6 @@ fn setup(
     mut chunk_manager: ResMut<ChunkManager>,
 ) {
     commands.spawn(PerfUiDefaultEntries::default());
-
-    // Create initial chunk at (0,0,0)
     chunk_manager.create_chunk(&mut commands, &mut meshes, &mut materials, (0, 0, 0));
 
     commands.spawn((
@@ -152,17 +161,14 @@ fn update_chunks(
     if let Ok(camera_transform) = camera_query.single() {
         let player_pos = camera_transform.translation;
         let player_chunk = ChunkManager::get_chunk_coord_from_world_pos(player_pos);
-
-        // Check all chunks within radius
         for dx in -CHUNK_CREATION_RADIUS..=CHUNK_CREATION_RADIUS {
-            for dy in -CHUNK_CREATION_RADIUS..=CHUNK_CREATION_RADIUS {
-                for dz in -CHUNK_CREATION_RADIUS..=CHUNK_CREATION_RADIUS {
+            for dz in -CHUNK_CREATION_RADIUS..=CHUNK_CREATION_RADIUS {
+                for dy in -2..=2 {
                     let chunk_coord = (
                         player_chunk.0 + dx,
                         player_chunk.1 + dy,
                         player_chunk.2 + dz,
                     );
-
                     if chunk_manager.should_create_chunk(player_pos, chunk_coord) {
                         chunk_manager.create_chunk(
                             &mut commands,
@@ -191,7 +197,6 @@ fn handle_digging_input(
                     if let Some((hit_entity, world_pos)) =
                         screen_to_world_ray(cursor_pos, camera, camera_transform, &terrain_query)
                     {
-                        // Find the specific chunk that was hit and modify it
                         if let Ok((_, mut terrain, mut mesh_handle, chunk_transform)) =
                             terrain_query.get_mut(hit_entity)
                         {
@@ -266,16 +271,11 @@ fn screen_to_world_ray(
     let max_distance = 100.0;
     let step_size = 0.1;
     let mut distance_traveled = 0.0;
-
     while distance_traveled < max_distance {
         let current_pos = ray_origin + ray_direction * distance_traveled;
-
-        // Check each chunk to see if the ray hits it
         for (entity, terrain, _, chunk_transform) in terrain_query.iter() {
             let chunk_min = chunk_transform.translation - Vec3::splat(CHUNK_SIZE / 2.0);
             let chunk_max = chunk_transform.translation + Vec3::splat(CHUNK_SIZE / 2.0);
-
-            // Check if current position is within this chunk
             if current_pos.x >= chunk_min.x
                 && current_pos.x <= chunk_max.x
                 && current_pos.y >= chunk_min.y
@@ -283,11 +283,8 @@ fn screen_to_world_ray(
                 && current_pos.z >= chunk_min.z
                 && current_pos.z <= chunk_max.z
             {
-                // Convert to local chunk coordinates
                 let local_pos = current_pos - chunk_transform.translation;
                 let half_chunk = CHUNK_SIZE / 2.0;
-
-                // Convert to voxel coordinates (centered around chunk center)
                 let voxel_x = ((local_pos.x + half_chunk) / VOXEL_SIZE).floor() as u32;
                 let voxel_y = ((local_pos.y + half_chunk) / VOXEL_SIZE).floor() as u32;
                 let voxel_z = ((local_pos.z + half_chunk) / VOXEL_SIZE).floor() as u32;
@@ -304,8 +301,8 @@ fn screen_to_world_ray(
 }
 
 fn dig_at_position(terrain: &mut TerrainChunk, local_pos: Vec3) {
-    let dig_radius = 1.0; // Adjust radius as needed
-    let dig_strength = 5.0; // Adjust strength as needed
+    let dig_radius = 1.0;
+    let dig_strength = 5.0;
     terrain.dig_sphere(local_pos, dig_radius, dig_strength);
 }
 
@@ -324,11 +321,9 @@ fn create_marching_cubes_chunk(terrain: &TerrainChunk) -> Mesh {
                     y as f32 * VOXEL_SIZE - half_chunk,
                     z as f32 * VOXEL_SIZE - half_chunk,
                 );
-
                 let cube_index = get_cube_index_density(terrain, x, y, z);
                 let triangles = TRIANGLE_TABLE[cube_index as usize];
                 let mut i = 0;
-
                 while triangles[i] != -1 {
                     let triangle_color = [
                         rng.random_range(0.2..1.0),
@@ -336,25 +331,21 @@ fn create_marching_cubes_chunk(terrain: &TerrainChunk) -> Mesh {
                         rng.random_range(0.2..1.0),
                         1.0,
                     ];
-
                     let edge_indices = [
                         triangles[i] as usize,
                         triangles[i + 1] as usize,
                         triangles[i + 2] as usize,
                     ];
-
                     let mut triangle_vertices = Vec::new();
                     for &edge_idx in edge_indices.iter() {
                         let edge_vertex = get_edge_vertex_density(terrain, pos, edge_idx);
                         triangle_vertices.push(edge_vertex);
                     }
-
                     let base_vertex_index = vertices.len() as u32;
                     for vertex in triangle_vertices {
                         vertices.push([vertex.x, vertex.y, vertex.z]);
                         colors.push(triangle_color);
                     }
-
                     indices.extend_from_slice(&[
                         base_vertex_index,
                         base_vertex_index + 1,
@@ -365,8 +356,6 @@ fn create_marching_cubes_chunk(terrain: &TerrainChunk) -> Mesh {
             }
         }
     }
-
-    // Rest of the mesh creation code remains the same...
     if vertices.is_empty() {
         let mut empty_mesh = Mesh::new(PrimitiveTopology::TriangleList, default());
         empty_mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, Vec::<[f32; 3]>::new());
@@ -375,8 +364,6 @@ fn create_marching_cubes_chunk(terrain: &TerrainChunk) -> Mesh {
         empty_mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, Vec::<[f32; 4]>::new());
         return empty_mesh;
     }
-
-    // Calculate normals and UVs...
     let mut normals = vec![[0.0; 3]; vertices.len()];
     for triangle in indices.chunks(3) {
         let v0 = Vec3::from(vertices[triangle[0] as usize]);
@@ -393,7 +380,6 @@ fn create_marching_cubes_chunk(terrain: &TerrainChunk) -> Mesh {
             }
         }
     }
-
     for normal in &mut normals {
         let len_squared = normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2];
         if len_squared > 0.0 {
@@ -403,7 +389,6 @@ fn create_marching_cubes_chunk(terrain: &TerrainChunk) -> Mesh {
             normal[2] /= len;
         }
     }
-
     let uvs: Vec<[f32; 2]> = vertices
         .iter()
         .map(|v| {
@@ -413,7 +398,6 @@ fn create_marching_cubes_chunk(terrain: &TerrainChunk) -> Mesh {
             ]
         })
         .collect();
-
     Mesh::new(PrimitiveTopology::TriangleList, default())
         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vertices)
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
@@ -484,19 +468,13 @@ fn get_edge_vertex_density(terrain: &TerrainChunk, pos: Vec3, edge_idx: usize) -
             Vec3::new(0.0, VOXEL_SIZE, VOXEL_SIZE),
         ),
     ];
-
     let (v1, v2) = edge_vertices[edge_idx];
     let p1 = pos + v1;
     let p2 = pos + v2;
-
-    // Get densities at both endpoints
     let voxel_coords1 = get_voxel_coords_from_local_pos(p1);
     let voxel_coords2 = get_voxel_coords_from_local_pos(p2);
-
     let density1 = terrain.get_density(voxel_coords1.0, voxel_coords1.1, voxel_coords1.2);
     let density2 = terrain.get_density(voxel_coords2.0, voxel_coords2.1, voxel_coords2.2);
-
-    // Linear interpolation based on iso-level
     let iso_level = terrain.iso_level;
     let t = if (density2 - density1).abs() < 0.00001 {
         0.5
@@ -548,8 +526,8 @@ impl Default for TerrainParams {
 pub struct TerrainChunk {
     pub params: TerrainParams,
     pub chunk_coord: (i32, i32, i32),
-    pub densities: Vec<f32>, // Changed from Vec<bool> to Vec<f32>
-    pub iso_level: f32,      // Surface threshold (typically 0.0)
+    pub densities: Vec<f32>,
+    pub iso_level: f32,
 }
 
 impl TerrainChunk {
@@ -563,42 +541,28 @@ impl TerrainChunk {
         }
     }
 
-    pub fn generate_terrain(&mut self) {
-        let fbm = Fbm::<Perlin>::new(self.params.seed)
-            .set_frequency(self.params.frequency)
-            .set_octaves(self.params.octaves)
-            .set_lacunarity(self.params.lacunarity)
-            .set_persistence(self.params.persistence);
-
+    pub fn generate_terrain(&mut self, fbm: &Fbm<Perlin>) {
         let chunk_world_pos = Vec3::new(
             self.chunk_coord.0 as f32 * CHUNK_SIZE,
             self.chunk_coord.1 as f32 * CHUNK_SIZE,
             self.chunk_coord.2 as f32 * CHUNK_SIZE,
         );
-
-        for x in 0..VOXEL_RESOLUTION {
+        let half_chunk = CHUNK_SIZE / 2.0;
+        let voxel_size = VOXEL_SIZE;
+        let sea_level = 0.0;
+        let amplitude = self.params.amplitude;
+        for z in 0..VOXEL_RESOLUTION {
+            let world_z = chunk_world_pos.z + (z as f32 * voxel_size) - half_chunk;
             for y in 0..VOXEL_RESOLUTION {
-                for z in 0..VOXEL_RESOLUTION {
-                    // Calculate world position for this voxel
-                    let local_x = (x as f32 * VOXEL_SIZE) - (CHUNK_SIZE / 2.0);
-                    let local_y = (y as f32 * VOXEL_SIZE) - (CHUNK_SIZE / 2.0);
-                    let local_z = (z as f32 * VOXEL_SIZE) - (CHUNK_SIZE / 2.0);
-                    let world_x = chunk_world_pos.x + local_x;
-                    let world_y = chunk_world_pos.y + local_y;
-                    let world_z = chunk_world_pos.z + local_z;
-
-                    // Generate 3D noise for more organic terrain
+                let world_y = chunk_world_pos.y + (y as f32 * voxel_size) - half_chunk;
+                for x in 0..VOXEL_RESOLUTION {
+                    let world_x = chunk_world_pos.x + (x as f32 * voxel_size) - half_chunk;
                     let noise_2d = fbm.get([world_x as f64, world_z as f64]) as f32;
                     let noise_3d = fbm.get([world_x as f64, world_y as f64, world_z as f64]) as f32;
-
-                    // Combine height-based terrain with 3D noise for caves/overhangs
-                    let terrain_height = self.params.base_height + noise_2d * self.params.amplitude;
+                    let terrain_height = sea_level + noise_2d * amplitude;
                     let height_density = terrain_height - world_y;
-
-                    // Add 3D noise for caves and more organic shapes
-                    let cave_noise = noise_3d * 4.0; // Adjust strength as needed
+                    let cave_noise = noise_3d * 4.0;
                     let final_density = height_density + cave_noise;
-
                     self.set_density(x, y, z, final_density);
                 }
             }
@@ -611,7 +575,7 @@ impl TerrainChunk {
 
     pub fn get_density(&self, x: u32, y: u32, z: u32) -> f32 {
         if x >= VOXEL_RESOLUTION || y >= VOXEL_RESOLUTION || z >= VOXEL_RESOLUTION {
-            return -1.0; // Outside chunk is considered empty
+            return -1.0;
         }
         let index = self.get_voxel_index(x, y, z);
         self.densities[index]
@@ -629,7 +593,6 @@ impl TerrainChunk {
         self.get_density(x, y, z) > self.iso_level
     }
 
-    // Smooth digging function
     pub fn dig_sphere(&mut self, center: Vec3, radius: f32, strength: f32) {
         let half_chunk = CHUNK_SIZE / 2.0;
         let center_voxel = Vec3::new(
@@ -637,7 +600,6 @@ impl TerrainChunk {
             (center.y + half_chunk) / VOXEL_SIZE,
             (center.z + half_chunk) / VOXEL_SIZE,
         );
-
         let voxel_radius = radius / VOXEL_SIZE;
         let min_x = ((center_voxel.x - voxel_radius).floor() as i32).max(0) as u32;
         let max_x =
@@ -648,17 +610,14 @@ impl TerrainChunk {
         let min_z = ((center_voxel.z - voxel_radius).floor() as i32).max(0) as u32;
         let max_z =
             ((center_voxel.z + voxel_radius).ceil() as i32).min(VOXEL_RESOLUTION as i32 - 1) as u32;
-
         for x in min_x..=max_x {
             for y in min_y..=max_y {
                 for z in min_z..=max_z {
                     let voxel_pos = Vec3::new(x as f32, y as f32, z as f32);
                     let distance = voxel_pos.distance(center_voxel);
-
                     if distance <= voxel_radius {
                         let falloff = 1.0 - (distance / voxel_radius).clamp(0.0, 1.0);
                         let dig_amount = strength * falloff;
-
                         let current_density = self.get_density(x, y, z);
                         let new_density = current_density - dig_amount;
                         self.set_density(x, y, z, new_density);
