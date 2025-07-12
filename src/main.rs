@@ -66,33 +66,29 @@ fn update_chunks(
     perlin: Res<NoiseFunction>,
 ) {
     if let Ok(camera_transform) = camera_query.single() {
-        let player_pos = camera_transform.translation;
-        let player_chunk = ChunkMap::get_chunk_coord_from_world_pos(player_pos);
-        let player_chunk_world_pos = ChunkMap::get_chunk_center_from_coord(player_chunk);
+        let player_chunk = ChunkMap::get_chunk_coord_from_world_pos(camera_transform.translation);
+        let radius = CHUNK_CREATION_RADIUS as f32;
+        let radius_squared = radius * radius;
         for dx in -CHUNK_CREATION_RADIUS..=CHUNK_CREATION_RADIUS {
             for dz in -CHUNK_CREATION_RADIUS..=CHUNK_CREATION_RADIUS {
-                for dy in -CHUNK_CREATION_RADIUS..=CHUNK_CREATION_RADIUS {
-                    let chunk_coord = (
-                        player_chunk.0 + dx,
-                        player_chunk.1 + dy,
-                        player_chunk.2 + dz,
-                    );
-                    let target_chunk_world_pos = ChunkMap::get_chunk_center_from_coord(chunk_coord);
-                    if player_chunk_world_pos.distance_squared(target_chunk_world_pos)
-                        <= CHUNK_GENERATION_CIRCULAR_RADIUS_SQUARED
-                    {
-                        match chunk_map.0.get(&chunk_coord) {
-                            Some(_) => {}
-                            None => {
-                                let entity = chunk_map.spawn_chunk(
-                                    &mut commands,
-                                    &mut meshes,
-                                    &mut materials,
-                                    chunk_coord,
-                                    &perlin.0,
-                                );
-                                chunk_map.0.insert(chunk_coord, entity);
-                            }
+                let xz_dist_sq = (dx * dx + dz * dz) as f32;
+                if xz_dist_sq <= radius_squared {
+                    let max_dy = (radius_squared - xz_dist_sq).sqrt() as i32;
+                    for dy in -max_dy..=max_dy {
+                        let chunk_coord = (
+                            player_chunk.0 + dx,
+                            player_chunk.1 + dy,
+                            player_chunk.2 + dz,
+                        );
+                        if !chunk_map.0.contains_key(&chunk_coord) {
+                            let entity = chunk_map.spawn_chunk(
+                                &mut commands,
+                                &mut meshes,
+                                &mut materials,
+                                chunk_coord,
+                                &perlin.0,
+                            );
+                            chunk_map.0.insert(chunk_coord, entity);
                         }
                     }
                 }
