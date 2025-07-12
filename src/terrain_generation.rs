@@ -149,12 +149,6 @@ impl TerrainChunk {
     }
 
     pub fn set_density(&mut self, x: i32, y: i32, z: i32, density: f32) {
-        if x >= VOXELS_PER_CHUNK as i32
-            || y >= VOXELS_PER_CHUNK as i32
-            || z >= VOXELS_PER_CHUNK as i32
-        {
-            return;
-        }
         let index = self.get_voxel_index(x, y, z);
         self.densities[index] = density;
     }
@@ -164,12 +158,6 @@ impl TerrainChunk {
     }
 
     pub fn get_density(&self, x: i32, y: i32, z: i32) -> f32 {
-        if x >= VOXELS_PER_CHUNK as i32
-            || y >= VOXELS_PER_CHUNK as i32
-            || z >= VOXELS_PER_CHUNK as i32
-        {
-            return -1.0;
-        }
         let index = self.get_voxel_index(x, y, z);
         self.densities[index]
     }
