@@ -23,7 +23,6 @@ use fastnoise2::{
 
 use crate::marching_cubes::march_cubes_for_chunk_into_mesh;
 
-pub const CHUNK_CREATION_RADIUS: i32 = 6; // Create chunks within this radius
 pub const CHUNK_SIZE: f32 = 8.0; // World size in units (8×8×8 world units)
 pub const VOXELS_PER_DIM: usize = 64; // Voxels per dimension per chunk (32×32×32 voxels)
 pub const VOXEL_SIZE: f32 = CHUNK_SIZE / VOXELS_PER_DIM as f32;
@@ -58,13 +57,13 @@ impl ChunkMap {
     }
 
     pub fn get_chunk_coord_from_world_pos(world_pos: Vec3) -> (i32, i32, i32) {
-        let chunk_x = (world_pos.x / CHUNK_SIZE).floor() as i32;
-        let chunk_y = (world_pos.y / CHUNK_SIZE).floor() as i32;
-        let chunk_z = (world_pos.z / CHUNK_SIZE).floor() as i32;
+        let chunk_x = (world_pos.x / CHUNK_SIZE).round() as i32;
+        let chunk_y = (world_pos.y / CHUNK_SIZE).round() as i32;
+        let chunk_z = (world_pos.z / CHUNK_SIZE).round() as i32;
         (chunk_x, chunk_y, chunk_z)
     }
 
-    fn get_chunk_center_from_coord(chunk_coord: (i32, i32, i32)) -> Vec3 {
+    pub fn get_chunk_center_from_coord(chunk_coord: (i32, i32, i32)) -> Vec3 {
         Vec3::new(
             chunk_coord.0 as f32 * CHUNK_SIZE,
             chunk_coord.1 as f32 * CHUNK_SIZE,

@@ -10,7 +10,11 @@ bevy_flycam = { git = "https://github.com/kristoff3r/bevy_flycam.git" }
 rand = "0.9.1"
 criterion = "0.6.0"
 fastnoise2 = "0.3.1"
+mimalloc = "0.1.47"
 
 [[bench]]
 name = "chunk_generation"
 harness = false
+
+[profile.release]
+debug = true

@@ -9,8 +9,12 @@ use iyes_perf_ui::PerfUiPlugin;
 use iyes_perf_ui::prelude::PerfUiDefaultEntries;
 use marching_cubes::marching_cubes::march_cubes_for_chunk_into_mesh;
 use marching_cubes::terrain_generation::{
-    CHUNK_CREATION_RADIUS, CHUNK_SIZE, ChunkMap, NoiseFunction, TerrainChunk, VOXEL_SIZE, setup_map,
+    CHUNK_SIZE, ChunkMap, NoiseFunction, TerrainChunk, VOXEL_SIZE, setup_map,
 };
+
+pub const CHUNK_CREATION_RADIUS: i32 = 5;
+pub const CHUNK_GENERATION_CIRCULAR_RADIUS_SQUARED: f32 =
+    (CHUNK_CREATION_RADIUS as f32 * CHUNK_SIZE) * (CHUNK_CREATION_RADIUS as f32 * CHUNK_SIZE);
 
 fn main() {
     App::new()
@@ -64,25 +68,31 @@ fn update_chunks(
     if let Ok(camera_transform) = camera_query.single() {
         let player_pos = camera_transform.translation;
         let player_chunk = ChunkMap::get_chunk_coord_from_world_pos(player_pos);
+        let player_chunk_world_pos = ChunkMap::get_chunk_center_from_coord(player_chunk);
         for dx in -CHUNK_CREATION_RADIUS..=CHUNK_CREATION_RADIUS {
             for dz in -CHUNK_CREATION_RADIUS..=CHUNK_CREATION_RADIUS {
-                for dy in -2..=2 {
+                for dy in -CHUNK_CREATION_RADIUS..=CHUNK_CREATION_RADIUS {
                     let chunk_coord = (
                         player_chunk.0 + dx,
                         player_chunk.1 + dy,
                         player_chunk.2 + dz,
                     );
-                    match chunk_map.0.get(&chunk_coord) {
-                        Some(_) => {}
-                        None => {
-                            let entity = chunk_map.spawn_chunk(
-                                &mut commands,
-                                &mut meshes,
-                                &mut materials,
-                                chunk_coord,
-                                &perlin.0,
-                            );
-                            chunk_map.0.insert(chunk_coord, entity);
+                    let target_chunk_world_pos = ChunkMap::get_chunk_center_from_coord(chunk_coord);
+                    if player_chunk_world_pos.distance_squared(target_chunk_world_pos)
+                        <= CHUNK_GENERATION_CIRCULAR_RADIUS_SQUARED
+                    {
+                        match chunk_map.0.get(&chunk_coord) {
+                            Some(_) => {}
+                            None => {
+                                let entity = chunk_map.spawn_chunk(
+                                    &mut commands,
+                                    &mut meshes,
+                                    &mut materials,
+                                    chunk_coord,
+                                    &perlin.0,
+                                );
+                                chunk_map.0.insert(chunk_coord, entity);
+                            }
                         }
                     }
                 }
