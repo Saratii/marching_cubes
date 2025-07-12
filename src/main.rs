@@ -7,12 +7,12 @@ use bevy::window::PresentMode;
 use bevy_flycam::{FlyCam, NoCameraPlayerPlugin};
 use iyes_perf_ui::PerfUiPlugin;
 use iyes_perf_ui::prelude::PerfUiDefaultEntries;
-use marching_cubes::marching_cubes::march_cubes_for_chunk_into_mesh;
+use marching_cubes::marching_cubes::{add_triangle_colors, march_cubes};
 use marching_cubes::terrain_generation::{
     CHUNK_SIZE, ChunkMap, NoiseFunction, TerrainChunk, VOXEL_SIZE, setup_map,
 };
 
-pub const CHUNK_CREATION_RADIUS: i32 = 5;
+pub const CHUNK_CREATION_RADIUS: i32 = 10; //in chunks
 pub const CHUNK_GENERATION_CIRCULAR_RADIUS_SQUARED: f32 =
     (CHUNK_CREATION_RADIUS as f32 * CHUNK_SIZE) * (CHUNK_CREATION_RADIUS as f32 * CHUNK_SIZE);
 
@@ -116,7 +116,7 @@ fn handle_digging_input(
                         {
                             let local_pos = world_pos - chunk_transform.translation;
                             dig_at_position(&mut terrain, local_pos);
-                            let new_mesh = march_cubes_for_chunk_into_mesh(&terrain);
+                            let new_mesh = add_triangle_colors(march_cubes(&terrain.densities));
                             *mesh_handle = Mesh3d(meshes.add(new_mesh));
                         }
                     }
