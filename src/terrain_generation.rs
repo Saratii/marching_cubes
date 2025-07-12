@@ -21,10 +21,10 @@ use fastnoise2::{
     generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
 };
 
-use crate::marching_cubes::march_cubes_for_chunk_into_mesh;
+use crate::marching_cubes::{add_triangle_colors, march_cubes};
 
-pub const CHUNK_SIZE: f32 = 8.0; // World size in units (8×8×8 world units)
-pub const VOXELS_PER_DIM: usize = 64; // Voxels per dimension per chunk (32×32×32 voxels)
+pub const CHUNK_SIZE: f32 = 10.0; // World size in units (8×8×8 world units)
+pub const VOXELS_PER_DIM: usize = 32; // Voxels per dimension per chunk (32×32×32 voxels)
 pub const VOXEL_SIZE: f32 = CHUNK_SIZE / VOXELS_PER_DIM as f32;
 const VOXELS_PER_CHUNK: usize =
     VOXELS_PER_DIM as usize * VOXELS_PER_DIM as usize * VOXELS_PER_DIM as usize; // Total voxels in a chunk
@@ -81,7 +81,7 @@ impl ChunkMap {
     ) -> Entity {
         let chunk_center = Self::get_chunk_center_from_coord(chunk_coord);
         let terrain_chunk = TerrainChunk::new(chunk_coord, fbm);
-        let chunk_mesh = march_cubes_for_chunk_into_mesh(&terrain_chunk);
+        let chunk_mesh = add_triangle_colors(march_cubes(&terrain_chunk.densities));
         let entity = commands
             .spawn((
                 Mesh3d(meshes.add(chunk_mesh)),
@@ -136,7 +136,6 @@ pub fn generate_densities(
 pub struct TerrainChunk {
     pub densities: Vec<f32>,
     pub chunk_coord: (i32, i32, i32),
-    pub iso_level: f32,
 }
 
 impl TerrainChunk {
@@ -144,7 +143,6 @@ impl TerrainChunk {
         Self {
             densities: generate_densities(&chunk_coord, fbm),
             chunk_coord,
-            iso_level: 0.0,
         }
     }
 
@@ -163,7 +161,7 @@ impl TerrainChunk {
     }
 
     pub fn is_solid(&self, x: i32, y: i32, z: i32) -> bool {
-        self.get_density(x, y, z) > self.iso_level
+        self.get_density(x, y, z) > 0.
     }
 
     pub fn dig_sphere(&mut self, center: Vec3, radius: f32, strength: f32) {
