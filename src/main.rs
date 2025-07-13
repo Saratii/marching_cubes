@@ -36,8 +36,9 @@ fn main() {
             PerfUiPlugin,
             NoCameraPlayerPlugin,
         ))
+        .insert_resource(ClearColor(Color::srgb(0.0, 1.0, 1.0)))
         .add_systems(Startup, (setup, setup_map, setup_crosshair))
-        .add_systems(Update, (handle_digging_input, update_chunks, rotate_light))
+        .add_systems(Update, (handle_digging_input, update_chunks))
         .run();
 }
 
@@ -57,12 +58,6 @@ fn setup(mut commands: Commands) {
             -std::f32::consts::FRAC_PI_4,
         )),
     ));
-}
-
-fn rotate_light(time: Res<Time>, mut query: Query<&mut Transform, With<DirectionalLight>>) {
-    // for mut transform in query.iter_mut() {
-    //     transform.rotate_y(time.delta_secs());
-    // }
 }
 
 //this should ideally only trigger when the player moves across chunk borders
