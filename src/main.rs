@@ -1,6 +1,7 @@
 use bevy::diagnostic::{
     EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin, SystemInformationDiagnosticsPlugin,
 };
+use bevy::pbr::PbrPlugin;
 use bevy::prelude::*;
 use bevy::render::diagnostic::RenderDiagnosticsPlugin;
 use bevy::window::PresentMode;
@@ -19,13 +20,15 @@ pub const CHUNK_GENERATION_CIRCULAR_RADIUS_SQUARED: f32 =
 fn main() {
     App::new()
         .add_plugins((
-            DefaultPlugins.set(WindowPlugin {
-                primary_window: Some(Window {
-                    present_mode: PresentMode::AutoNoVsync,
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        present_mode: PresentMode::AutoNoVsync,
+                        ..default()
+                    }),
                     ..default()
-                }),
-                ..default()
-            }),
+                })
+                .set(PbrPlugin { ..default() }),
             FrameTimeDiagnosticsPlugin::default(),
             EntityCountDiagnosticsPlugin,
             RenderDiagnosticsPlugin,
@@ -34,7 +37,7 @@ fn main() {
             NoCameraPlayerPlugin,
         ))
         .add_systems(Startup, (setup, setup_map, setup_crosshair))
-        .add_systems(Update, (handle_digging_input, update_chunks))
+        .add_systems(Update, (handle_digging_input, update_chunks, rotate_light))
         .run();
 }
 
@@ -54,6 +57,12 @@ fn setup(mut commands: Commands) {
             -std::f32::consts::FRAC_PI_4,
         )),
     ));
+}
+
+fn rotate_light(time: Res<Time>, mut query: Query<&mut Transform, With<DirectionalLight>>) {
+    // for mut transform in query.iter_mut() {
+    //     transform.rotate_y(time.delta_secs());
+    // }
 }
 
 //this should ideally only trigger when the player moves across chunk borders
