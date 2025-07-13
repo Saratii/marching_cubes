@@ -289,9 +289,9 @@ fn interpolate_edge(edge_index: usize, vertices: &[Vec3; 8], values: &[f32; 8]) 
 }
 
 fn sample_cube_values_from_densities(x: usize, y: usize, z: usize, densities: &[f32]) -> [f32; 8] {
-    let get_density = |dx: usize, dy: usize, dz: usize| -> f32 {
-        let idx = (dz * VOXELS_PER_DIM * VOXELS_PER_DIM + dy * VOXELS_PER_DIM + dx)
-            .min(densities.len() - 1);
+    let get_density = |x: usize, y: usize, z: usize| -> f32 {
+        let idx =
+            (z * VOXELS_PER_DIM * VOXELS_PER_DIM + y * VOXELS_PER_DIM + x).min(densities.len() - 1);
         densities[idx]
     };
     [
@@ -307,7 +307,7 @@ fn sample_cube_values_from_densities(x: usize, y: usize, z: usize, densities: &[
 }
 
 fn calculate_vertex_normal(point: Vec3, densities: &[f32]) -> Vec3 {
-    let epsilon = 0.001;
+    let epsilon = 0.1;
     let grad_x = sample_density_at_point(point + Vec3::new(epsilon, 0.0, 0.0), densities)
         - sample_density_at_point(point - Vec3::new(epsilon, 0.0, 0.0), densities);
     let grad_y = sample_density_at_point(point + Vec3::new(0.0, epsilon, 0.0), densities)
@@ -318,15 +318,41 @@ fn calculate_vertex_normal(point: Vec3, densities: &[f32]) -> Vec3 {
 }
 
 fn sample_density_at_point(point: Vec3, densities: &[f32]) -> f32 {
-    let voxel_x =
-        ((point.x + HALF_CHUNK) / VOXEL_SIZE).clamp(0.0, (VOXELS_PER_DIM - 1) as f32) as usize;
-    let voxel_y =
-        ((point.y + HALF_CHUNK) / VOXEL_SIZE).clamp(0.0, (VOXELS_PER_DIM - 1) as f32) as usize;
-    let voxel_z =
-        ((point.z + HALF_CHUNK) / VOXEL_SIZE).clamp(0.0, (VOXELS_PER_DIM - 1) as f32) as usize;
-    let idx = (voxel_z * VOXELS_PER_DIM * VOXELS_PER_DIM + voxel_y * VOXELS_PER_DIM + voxel_x)
-        .min(densities.len() - 1);
-    densities[idx]
+    let voxel_x = (point.x + HALF_CHUNK) / VOXEL_SIZE;
+    let voxel_y = (point.y + HALF_CHUNK) / VOXEL_SIZE;
+    let voxel_z = (point.z + HALF_CHUNK) / VOXEL_SIZE;
+    let voxel_x = voxel_x.clamp(0.0, (VOXELS_PER_DIM - 1) as f32);
+    let voxel_y = voxel_y.clamp(0.0, (VOXELS_PER_DIM - 1) as f32);
+    let voxel_z = voxel_z.clamp(0.0, (VOXELS_PER_DIM - 1) as f32);
+    let x0 = voxel_x.floor() as usize;
+    let y0 = voxel_y.floor() as usize;
+    let z0 = voxel_z.floor() as usize;
+    let x1 = (x0 + 1).min(VOXELS_PER_DIM - 1);
+    let y1 = (y0 + 1).min(VOXELS_PER_DIM - 1);
+    let z1 = (z0 + 1).min(VOXELS_PER_DIM - 1);
+    let fx = voxel_x - x0 as f32;
+    let fy = voxel_y - y0 as f32;
+    let fz = voxel_z - z0 as f32;
+    let get_density = |x: usize, y: usize, z: usize| -> f32 {
+        let idx =
+            (z * VOXELS_PER_DIM * VOXELS_PER_DIM + y * VOXELS_PER_DIM + x).min(densities.len() - 1);
+        densities[idx]
+    };
+    let c000 = get_density(x0, y0, z0);
+    let c100 = get_density(x1, y0, z0);
+    let c010 = get_density(x0, y1, z0);
+    let c110 = get_density(x1, y1, z0);
+    let c001 = get_density(x0, y0, z1);
+    let c101 = get_density(x1, y0, z1);
+    let c011 = get_density(x0, y1, z1);
+    let c111 = get_density(x1, y1, z1);
+    let c00 = c000 * (1.0 - fx) + c100 * fx;
+    let c01 = c001 * (1.0 - fx) + c101 * fx;
+    let c10 = c010 * (1.0 - fx) + c110 * fx;
+    let c11 = c011 * (1.0 - fx) + c111 * fx;
+    let c0 = c00 * (1.0 - fy) + c10 * fy;
+    let c1 = c01 * (1.0 - fy) + c11 * fy;
+    c0 * (1.0 - fz) + c1 * fz
 }
 
 fn build_mesh_from_cache_and_indices(
@@ -394,7 +420,8 @@ pub fn add_triangle_colors(mut mesh: Mesh) -> Mesh {
                                 ((t + 0.66) * 2.0 * std::f32::consts::PI).sin() * 0.5 + 0.5,
                             );
                             for &vertex_idx in chunk {
-                                colors[vertex_idx as usize] = [color.0, color.1, color.2, 1.0];
+                                // colors[vertex_idx as usize] = [color.0, color.1, color.2, 1.0];
+                                colors[vertex_idx as usize] = [1., 0., 1., 1.0];
                             }
                         }
                     }
@@ -409,7 +436,8 @@ pub fn add_triangle_colors(mut mesh: Mesh) -> Mesh {
                                 ((t + 0.66) * 2.0 * std::f32::consts::PI).sin() * 0.5 + 0.5,
                             );
                             for &vertex_idx in chunk {
-                                colors[vertex_idx as usize] = [color.0, color.1, color.2, 1.0];
+                                // colors[vertex_idx as usize] = [color.0, color.1, color.2, 1.0];
+                                colors[vertex_idx as usize] = [1., 0., 1., 1.0];
                             }
                         }
                     }
