@@ -4,6 +4,8 @@ use bevy::diagnostic::{
 use bevy::pbr::PbrPlugin;
 use bevy::prelude::*;
 use bevy::render::diagnostic::RenderDiagnosticsPlugin;
+use bevy::render::mesh::MeshAabb;
+use bevy::render::primitives::Aabb;
 use bevy::window::PresentMode;
 use bevy_flycam::{FlyCam, NoCameraPlayerPlugin};
 use iyes_perf_ui::PerfUiPlugin;
@@ -108,6 +110,7 @@ fn handle_digging_input(
     camera_query: Query<(&Camera, &GlobalTransform), With<Camera>>,
     windows: Query<&Window>,
     mut chunk_map: ResMut<ChunkMap>,
+    mut commands: Commands,
 ) {
     if mouse_input.just_pressed(MouseButton::Left) {
         if let Ok(window) = windows.single() {
@@ -116,13 +119,24 @@ fn handle_digging_input(
                     if let Some((_, world_pos, _, _)) =
                         screen_to_world_ray(cursor_pos, camera, camera_transform, &chunk_map)
                     {
-                        let modified_chunks = chunk_map.dig_sphere(world_pos, 1.0, 5.0);
+                        let modified_chunks = chunk_map.dig_sphere(world_pos, 2.0, 5.0);
                         for chunk_coord in modified_chunks {
                             if let Some((entity, chunk)) = chunk_map.0.get(&chunk_coord) {
                                 if let Ok((_, mut mesh_handle)) = chunk_mesh_query.get_mut(*entity)
                                 {
                                     let new_mesh =
                                         add_triangle_colors(march_cubes(&chunk.densities));
+                                    if let Some(_) = new_mesh.compute_aabb() {
+                                        let min = Vec3::new(-HALF_CHUNK, -HALF_CHUNK, -HALF_CHUNK);
+                                        let max = Vec3::new(HALF_CHUNK, HALF_CHUNK, HALF_CHUNK);
+                                        let center = (min + max) / 2.0;
+                                        let half_extents = (max - min) / 2.0;
+                                        let expanded_aabb = Aabb {
+                                            center: center.into(),
+                                            half_extents: half_extents.into(),
+                                        };
+                                        commands.entity(*entity).insert(expanded_aabb);
+                                    }
                                     *mesh_handle = Mesh3d(meshes.add(new_mesh));
                                 }
                             }
