@@ -99,6 +99,75 @@ impl ChunkMap {
             .id();
         (entity, terrain_chunk)
     }
+
+    pub fn dig_sphere(&mut self, center: Vec3, radius: f32, strength: f32) -> Vec<(i32, i32, i32)> {
+        let mut modified_chunks = Vec::new();
+        let voxel_radius = radius / VOXEL_SIZE;
+        let min_world = center - Vec3::splat(radius);
+        let max_world = center + Vec3::splat(radius);
+        let min_chunk_x = (min_world.x / CHUNK_SIZE).floor() as i32;
+        let max_chunk_x = (max_world.x / CHUNK_SIZE).ceil() as i32;
+        let min_chunk_y = (min_world.y / CHUNK_SIZE).floor() as i32;
+        let max_chunk_y = (max_world.y / CHUNK_SIZE).ceil() as i32;
+        let min_chunk_z = (min_world.z / CHUNK_SIZE).floor() as i32;
+        let max_chunk_z = (max_world.z / CHUNK_SIZE).ceil() as i32;
+        for chunk_x in min_chunk_x..=max_chunk_x {
+            for chunk_y in min_chunk_y..=max_chunk_y {
+                for chunk_z in min_chunk_z..=max_chunk_z {
+                    let chunk_coord = (chunk_x, chunk_y, chunk_z);
+                    if !self.0.contains_key(&chunk_coord) {
+                        continue;
+                    }
+                    let chunk_center = Self::get_chunk_center_from_coord(chunk_coord);
+                    let chunk_modified = self.modify_chunk_voxels(
+                        chunk_coord,
+                        chunk_center,
+                        center,
+                        voxel_radius,
+                        strength,
+                    );
+                    if chunk_modified && !modified_chunks.contains(&chunk_coord) {
+                        modified_chunks.push(chunk_coord);
+                    }
+                }
+            }
+        }
+        modified_chunks
+    }
+
+    fn modify_chunk_voxels(
+        &mut self,
+        chunk_coord: (i32, i32, i32),
+        chunk_center: Vec3,
+        dig_center: Vec3,
+        voxel_radius: f32,
+        strength: f32,
+    ) -> bool {
+        let mut chunk_modified = false;
+        if let Some((_, chunk)) = self.0.get_mut(&chunk_coord) {
+            for z in 0..VOXELS_PER_DIM {
+                for y in 0..VOXELS_PER_DIM {
+                    for x in 0..VOXELS_PER_DIM {
+                        let world_x = chunk_center.x - HALF_CHUNK + x as f32 * VOXEL_SIZE;
+                        let world_y = chunk_center.y - HALF_CHUNK + y as f32 * VOXEL_SIZE;
+                        let world_z = chunk_center.z - HALF_CHUNK + z as f32 * VOXEL_SIZE;
+                        let voxel_world_pos = Vec3::new(world_x, world_y, world_z);
+                        let distance = voxel_world_pos.distance(dig_center);
+                        if distance <= voxel_radius * VOXEL_SIZE {
+                            let falloff =
+                                1.0 - (distance / (voxel_radius * VOXEL_SIZE)).clamp(0.0, 1.0);
+                            let dig_amount = strength * falloff;
+                            let current_density = chunk.get_density(x as i32, y as i32, z as i32);
+                            let new_density = current_density - dig_amount;
+                            chunk.set_density(x as i32, y as i32, z as i32, new_density);
+                            chunk_modified = true;
+                        }
+                    }
+                }
+            }
+        }
+        chunk_modified
+    }
 }
 
 pub fn generate_densities(
@@ -166,35 +235,5 @@ impl TerrainChunk {
 
     pub fn is_solid(&self, x: i32, y: i32, z: i32) -> bool {
         self.get_density(x, y, z) > 0.
-    }
-
-    pub fn dig_sphere(&mut self, center: Vec3, radius: f32, strength: f32) {
-        let center_voxel = Vec3::new(
-            (center.x + HALF_CHUNK) / VOXEL_SIZE,
-            (center.y + HALF_CHUNK) / VOXEL_SIZE,
-            (center.z + HALF_CHUNK) / VOXEL_SIZE,
-        );
-        let voxel_radius = radius / VOXEL_SIZE;
-        let min_x = ((center_voxel.x - voxel_radius).floor() as i32).max(0);
-        let max_x = ((center_voxel.x + voxel_radius).ceil() as i32).min(VOXELS_PER_DIM as i32 - 1);
-        let min_y = ((center_voxel.y - voxel_radius).floor() as i32).max(0);
-        let max_y = ((center_voxel.y + voxel_radius).ceil() as i32).min(VOXELS_PER_DIM as i32 - 1);
-        let min_z = ((center_voxel.z - voxel_radius).floor() as i32).max(0);
-        let max_z = ((center_voxel.z + voxel_radius).ceil() as i32).min(VOXELS_PER_DIM as i32 - 1);
-        for x in min_x..=max_x {
-            for y in min_y..=max_y {
-                for z in min_z..=max_z {
-                    let voxel_pos = Vec3::new(x as f32, y as f32, z as f32);
-                    let distance = voxel_pos.distance(center_voxel);
-                    if distance <= voxel_radius {
-                        let falloff = 1.0 - (distance / voxel_radius).clamp(0.0, 1.0);
-                        let dig_amount = strength * falloff;
-                        let current_density = self.get_density(x, y, z);
-                        let new_density = current_density - dig_amount;
-                        self.set_density(x, y as i32, z as i32, new_density);
-                    }
-                }
-            }
-        }
     }
 }
