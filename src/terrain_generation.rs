@@ -21,7 +21,10 @@ use fastnoise2::{
     generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
 };
 
-use crate::marching_cubes::{HALF_CHUNK, add_triangle_colors, march_cubes};
+use crate::{
+    conversions::chunk_coord_to_world_pos,
+    marching_cubes::{HALF_CHUNK, add_triangle_colors, march_cubes},
+};
 
 pub const CHUNK_SIZE: f32 = 10.0; // World size in units (8×8×8 world units)
 pub const VOXELS_PER_DIM: usize = 32; // Voxels per dimension per chunk (32×32×32 voxels)
@@ -49,7 +52,7 @@ pub fn setup_map(
 }
 
 #[derive(Resource)]
-pub struct ChunkMap(pub HashMap<(i32, i32, i32), Entity>);
+pub struct ChunkMap(pub HashMap<(i32, i32, i32), (Entity, TerrainChunk)>);
 
 impl ChunkMap {
     fn new() -> Self {
@@ -78,7 +81,7 @@ impl ChunkMap {
         materials: &mut ResMut<Assets<StandardMaterial>>,
         chunk_coord: (i32, i32, i32),
         fbm: &GeneratorWrapper<SafeNode>,
-    ) -> Entity {
+    ) -> (Entity, TerrainChunk) {
         let chunk_center = Self::get_chunk_center_from_coord(chunk_coord);
         let terrain_chunk = TerrainChunk::new(chunk_coord, fbm);
         let chunk_mesh = add_triangle_colors(march_cubes(&terrain_chunk.densities));
@@ -91,10 +94,10 @@ impl ChunkMap {
                     ..default()
                 })),
                 Transform::from_translation(chunk_center),
-                terrain_chunk,
+                ChunkTag,
             ))
             .id();
-        entity
+        (entity, terrain_chunk)
     }
 }
 
@@ -132,13 +135,18 @@ pub fn generate_densities(
 pub struct TerrainChunk {
     pub densities: Vec<f32>,
     pub chunk_coord: (i32, i32, i32),
+    pub world_position: Vec3,
 }
+
+#[derive(Component)]
+pub struct ChunkTag;
 
 impl TerrainChunk {
     pub fn new(chunk_coord: (i32, i32, i32), fbm: &GeneratorWrapper<SafeNode>) -> Self {
         Self {
             densities: generate_densities(&chunk_coord, fbm),
             chunk_coord,
+            world_position: chunk_coord_to_world_pos(chunk_coord),
         }
     }
 
@@ -161,11 +169,10 @@ impl TerrainChunk {
     }
 
     pub fn dig_sphere(&mut self, center: Vec3, radius: f32, strength: f32) {
-        let half_chunk = CHUNK_SIZE / 2.0;
         let center_voxel = Vec3::new(
-            (center.x + half_chunk) / VOXEL_SIZE,
-            (center.y + half_chunk) / VOXEL_SIZE,
-            (center.z + half_chunk) / VOXEL_SIZE,
+            (center.x + HALF_CHUNK) / VOXEL_SIZE,
+            (center.y + HALF_CHUNK) / VOXEL_SIZE,
+            (center.z + HALF_CHUNK) / VOXEL_SIZE,
         );
         let voxel_radius = radius / VOXEL_SIZE;
         let min_x = ((center_voxel.x - voxel_radius).floor() as i32).max(0);

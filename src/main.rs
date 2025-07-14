@@ -8,9 +8,9 @@ use bevy::window::PresentMode;
 use bevy_flycam::{FlyCam, NoCameraPlayerPlugin};
 use iyes_perf_ui::PerfUiPlugin;
 use iyes_perf_ui::prelude::PerfUiDefaultEntries;
-use marching_cubes::marching_cubes::{add_triangle_colors, march_cubes};
+use marching_cubes::marching_cubes::{HALF_CHUNK, add_triangle_colors, march_cubes};
 use marching_cubes::terrain_generation::{
-    CHUNK_SIZE, ChunkMap, NoiseFunction, TerrainChunk, VOXEL_SIZE, setup_map,
+    CHUNK_SIZE, ChunkMap, ChunkTag, NoiseFunction, VOXEL_SIZE, setup_map,
 };
 
 pub const CHUNK_CREATION_RADIUS: i32 = 10; //in chunks
@@ -103,26 +103,25 @@ fn update_chunks(
 
 fn handle_digging_input(
     mouse_input: Res<ButtonInput<MouseButton>>,
-    mut terrain_query: Query<(Entity, &mut TerrainChunk, &mut Mesh3d, &Transform)>,
+    mut chunk_mesh_query: Query<&mut Mesh3d, With<ChunkTag>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera>, Without<TerrainChunk>)>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<Camera>>,
     windows: Query<&Window>,
+    mut chunk_map: ResMut<ChunkMap>,
 ) {
     if mouse_input.just_pressed(MouseButton::Left) {
         if let Ok(window) = windows.single() {
             if let Some(cursor_pos) = window.cursor_position() {
                 if let Ok((camera, camera_transform)) = camera_query.single() {
-                    if let Some((hit_entity, world_pos)) =
-                        screen_to_world_ray(cursor_pos, camera, camera_transform, &terrain_query)
+                    if let Some((hit_entity, world_pos, world_position_of_chunk, chunk_coord)) =
+                        screen_to_world_ray(cursor_pos, camera, camera_transform, &chunk_map)
                     {
-                        if let Ok((_, mut terrain, mut mesh_handle, chunk_transform)) =
-                            terrain_query.get_mut(hit_entity)
-                        {
-                            let local_pos = world_pos - chunk_transform.translation;
-                            dig_at_position(&mut terrain, local_pos);
-                            let new_mesh = add_triangle_colors(march_cubes(&terrain.densities));
-                            *mesh_handle = Mesh3d(meshes.add(new_mesh));
-                        }
+                        let mut mesh_handle = chunk_mesh_query.get_mut(hit_entity).unwrap();
+                        let local_pos = world_pos - world_position_of_chunk;
+                        let chunk = &mut chunk_map.0.get_mut(&chunk_coord).unwrap().1;
+                        chunk.dig_sphere(local_pos, 1.0, 5.0);
+                        let new_mesh = add_triangle_colors(march_cubes(&chunk.densities));
+                        *mesh_handle = Mesh3d(meshes.add(new_mesh));
                     }
                 }
             }
@@ -179,8 +178,8 @@ fn screen_to_world_ray(
     cursor_pos: Vec2,
     camera: &Camera,
     camera_transform: &GlobalTransform,
-    terrain_query: &Query<(Entity, &mut TerrainChunk, &mut Mesh3d, &Transform)>,
-) -> Option<(Entity, Vec3)> {
+    chunk_map: &ResMut<ChunkMap>,
+) -> Option<(Entity, Vec3, Vec3, (i32, i32, i32))> {
     let ray = camera
         .viewport_to_world(camera_transform, cursor_pos)
         .unwrap();
@@ -191,33 +190,16 @@ fn screen_to_world_ray(
     let mut distance_traveled = 0.0;
     while distance_traveled < max_distance {
         let current_pos = ray_origin + ray_direction * distance_traveled;
-        for (entity, terrain, _, chunk_transform) in terrain_query.iter() {
-            let chunk_min = chunk_transform.translation - Vec3::splat(CHUNK_SIZE / 2.0);
-            let chunk_max = chunk_transform.translation + Vec3::splat(CHUNK_SIZE / 2.0);
-            if current_pos.x >= chunk_min.x
-                && current_pos.x <= chunk_max.x
-                && current_pos.y >= chunk_min.y
-                && current_pos.y <= chunk_max.y
-                && current_pos.z >= chunk_min.z
-                && current_pos.z <= chunk_max.z
-            {
-                let local_pos = current_pos - chunk_transform.translation;
-                let half_chunk = CHUNK_SIZE / 2.0;
-                let voxel_x = ((local_pos.x + half_chunk) / VOXEL_SIZE).floor() as i32;
-                let voxel_y = ((local_pos.y + half_chunk) / VOXEL_SIZE).floor() as i32;
-                let voxel_z = ((local_pos.z + half_chunk) / VOXEL_SIZE).floor() as i32;
-                if terrain.is_solid(voxel_x, voxel_y, voxel_z) {
-                    return Some((entity, current_pos));
-                }
-            }
+        let chunk_coord = ChunkMap::get_chunk_coord_from_world_pos(current_pos);
+        let chunk = chunk_map.0.get(&chunk_coord).unwrap();
+        let local_pos = current_pos - chunk.1.world_position;
+        let voxel_x = ((local_pos.x + HALF_CHUNK) / VOXEL_SIZE).floor() as i32;
+        let voxel_y = ((local_pos.y + HALF_CHUNK) / VOXEL_SIZE).floor() as i32;
+        let voxel_z = ((local_pos.z + HALF_CHUNK) / VOXEL_SIZE).floor() as i32;
+        if chunk.1.is_solid(voxel_x, voxel_y, voxel_z) {
+            return Some((chunk.0, current_pos, chunk.1.world_position, chunk_coord));
         }
         distance_traveled += step_size;
     }
     None
-}
-
-fn dig_at_position(terrain: &mut TerrainChunk, local_pos: Vec3) {
-    let dig_radius = 1.0;
-    let dig_strength = 5.0;
-    terrain.dig_sphere(local_pos, dig_radius, dig_strength);
 }
