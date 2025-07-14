@@ -103,7 +103,7 @@ fn update_chunks(
 
 fn handle_digging_input(
     mouse_input: Res<ButtonInput<MouseButton>>,
-    mut chunk_mesh_query: Query<&mut Mesh3d, With<ChunkTag>>,
+    mut chunk_mesh_query: Query<(Entity, &mut Mesh3d), With<ChunkTag>>,
     mut meshes: ResMut<Assets<Mesh>>,
     camera_query: Query<(&Camera, &GlobalTransform), With<Camera>>,
     windows: Query<&Window>,
@@ -113,15 +113,20 @@ fn handle_digging_input(
         if let Ok(window) = windows.single() {
             if let Some(cursor_pos) = window.cursor_position() {
                 if let Ok((camera, camera_transform)) = camera_query.single() {
-                    if let Some((hit_entity, world_pos, world_position_of_chunk, chunk_coord)) =
+                    if let Some((_, world_pos, _, _)) =
                         screen_to_world_ray(cursor_pos, camera, camera_transform, &chunk_map)
                     {
-                        let mut mesh_handle = chunk_mesh_query.get_mut(hit_entity).unwrap();
-                        let local_pos = world_pos - world_position_of_chunk;
-                        let chunk = &mut chunk_map.0.get_mut(&chunk_coord).unwrap().1;
-                        chunk.dig_sphere(local_pos, 1.0, 5.0);
-                        let new_mesh = add_triangle_colors(march_cubes(&chunk.densities));
-                        *mesh_handle = Mesh3d(meshes.add(new_mesh));
+                        let modified_chunks = chunk_map.dig_sphere(world_pos, 1.0, 5.0);
+                        for chunk_coord in modified_chunks {
+                            if let Some((entity, chunk)) = chunk_map.0.get(&chunk_coord) {
+                                if let Ok((_, mut mesh_handle)) = chunk_mesh_query.get_mut(*entity)
+                                {
+                                    let new_mesh =
+                                        add_triangle_colors(march_cubes(&chunk.densities));
+                                    *mesh_handle = Mesh3d(meshes.add(new_mesh));
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -191,15 +196,18 @@ fn screen_to_world_ray(
     while distance_traveled < max_distance {
         let current_pos = ray_origin + ray_direction * distance_traveled;
         let chunk_coord = ChunkMap::get_chunk_coord_from_world_pos(current_pos);
-        let chunk = chunk_map.0.get(&chunk_coord).unwrap();
-        let local_pos = current_pos - chunk.1.world_position;
-        let voxel_x = ((local_pos.x + HALF_CHUNK) / VOXEL_SIZE).floor() as i32;
-        let voxel_y = ((local_pos.y + HALF_CHUNK) / VOXEL_SIZE).floor() as i32;
-        let voxel_z = ((local_pos.z + HALF_CHUNK) / VOXEL_SIZE).floor() as i32;
-        if chunk.1.is_solid(voxel_x, voxel_y, voxel_z) {
-            return Some((chunk.0, current_pos, chunk.1.world_position, chunk_coord));
+        if let Some(chunk) = chunk_map.0.get(&chunk_coord) {
+            let local_pos = current_pos - chunk.1.world_position;
+            let voxel_x = ((local_pos.x + HALF_CHUNK) / VOXEL_SIZE).floor() as i32;
+            let voxel_y = ((local_pos.y + HALF_CHUNK) / VOXEL_SIZE).floor() as i32;
+            let voxel_z = ((local_pos.z + HALF_CHUNK) / VOXEL_SIZE).floor() as i32;
+            if chunk.1.is_solid(voxel_x, voxel_y, voxel_z) {
+                return Some((chunk.0, current_pos, chunk.1.world_position, chunk_coord));
+            }
+            distance_traveled += step_size;
+        } else {
+            return None;
         }
-        distance_traveled += step_size;
     }
     None
 }
