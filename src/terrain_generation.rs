@@ -32,7 +32,7 @@ pub const VOXEL_SIZE: f32 = CHUNK_SIZE / (VOXELS_PER_DIM - 1) as f32;
 const VOXELS_PER_CHUNK: usize =
     VOXELS_PER_DIM as usize * VOXELS_PER_DIM as usize * VOXELS_PER_DIM as usize; // Total voxels in a chunk
 const NOISE_SEED: u32 = 100; // Seed for noise generation
-const NOISE_FREQUENCY: f64 = 0.02; // Frequency of the noise
+const NOISE_FREQUENCY: f32 = 0.02; // Frequency of the noise
 
 #[derive(Resource)]
 pub struct NoiseFunction(pub GeneratorWrapper<SafeNode>);
@@ -176,22 +176,21 @@ pub fn generate_densities(
 ) -> Vec<f32> {
     let mut densities = vec![0.0; VOXELS_PER_CHUNK];
     let chunk_center = Vec3::new(
-        chunk_coord.0 as f32 * CHUNK_SIZE,
-        chunk_coord.1 as f32 * CHUNK_SIZE,
-        chunk_coord.2 as f32 * CHUNK_SIZE,
+        chunk_coord.0 as f32 * CHUNK_SIZE - HALF_CHUNK,
+        chunk_coord.1 as f32 * CHUNK_SIZE - HALF_CHUNK,
+        chunk_coord.2 as f32 * CHUNK_SIZE - HALF_CHUNK,
     );
     for z in 0..VOXELS_PER_DIM {
-        for y in 0..VOXELS_PER_DIM {
-            for x in 0..VOXELS_PER_DIM {
-                let world_x = chunk_center.x - HALF_CHUNK + x as f32 * VOXEL_SIZE;
-                let world_y = chunk_center.y - HALF_CHUNK + y as f32 * VOXEL_SIZE;
-                let world_z = chunk_center.z - HALF_CHUNK + z as f32 * VOXEL_SIZE;
-                let terrain_height = fbm.gen_single_2d(
-                    world_x * NOISE_FREQUENCY as f32,
-                    world_z * NOISE_FREQUENCY as f32,
-                    NOISE_SEED as i32,
-                );
-
+        let world_z = chunk_center.z + z as f32 * VOXEL_SIZE;
+        for x in 0..VOXELS_PER_DIM {
+            let world_x = chunk_center.x + x as f32 * VOXEL_SIZE;
+            let terrain_height = fbm.gen_single_2d(
+                world_x * NOISE_FREQUENCY,
+                world_z * NOISE_FREQUENCY,
+                NOISE_SEED as i32,
+            );
+            for y in 0..VOXELS_PER_DIM {
+                let world_y = chunk_center.y + y as f32 * VOXEL_SIZE;
                 let i = z * VOXELS_PER_DIM * VOXELS_PER_DIM + y * VOXELS_PER_DIM + x;
                 densities[i] = terrain_height - world_y;
             }
