@@ -202,9 +202,9 @@ pub fn generate_densities(
                 NOISE_SEED as i32,
             );
             for y in 0..VOXELS_PER_DIM {
-                let world_y = chunk_center.y + y as f32 * VOXEL_SIZE;
+                let world_y = chunk_start.y + y as f32 * VOXEL_SIZE;
                 let i = z * VOXELS_PER_DIM * VOXELS_PER_DIM + y * VOXELS_PER_DIM + x;
-                densities[i] = terrain_height - world_y;
+                densities[i] = (terrain_height - world_y).clamp(-2.0, 2.0);
             }
         }
     }
