@@ -187,15 +187,15 @@ pub fn generate_densities(
     fbm: &GeneratorWrapper<SafeNode>,
 ) -> Vec<f32> {
     let mut densities = vec![0.0; VOXELS_PER_CHUNK];
-    let chunk_center = Vec3::new(
+    let chunk_start = Vec3::new(
         chunk_coord.0 as f32 * CHUNK_SIZE - HALF_CHUNK,
         chunk_coord.1 as f32 * CHUNK_SIZE - HALF_CHUNK,
         chunk_coord.2 as f32 * CHUNK_SIZE - HALF_CHUNK,
     );
     for z in 0..VOXELS_PER_DIM {
-        let world_z = chunk_center.z + z as f32 * VOXEL_SIZE;
+        let world_z = chunk_start.z + z as f32 * VOXEL_SIZE;
         for x in 0..VOXELS_PER_DIM {
-            let world_x = chunk_center.x + x as f32 * VOXEL_SIZE;
+            let world_x = chunk_start.x + x as f32 * VOXEL_SIZE;
             let terrain_height = fbm.gen_single_2d(
                 world_x * NOISE_FREQUENCY,
                 world_z * NOISE_FREQUENCY,
