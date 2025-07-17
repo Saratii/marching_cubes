@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use bevy::{
-    asset::Assets,
-    color::Color,
+    asset::{Assets, Handle},
+    color::{Color, Srgba},
     ecs::{
         component::Component,
         entity::Entity,
@@ -23,7 +23,7 @@ use fastnoise2::{
 
 use crate::{
     conversions::chunk_coord_to_world_pos,
-    marching_cubes::{HALF_CHUNK, add_triangle_colors, march_cubes},
+    marching_cubes::{HALF_CHUNK, march_cubes},
 };
 
 pub const CHUNK_SIZE: f32 = 10.0; // World size in units (8×8×8 world units)
@@ -37,6 +37,9 @@ const NOISE_FREQUENCY: f32 = 0.02; // Frequency of the noise
 #[derive(Resource)]
 pub struct NoiseFunction(pub GeneratorWrapper<SafeNode>);
 
+#[derive(Resource)]
+pub struct StandardTerrainMaterialHandle(pub Handle<StandardMaterial>);
+
 pub fn setup_map(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -44,11 +47,24 @@ pub fn setup_map(
 ) {
     let fbm =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
+    let standard_terrain_material_handle = materials.add(StandardMaterial {
+        base_color: Color::Srgba(Srgba::new(0.6, 0.2, 0.9, 1.0)),
+        ..default()
+    });
     let mut chunk_map = ChunkMap::new();
-    let entity = chunk_map.spawn_chunk(&mut commands, &mut meshes, &mut materials, (0, 0, 0), &fbm);
+    let entity = chunk_map.spawn_chunk(
+        &mut commands,
+        &mut meshes,
+        (0, 0, 0),
+        &fbm,
+        &standard_terrain_material_handle,
+    );
     chunk_map.0.insert((0, 0, 0), entity);
     commands.insert_resource(chunk_map);
     commands.insert_resource(NoiseFunction(fbm));
+    commands.insert_resource(StandardTerrainMaterialHandle(
+        standard_terrain_material_handle,
+    ));
 }
 
 #[derive(Resource)]
@@ -78,20 +94,17 @@ impl ChunkMap {
         &mut self,
         commands: &mut Commands,
         meshes: &mut ResMut<Assets<Mesh>>,
-        materials: &mut ResMut<Assets<StandardMaterial>>,
         chunk_coord: (i32, i32, i32),
         fbm: &GeneratorWrapper<SafeNode>,
+        standard_terrain_material_handle: &Handle<StandardMaterial>,
     ) -> (Entity, TerrainChunk) {
         let chunk_center = Self::get_chunk_center_from_coord(chunk_coord);
         let terrain_chunk = TerrainChunk::new(chunk_coord, fbm);
-        let chunk_mesh = add_triangle_colors(march_cubes(&terrain_chunk.densities));
+        let chunk_mesh = march_cubes(&terrain_chunk.densities);
         let entity = commands
             .spawn((
                 Mesh3d(meshes.add(chunk_mesh)),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::WHITE,
-                    ..default()
-                })),
+                MeshMaterial3d(standard_terrain_material_handle.clone()),
                 Transform::from_translation(chunk_center),
                 ChunkTag,
             ))

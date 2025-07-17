@@ -10,9 +10,9 @@ use bevy::window::PresentMode;
 use bevy_flycam::{FlyCam, NoCameraPlayerPlugin};
 use iyes_perf_ui::PerfUiPlugin;
 use iyes_perf_ui::prelude::PerfUiDefaultEntries;
-use marching_cubes::marching_cubes::{HALF_CHUNK, add_triangle_colors, march_cubes};
+use marching_cubes::marching_cubes::{HALF_CHUNK, march_cubes};
 use marching_cubes::terrain_generation::{
-    CHUNK_SIZE, ChunkMap, ChunkTag, NoiseFunction, VOXEL_SIZE, setup_map,
+    setup_map, ChunkMap, ChunkTag, NoiseFunction, StandardTerrainMaterialHandle, CHUNK_SIZE, VOXEL_SIZE
 };
 
 pub const CHUNK_CREATION_RADIUS: i32 = 10; //in chunks
@@ -66,10 +66,10 @@ fn setup(mut commands: Commands) {
 fn update_chunks(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     mut chunk_map: ResMut<ChunkMap>,
     camera_query: Query<&Transform, (With<Camera>, With<FlyCam>)>,
     perlin: Res<NoiseFunction>,
+    standard_terrain_material_handle: Res<StandardTerrainMaterialHandle>,
 ) {
     if let Ok(camera_transform) = camera_query.single() {
         let player_chunk = ChunkMap::get_chunk_coord_from_world_pos(camera_transform.translation);
@@ -90,9 +90,9 @@ fn update_chunks(
                             let entity = chunk_map.spawn_chunk(
                                 &mut commands,
                                 &mut meshes,
-                                &mut materials,
                                 chunk_coord,
                                 &perlin.0,
+                                &standard_terrain_material_handle.0,
                             );
                             chunk_map.0.insert(chunk_coord, entity);
                         }
@@ -124,8 +124,7 @@ fn handle_digging_input(
                             if let Some((entity, chunk)) = chunk_map.0.get(&chunk_coord) {
                                 if let Ok((_, mut mesh_handle)) = chunk_mesh_query.get_mut(*entity)
                                 {
-                                    let new_mesh =
-                                        add_triangle_colors(march_cubes(&chunk.densities));
+                                    let new_mesh = march_cubes(&chunk.densities);
                                     if let Some(_) = new_mesh.compute_aabb() {
                                         let min = Vec3::new(-HALF_CHUNK, -HALF_CHUNK, -HALF_CHUNK);
                                         let max = Vec3::new(HALF_CHUNK, HALF_CHUNK, HALF_CHUNK);
