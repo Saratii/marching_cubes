@@ -90,7 +90,6 @@ impl ChunkMap {
                 Mesh3d(meshes.add(chunk_mesh)),
                 MeshMaterial3d(materials.add(StandardMaterial {
                     base_color: Color::WHITE,
-                    cull_mode: None,
                     ..default()
                 })),
                 Transform::from_translation(chunk_center),

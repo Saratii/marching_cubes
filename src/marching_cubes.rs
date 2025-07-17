@@ -168,7 +168,7 @@ fn triangulate_cube_with_cache(
                 cube_z,
                 vertex_cache,
             );
-            result.push([v1, v2, v3]);
+            result.push([v1, v3, v2]);
             i += 3;
         } else {
             break;
