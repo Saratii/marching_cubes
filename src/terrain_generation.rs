@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use bevy::{
     asset::{Assets, Handle},
     color::{Color, Srgba},
@@ -15,7 +13,8 @@ use bevy::{
     transform::components::Transform,
     utils::default,
 };
-
+use bevy_rapier3d::prelude::*;
+use std::collections::HashMap;
 use fastnoise2::{
     SafeNode,
     generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
@@ -101,8 +100,24 @@ impl ChunkMap {
         let chunk_center = Self::get_chunk_center_from_coord(chunk_coord);
         let terrain_chunk = TerrainChunk::new(chunk_coord, fbm);
         let chunk_mesh = march_cubes(&terrain_chunk.densities);
+        if chunk_mesh.count_vertices() == 0 { //this is not ideal
+            let entity = commands
+                .spawn((
+                    Mesh3d(meshes.add(chunk_mesh)),
+                    MeshMaterial3d(standard_terrain_material_handle.clone()),
+                    Transform::from_translation(chunk_center),
+                    ChunkTag,
+                ))
+                .id();
+            return (entity, terrain_chunk);
+        }
         let entity = commands
             .spawn((
+                Collider::from_bevy_mesh(
+                    &chunk_mesh,
+                    &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
+                )
+                .unwrap(),
                 Mesh3d(meshes.add(chunk_mesh)),
                 MeshMaterial3d(standard_terrain_material_handle.clone()),
                 Transform::from_translation(chunk_center),

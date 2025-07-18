@@ -6,11 +6,11 @@ edition = "2024"
 [dependencies]
 bevy = "0.16.1"
 iyes_perf_ui = "0.5.0"
-bevy_flycam = { git = "https://github.com/kristoff3r/bevy_flycam.git" }
 rand = "0.9.1"
 criterion = "0.6.0"
 fastnoise2 = "0.3.1"
 mimalloc = "0.1.47"
+bevy_rapier3d = { version = "0.30.0", features = [ "simd-stable", "debug-render-3d" ] }
 
 [[bench]]
 name = "chunk_generation"

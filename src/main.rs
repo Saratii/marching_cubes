@@ -7,12 +7,18 @@ use bevy::render::diagnostic::RenderDiagnosticsPlugin;
 use bevy::render::mesh::MeshAabb;
 use bevy::render::primitives::Aabb;
 use bevy::window::PresentMode;
-use bevy_flycam::{FlyCam, NoCameraPlayerPlugin};
+use bevy_rapier3d::plugin::{NoUserData, RapierPhysicsPlugin};
+use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
 use iyes_perf_ui::PerfUiPlugin;
 use iyes_perf_ui::prelude::PerfUiDefaultEntries;
 use marching_cubes::marching_cubes::{HALF_CHUNK, march_cubes};
+use marching_cubes::player::player::{
+    CameraController, KeyBindings, PlayerTag, camera_look, camera_zoom, cursor_grab,
+    initial_grab_cursor, spawn_player, toggle_camera,
+};
 use marching_cubes::terrain_generation::{
-    setup_map, ChunkMap, ChunkTag, NoiseFunction, StandardTerrainMaterialHandle, CHUNK_SIZE, VOXEL_SIZE
+    CHUNK_SIZE, ChunkMap, ChunkTag, NoiseFunction, StandardTerrainMaterialHandle, VOXEL_SIZE,
+    setup_map,
 };
 
 pub const CHUNK_CREATION_RADIUS: i32 = 10; //in chunks
@@ -21,6 +27,8 @@ pub const CHUNK_GENERATION_CIRCULAR_RADIUS_SQUARED: f32 =
 
 fn main() {
     App::new()
+        .insert_resource(KeyBindings::default())
+        .insert_resource(CameraController::default())
         .add_plugins((
             DefaultPlugins
                 .set(WindowPlugin {
@@ -36,21 +44,35 @@ fn main() {
             RenderDiagnosticsPlugin,
             SystemInformationDiagnosticsPlugin,
             PerfUiPlugin,
-            NoCameraPlayerPlugin,
+            RapierPhysicsPlugin::<NoUserData>::default(),
         ))
         .insert_resource(ClearColor(Color::srgb(0.0, 1.0, 1.0)))
-        .add_systems(Startup, (setup, setup_map, setup_crosshair))
-        .add_systems(Update, (handle_digging_input, update_chunks))
+        .add_systems(
+            Startup,
+            (
+                setup,
+                setup_map,
+                setup_crosshair,
+                spawn_player,
+                initial_grab_cursor,
+            ),
+        )
+        .add_systems(
+            Update,
+            (
+                handle_digging_input,
+                update_chunks,
+                toggle_camera,
+                camera_zoom,
+                camera_look,
+                cursor_grab,
+            ),
+        )
         .run();
 }
 
 fn setup(mut commands: Commands) {
     commands.spawn(PerfUiDefaultEntries::default());
-    commands.spawn((
-        Camera3d::default(),
-        Transform::from_xyz(0., 10., 0.).looking_at(Vec3::ZERO, Vec3::Y),
-        FlyCam,
-    ));
     commands.spawn((
         DirectionalLight { ..default() },
         Transform::from_rotation(Quat::from_euler(
@@ -67,35 +89,33 @@ fn update_chunks(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut chunk_map: ResMut<ChunkMap>,
-    camera_query: Query<&Transform, (With<Camera>, With<FlyCam>)>,
+    player_transform: Single<&Transform, With<PlayerTag>>,
     perlin: Res<NoiseFunction>,
     standard_terrain_material_handle: Res<StandardTerrainMaterialHandle>,
 ) {
-    if let Ok(camera_transform) = camera_query.single() {
-        let player_chunk = ChunkMap::get_chunk_coord_from_world_pos(camera_transform.translation);
-        let radius = CHUNK_CREATION_RADIUS as f32;
-        let radius_squared = radius * radius;
-        for dx in -CHUNK_CREATION_RADIUS..=CHUNK_CREATION_RADIUS {
-            for dz in -CHUNK_CREATION_RADIUS..=CHUNK_CREATION_RADIUS {
-                let xz_dist_sq = (dx * dx + dz * dz) as f32;
-                if xz_dist_sq <= radius_squared {
-                    let max_dy = (radius_squared - xz_dist_sq).sqrt() as i32;
-                    for dy in -max_dy..=max_dy {
-                        let chunk_coord = (
-                            player_chunk.0 + dx,
-                            player_chunk.1 + dy,
-                            player_chunk.2 + dz,
+    let player_chunk = ChunkMap::get_chunk_coord_from_world_pos(player_transform.translation);
+    let radius = CHUNK_CREATION_RADIUS as f32;
+    let radius_squared = radius * radius;
+    for dx in -CHUNK_CREATION_RADIUS..=CHUNK_CREATION_RADIUS {
+        for dz in -CHUNK_CREATION_RADIUS..=CHUNK_CREATION_RADIUS {
+            let xz_dist_sq = (dx * dx + dz * dz) as f32;
+            if xz_dist_sq <= radius_squared {
+                let max_dy = (radius_squared - xz_dist_sq).sqrt() as i32;
+                for dy in -max_dy..=max_dy {
+                    let chunk_coord = (
+                        player_chunk.0 + dx,
+                        player_chunk.1 + dy,
+                        player_chunk.2 + dz,
+                    );
+                    if !chunk_map.0.contains_key(&chunk_coord) {
+                        let entity = chunk_map.spawn_chunk(
+                            &mut commands,
+                            &mut meshes,
+                            chunk_coord,
+                            &perlin.0,
+                            &standard_terrain_material_handle.0,
                         );
-                        if !chunk_map.0.contains_key(&chunk_coord) {
-                            let entity = chunk_map.spawn_chunk(
-                                &mut commands,
-                                &mut meshes,
-                                chunk_coord,
-                                &perlin.0,
-                                &standard_terrain_material_handle.0,
-                            );
-                            chunk_map.0.insert(chunk_coord, entity);
-                        }
+                        chunk_map.0.insert(chunk_coord, entity);
                     }
                 }
             }
@@ -135,6 +155,18 @@ fn handle_digging_input(
                                             half_extents: half_extents.into(),
                                         };
                                         commands.entity(*entity).insert(expanded_aabb);
+                                        commands.entity(*entity).remove::<Collider>();
+                                        if new_mesh.count_vertices() > 0 {
+                                            commands.entity(*entity).insert(
+                                                Collider::from_bevy_mesh(
+                                                    &new_mesh,
+                                                    &ComputedColliderShape::TriMesh(
+                                                        TriMeshFlags::default(),
+                                                    ),
+                                                )
+                                                .unwrap(),
+                                            );
+                                        }
                                     }
                                     *mesh_handle = Mesh3d(meshes.add(new_mesh));
                                 }
