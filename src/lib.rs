@@ -5,3 +5,4 @@ pub mod marching_cubes;
 pub mod terrain_generation;
 pub mod triangle_table;
 pub mod conversions;
+pub mod player;
