@@ -51,9 +51,9 @@ pub fn spawn_player(
     camera_controller: Res<CameraController>,
 ) {
     let player_mesh = Cuboid::new(
-        PLAYER_CUBOID_SIZE.x / 2.,
-        PLAYER_CUBOID_SIZE.y / 2.,
-        PLAYER_CUBOID_SIZE.z / 2.,
+        PLAYER_CUBOID_SIZE.x,
+        PLAYER_CUBOID_SIZE.y,
+        PLAYER_CUBOID_SIZE.z,
     );
     let player_mesh_handle = meshes.add(player_mesh);
     let material = materials.add(StandardMaterial {
