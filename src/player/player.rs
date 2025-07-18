@@ -48,6 +48,7 @@ pub fn spawn_player(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    camera_controller: Res<CameraController>,
 ) {
     let player_mesh = Cuboid::new(
         PLAYER_CUBOID_SIZE.x / 2.,
@@ -59,6 +60,9 @@ pub fn spawn_player(
         base_color: Color::srgb(0.8, 0.3, 0.3),
         ..default()
     });
+    let yaw_rotation = Quat::from_rotation_y(camera_controller.yaw);
+    let pitch_rotation = Quat::from_rotation_x(camera_controller.pitch);
+    let initial_rotation = yaw_rotation * pitch_rotation;
     commands
         .spawn((
             Collider::cuboid(0.25, 0.75, 0.25),
@@ -75,7 +79,11 @@ pub fn spawn_player(
         ))
         .with_child((
             Camera3d::default(),
-            Transform::from_translation(CAMERA_FIRST_PERSON_OFFSET),
+            Transform {
+                translation: CAMERA_FIRST_PERSON_OFFSET,
+                rotation: initial_rotation,
+                scale: Vec3::ONE,
+            },
         ));
 }
 
@@ -99,8 +107,9 @@ pub fn toggle_camera(
 pub fn camera_zoom(
     mut scroll_events: EventReader<MouseWheel>,
     mut camera_transform: Single<&mut Transform, With<Camera3d>>,
+    mut camera_controller: ResMut<CameraController>,
 ) {
-    if camera_transform.translation.z <= 1.0 {
+    if camera_controller.is_first_person || !camera_controller.is_cursor_grabbed {
         return;
     }
     for event in scroll_events.read() {
@@ -108,9 +117,10 @@ pub fn camera_zoom(
         let current_distance = camera_transform.translation.length();
         let new_distance =
             (current_distance - zoom_delta).clamp(MIN_ZOOM_DISTANCE, MAX_ZOOM_DISTANCE);
+        camera_controller.distance = new_distance;
         let zoom_factor = new_distance / current_distance;
         camera_transform.translation *= zoom_factor;
-        camera_transform.look_at(Vec3::new(0.0, -2.25, -5.0), Vec3::Y);
+        update_camera_position(&mut camera_transform, &camera_controller)
     }
 }
 
