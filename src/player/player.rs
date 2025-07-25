@@ -10,6 +10,7 @@ const CAMERA_3RD_PERSON_OFFSET: Vec3 = Vec3 {
     y: 5.0,
     z: 10.0,
 };
+const PLAYER_SPEED: f32 = 5.0;
 const PLAYER_SPAWN: Vec3 = Vec3::new(0., 20., 0.);
 const PLAYER_CUBOID_SIZE: Vec3 = Vec3::new(0.5, 1.5, 0.5);
 const CAMERA_FIRST_PERSON_OFFSET: Vec3 = Vec3::new(0., 0.75 * PLAYER_CUBOID_SIZE.y, 0.);
@@ -19,6 +20,8 @@ const ZOOM_SPEED: f32 = 5.0;
 const MOUSE_SENSITIVITY: f32 = 0.002;
 const MIN_PITCH: f32 = -1.5;
 const MAX_PITCH: f32 = 1.5;
+const GRAVITY: f32 = -9.81 * 2.0;
+const JUMP_IMPULSE: f32 = 7.0;
 
 #[derive(Component)]
 pub struct PlayerTag;
@@ -44,6 +47,11 @@ impl Default for CameraController {
     }
 }
 
+#[derive(Component)]
+pub struct VerticalVelocity {
+    pub y: f32,
+}
+
 pub fn spawn_player(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -66,16 +74,19 @@ pub fn spawn_player(
     commands
         .spawn((
             Collider::cuboid(0.25, 0.75, 0.25),
-            RigidBody::Dynamic,
-            Velocity::default(),
-            AdditionalMassProperties::Mass(1.0),
+            KinematicCharacterController {
+                autostep: Some(CharacterAutostep {
+                    max_height: CharacterLength::Absolute(0.1),
+                    min_width: CharacterLength::Absolute(0.1),
+                    include_dynamic_bodies: true,
+                }),
+                ..default()
+            },
             Transform::from_translation(PLAYER_SPAWN),
-            LockedAxes::ROTATION_LOCKED_X
-                | LockedAxes::ROTATION_LOCKED_Z
-                | LockedAxes::ROTATION_LOCKED_Y,
             Mesh3d(player_mesh_handle),
             MeshMaterial3d(material),
             PlayerTag,
+            VerticalVelocity { y: 0.0 },
         ))
         .with_child((
             Camera3d::default(),
@@ -198,8 +209,7 @@ pub struct KeyBindings {
     pub move_backward: KeyCode,
     pub move_left: KeyCode,
     pub move_right: KeyCode,
-    pub move_ascend: KeyCode,
-    pub move_descend: KeyCode,
+    pub jump: KeyCode,
     pub toggle_grab_cursor: KeyCode,
 }
 
@@ -210,9 +220,55 @@ impl Default for KeyBindings {
             move_backward: KeyCode::KeyS,
             move_left: KeyCode::KeyA,
             move_right: KeyCode::KeyD,
-            move_ascend: KeyCode::Space,
-            move_descend: KeyCode::ShiftLeft,
+            jump: KeyCode::Space,
             toggle_grab_cursor: KeyCode::Escape,
         }
+    }
+}
+
+pub fn player_movement(
+    time: Res<Time>,
+    mut player_query: Query<
+        (
+            &mut KinematicCharacterController,
+            &mut VerticalVelocity,
+            Option<&KinematicCharacterControllerOutput>,
+        ),
+        With<PlayerTag>,
+    >,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    key_bindings: Res<KeyBindings>,
+    camera_controller: Res<CameraController>,
+) {
+    for (mut controller, mut vertical_velocity, controller_output) in player_query.iter_mut() {
+        let is_grounded = controller_output.map_or(false, |output| output.grounded);
+        let mut movement_vec = Vec3::ZERO;
+        let yaw_rotation = Quat::from_rotation_y(camera_controller.yaw);
+        let pitch_rotation = Quat::from_rotation_x(camera_controller.pitch);
+        let camera_rotation = yaw_rotation * pitch_rotation;
+        let forward = camera_rotation * Vec3::NEG_Z;
+        let right = camera_rotation * Vec3::X;
+        if keyboard.pressed(key_bindings.move_forward) {
+            movement_vec += forward * PLAYER_SPEED;
+        }
+        if keyboard.pressed(key_bindings.move_backward) {
+            movement_vec -= forward * PLAYER_SPEED;
+        }
+        if keyboard.pressed(key_bindings.move_left) {
+            movement_vec -= right * PLAYER_SPEED;
+        }
+        if keyboard.pressed(key_bindings.move_right) {
+            movement_vec += right * PLAYER_SPEED;
+        }
+        if keyboard.just_pressed(key_bindings.jump) && is_grounded {
+            vertical_velocity.y = JUMP_IMPULSE;
+        }
+        if !is_grounded {
+            vertical_velocity.y += GRAVITY * time.delta_secs();
+        } else if vertical_velocity.y < 0.0 {
+            vertical_velocity.y = 0.0;
+        }
+        movement_vec.y = vertical_velocity.y;
+        controller.translation = Some(movement_vec * time.delta_secs());
     }
 }

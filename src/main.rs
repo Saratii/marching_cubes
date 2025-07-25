@@ -14,7 +14,7 @@ use iyes_perf_ui::prelude::PerfUiDefaultEntries;
 use marching_cubes::marching_cubes::{HALF_CHUNK, march_cubes};
 use marching_cubes::player::player::{
     CameraController, KeyBindings, PlayerTag, camera_look, camera_zoom, cursor_grab,
-    initial_grab_cursor, spawn_player, toggle_camera,
+    initial_grab_cursor, player_movement, spawn_player, toggle_camera,
 };
 use marching_cubes::terrain_generation::{
     CHUNK_SIZE, ChunkMap, ChunkTag, NoiseFunction, StandardTerrainMaterialHandle, VOXEL_SIZE,
@@ -66,6 +66,7 @@ fn main() {
                 camera_zoom,
                 camera_look,
                 cursor_grab,
+                player_movement,
             ),
         )
         .run();
@@ -128,48 +129,45 @@ fn handle_digging_input(
     mut chunk_mesh_query: Query<(Entity, &mut Mesh3d), With<ChunkTag>>,
     mut meshes: ResMut<Assets<Mesh>>,
     camera_query: Query<(&Camera, &GlobalTransform), With<Camera>>,
-    windows: Query<&Window>,
+    window: Single<&Window>,
     mut chunk_map: ResMut<ChunkMap>,
     mut commands: Commands,
 ) {
     if mouse_input.just_pressed(MouseButton::Left) {
-        if let Ok(window) = windows.single() {
-            if let Some(cursor_pos) = window.cursor_position() {
-                if let Ok((camera, camera_transform)) = camera_query.single() {
-                    if let Some((_, world_pos, _, _)) =
-                        screen_to_world_ray(cursor_pos, camera, camera_transform, &chunk_map)
-                    {
-                        let modified_chunks = chunk_map.dig_sphere(world_pos, 2.0, 5.0);
-                        for chunk_coord in modified_chunks {
-                            if let Some((entity, chunk)) = chunk_map.0.get(&chunk_coord) {
-                                if let Ok((_, mut mesh_handle)) = chunk_mesh_query.get_mut(*entity)
-                                {
-                                    let new_mesh = march_cubes(&chunk.densities);
-                                    if let Some(_) = new_mesh.compute_aabb() {
-                                        let min = Vec3::new(-HALF_CHUNK, -HALF_CHUNK, -HALF_CHUNK);
-                                        let max = Vec3::new(HALF_CHUNK, HALF_CHUNK, HALF_CHUNK);
-                                        let center = (min + max) / 2.0;
-                                        let half_extents = (max - min) / 2.0;
-                                        let expanded_aabb = Aabb {
-                                            center: center.into(),
-                                            half_extents: half_extents.into(),
-                                        };
-                                        commands.entity(*entity).insert(expanded_aabb);
-                                        commands.entity(*entity).remove::<Collider>();
-                                        if new_mesh.count_vertices() > 0 {
-                                            commands.entity(*entity).insert(
-                                                Collider::from_bevy_mesh(
-                                                    &new_mesh,
-                                                    &ComputedColliderShape::TriMesh(
-                                                        TriMeshFlags::default(),
-                                                    ),
-                                                )
-                                                .unwrap(),
-                                            );
-                                        }
+        if let Some(cursor_pos) = window.cursor_position() {
+            if let Ok((camera, camera_transform)) = camera_query.single() {
+                if let Some((_, world_pos, _, _)) =
+                    screen_to_world_ray(cursor_pos, camera, camera_transform, &chunk_map)
+                {
+                    let modified_chunks = chunk_map.dig_sphere(world_pos, 0.5, 5.0);
+                    for chunk_coord in modified_chunks {
+                        if let Some((entity, chunk)) = chunk_map.0.get(&chunk_coord) {
+                            if let Ok((_, mut mesh_handle)) = chunk_mesh_query.get_mut(*entity) {
+                                let new_mesh = march_cubes(&chunk.densities);
+                                if let Some(_) = new_mesh.compute_aabb() {
+                                    let min = Vec3::new(-HALF_CHUNK, -HALF_CHUNK, -HALF_CHUNK);
+                                    let max = Vec3::new(HALF_CHUNK, HALF_CHUNK, HALF_CHUNK);
+                                    let center = (min + max) / 2.0;
+                                    let half_extents = (max - min) / 2.0;
+                                    let expanded_aabb = Aabb {
+                                        center: center.into(),
+                                        half_extents: half_extents.into(),
+                                    };
+                                    commands.entity(*entity).insert(expanded_aabb);
+                                    commands.entity(*entity).remove::<Collider>();
+                                    if new_mesh.count_vertices() > 0 {
+                                        commands.entity(*entity).insert(
+                                            Collider::from_bevy_mesh(
+                                                &new_mesh,
+                                                &ComputedColliderShape::TriMesh(
+                                                    TriMeshFlags::default(),
+                                                ),
+                                            )
+                                            .unwrap(),
+                                        );
                                     }
-                                    *mesh_handle = Mesh3d(meshes.add(new_mesh));
                                 }
+                                *mesh_handle = Mesh3d(meshes.add(new_mesh));
                             }
                         }
                     }
