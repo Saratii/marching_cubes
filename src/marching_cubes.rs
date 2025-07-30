@@ -7,11 +7,11 @@ use bevy::{
 };
 
 use crate::{
-    terrain_generation::{CHUNK_SIZE, VOXEL_SIZE, VOXELS_PER_DIM},
+    terrain_generation::{CHUNK_SIZE, Density, VOXEL_SIZE, VOXELS_PER_DIM},
     triangle_table::TRIANGLE_TABLE,
 };
 
-const ISO_LEVEL: f32 = 0.0;
+const ISO_LEVEL: f32 = 0.5;
 pub const HALF_CHUNK: f32 = CHUNK_SIZE / 2.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -46,7 +46,7 @@ impl VertexCache {
     }
 }
 
-pub fn march_cubes(densities: &Vec<f32>) -> Mesh {
+pub fn march_cubes(densities: &Vec<Density>) -> Mesh {
     let mut vertex_cache = VertexCache::new();
     let mut indices = Vec::new();
     for x in 0..VOXELS_PER_DIM - 1 {
@@ -70,11 +70,10 @@ fn calculate_cube_index(values: &[f32; 8]) -> u8 {
 }
 
 fn get_cube_vertices(x: usize, y: usize, z: usize) -> [Vec3; 8] {
-    let chunk_coord = (0, 0, 0);
     let start_pos = Vec3::new(
-        (chunk_coord.0 as f32 - 0.5) * CHUNK_SIZE,
-        (chunk_coord.1 as f32 - 0.5) * CHUNK_SIZE,
-        (chunk_coord.2 as f32 - 0.5) * CHUNK_SIZE,
+        (-0.5) * CHUNK_SIZE,
+        (-0.5) * CHUNK_SIZE,
+        (-0.5) * CHUNK_SIZE,
     );
     let base_x = start_pos.x + x as f32 * VOXEL_SIZE;
     let base_y = start_pos.y + y as f32 * VOXEL_SIZE;
@@ -101,7 +100,7 @@ fn process_cube_with_cache(
     z: usize,
     vertex_cache: &mut VertexCache,
     indices: &mut Vec<u32>,
-    densities: &[f32],
+    densities: &[Density],
 ) {
     let cube_vertices = get_cube_vertices(x, y, z);
     let cube_values = sample_cube_values_from_densities(x, y, z, densities);
@@ -288,11 +287,17 @@ fn interpolate_edge(edge_index: usize, vertices: &[Vec3; 8], values: &[f32; 8]) 
     v1 + t * (v2 - v1)
 }
 
-fn sample_cube_values_from_densities(x: usize, y: usize, z: usize, densities: &[f32]) -> [f32; 8] {
+fn sample_cube_values_from_densities(
+    x: usize,
+    y: usize,
+    z: usize,
+    densities: &[Density],
+) -> [f32; 8] {
     let get_density = |x: usize, y: usize, z: usize| -> f32 {
         let idx =
             (z * VOXELS_PER_DIM * VOXELS_PER_DIM + y * VOXELS_PER_DIM + x).min(densities.len() - 1);
-        densities[idx]
+        let density = &densities[idx];
+        density.sum()
     };
     [
         get_density(x, y, z),
@@ -306,18 +311,33 @@ fn sample_cube_values_from_densities(x: usize, y: usize, z: usize, densities: &[
     ]
 }
 
-fn calculate_vertex_normal(point: Vec3, densities: &[f32]) -> Vec3 {
+fn calculate_vertex_normal(point: Vec3, densities: &[Density]) -> Vec3 {
     let epsilon = 0.1;
-    let grad_x = sample_density_at_point(point + Vec3::new(epsilon, 0.0, 0.0), densities)
-        - sample_density_at_point(point - Vec3::new(epsilon, 0.0, 0.0), densities);
-    let grad_y = sample_density_at_point(point + Vec3::new(0.0, epsilon, 0.0), densities)
-        - sample_density_at_point(point - Vec3::new(0.0, epsilon, 0.0), densities);
-    let grad_z = sample_density_at_point(point + Vec3::new(0.0, 0.0, epsilon), densities)
-        - sample_density_at_point(point - Vec3::new(0.0, 0.0, epsilon), densities);
+    let grad_x = sample_density_sum_at_point_with_interpolation(
+        point + Vec3::new(epsilon, 0.0, 0.0),
+        densities,
+    ) - sample_density_sum_at_point_with_interpolation(
+        point - Vec3::new(epsilon, 0.0, 0.0),
+        densities,
+    );
+    let grad_y = sample_density_sum_at_point_with_interpolation(
+        point + Vec3::new(0.0, epsilon, 0.0),
+        densities,
+    ) - sample_density_sum_at_point_with_interpolation(
+        point - Vec3::new(0.0, epsilon, 0.0),
+        densities,
+    );
+    let grad_z = sample_density_sum_at_point_with_interpolation(
+        point + Vec3::new(0.0, 0.0, epsilon),
+        densities,
+    ) - sample_density_sum_at_point_with_interpolation(
+        point - Vec3::new(0.0, 0.0, epsilon),
+        densities,
+    );
     Vec3::new(-grad_x, -grad_y, -grad_z).normalize_or_zero()
 }
 
-fn sample_density_at_point(point: Vec3, densities: &[f32]) -> f32 {
+fn sample_density_sum_at_point_with_interpolation(point: Vec3, densities: &[Density]) -> f32 {
     let voxel_x = (point.x + HALF_CHUNK) / VOXEL_SIZE;
     let voxel_y = (point.y + HALF_CHUNK) / VOXEL_SIZE;
     let voxel_z = (point.z + HALF_CHUNK) / VOXEL_SIZE;
@@ -336,7 +356,8 @@ fn sample_density_at_point(point: Vec3, densities: &[f32]) -> f32 {
     let get_density = |x: usize, y: usize, z: usize| -> f32 {
         let idx =
             (z * VOXELS_PER_DIM * VOXELS_PER_DIM + y * VOXELS_PER_DIM + x).min(densities.len() - 1);
-        densities[idx]
+        let density = &densities[idx];
+        density.sum()
     };
     let c000 = get_density(x0, y0, z0);
     let c100 = get_density(x1, y0, z0);
@@ -358,7 +379,7 @@ fn sample_density_at_point(point: Vec3, densities: &[f32]) -> f32 {
 fn build_mesh_from_cache_and_indices(
     vertex_cache: VertexCache,
     indices: Vec<u32>,
-    densities: &[f32],
+    densities: &[Density],
 ) -> Mesh {
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
@@ -379,8 +400,14 @@ fn build_mesh_from_cache_and_indices(
             .iter()
             .map(|v| calculate_vertex_normal(*v, densities).into())
             .collect();
+        let colors: Vec<[f32; 4]> = vertex_cache
+            .vertices
+            .iter()
+            .map(|v| calculate_vertex_color(*v, &densities))
+            .collect();
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
         mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
         mesh.insert_indices(Indices::U32(indices));
     }
     mesh
@@ -401,5 +428,53 @@ fn get_edge_vertex_indices(edge_index: usize) -> (usize, usize) {
         10 => (2, 6),
         11 => (3, 7),
         _ => (0, 0),
+    }
+}
+
+fn calculate_vertex_color(point: Vec3, densities: &[Density]) -> [f32; 4] {
+    let voxel_pos = Vec3::new(
+        (point.x + HALF_CHUNK) / VOXEL_SIZE,
+        (point.y + HALF_CHUNK) / VOXEL_SIZE,
+        (point.z + HALF_CHUNK) / VOXEL_SIZE,
+    )
+    .clamp(Vec3::ZERO, Vec3::splat((VOXELS_PER_DIM - 1) as f32));
+    let base = voxel_pos.floor().as_uvec3();
+    let fract = voxel_pos - base.as_vec3();
+    let x0 = base.x as usize;
+    let y0 = base.y as usize;
+    let z0 = base.z as usize;
+    let x1 = (x0 + 1).min(VOXELS_PER_DIM - 1);
+    let y1 = (y0 + 1).min(VOXELS_PER_DIM - 1);
+    let z1 = (z0 + 1).min(VOXELS_PER_DIM - 1);
+    let get_density = |x: usize, y: usize, z: usize| -> &Density {
+        let idx = z * VOXELS_PER_DIM * VOXELS_PER_DIM + y * VOXELS_PER_DIM + x;
+        &densities[idx]
+    };
+    let interpolate_density = |extract: fn(&Density) -> f32| -> f32 {
+        let c00 = extract(get_density(x0, y0, z0)) * (1.0 - fract.x)
+            + extract(get_density(x1, y0, z0)) * fract.x;
+        let c01 = extract(get_density(x0, y0, z1)) * (1.0 - fract.x)
+            + extract(get_density(x1, y0, z1)) * fract.x;
+        let c10 = extract(get_density(x0, y1, z0)) * (1.0 - fract.x)
+            + extract(get_density(x1, y1, z0)) * fract.x;
+        let c11 = extract(get_density(x0, y1, z1)) * (1.0 - fract.x)
+            + extract(get_density(x1, y1, z1)) * fract.x;
+        let c0 = c00 * (1.0 - fract.y) + c10 * fract.y;
+        let c1 = c01 * (1.0 - fract.y) + c11 * fract.y;
+        c0 * (1.0 - fract.z) + c1 * fract.z
+    };
+    let grass_amount = interpolate_density(|d| d.grass);
+    let dirt_amount = interpolate_density(|d| d.dirt);
+    let total_density = grass_amount + dirt_amount;
+    if grass_amount > 0.1 {
+        let grass_intensity = (grass_amount / total_density).clamp(0.3, 1.0);
+        [
+            17. / 255. * grass_intensity,
+            124. / 255. * grass_intensity,
+            19. / 255. * grass_intensity,
+            1.0,
+        ]
+    } else {
+        [73. / 255., 34. / 255., 1. / 255., 1.0] //dirt
     }
 }

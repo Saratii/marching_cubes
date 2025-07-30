@@ -9,6 +9,8 @@ use bevy::render::primitives::Aabb;
 use bevy::window::PresentMode;
 use bevy_rapier3d::plugin::{NoUserData, RapierPhysicsPlugin};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
+use fastnoise2::SafeNode;
+use fastnoise2::generator::GeneratorWrapper;
 use iyes_perf_ui::PerfUiPlugin;
 use iyes_perf_ui::prelude::PerfUiDefaultEntries;
 use marching_cubes::marching_cubes::{HALF_CHUNK, march_cubes};
@@ -17,8 +19,8 @@ use marching_cubes::player::player::{
     initial_grab_cursor, player_movement, spawn_player, toggle_camera,
 };
 use marching_cubes::terrain_generation::{
-    CHUNK_SIZE, ChunkMap, ChunkTag, NoiseFunction, StandardTerrainMaterialHandle, VOXEL_SIZE,
-    setup_map,
+    CHUNK_SIZE, ChunkMap, ChunkTag, NOISE_FREQUENCY, NOISE_SEED, NoiseFunction,
+    StandardTerrainMaterialHandle, VOXEL_SIZE, setup_map,
 };
 
 pub const CHUNK_CREATION_RADIUS: i32 = 10; //in chunks
@@ -102,25 +104,74 @@ fn update_chunks(
             let xz_dist_sq = (dx * dx + dz * dz) as f32;
             if xz_dist_sq <= radius_squared {
                 let max_dy = (radius_squared - xz_dist_sq).sqrt() as i32;
+                let chunk_x = player_chunk.0 + dx;
+                let chunk_z = player_chunk.2 + dz;
+                let (min_height, max_height) =
+                    get_chunk_column_height_range(chunk_x, chunk_z, &perlin.0);
                 for dy in -max_dy..=max_dy {
-                    let chunk_coord = (
-                        player_chunk.0 + dx,
-                        player_chunk.1 + dy,
-                        player_chunk.2 + dz,
-                    );
+                    let chunk_coord = (chunk_x, player_chunk.1 + dy, chunk_z);
                     if !chunk_map.0.contains_key(&chunk_coord) {
-                        let entity = chunk_map.spawn_chunk(
-                            &mut commands,
-                            &mut meshes,
-                            chunk_coord,
-                            &perlin.0,
-                            &standard_terrain_material_handle.0,
-                        );
-                        chunk_map.0.insert(chunk_coord, entity);
+                        let needs_noise = chunk_needs_noise(chunk_coord, min_height, max_height);
+                        if needs_noise.is_some() {
+                            let entity = chunk_map.spawn_chunk(
+                                &mut commands,
+                                &mut meshes,
+                                chunk_coord,
+                                &perlin.0,
+                                &standard_terrain_material_handle.0,
+                                needs_noise.unwrap(),
+                            );
+                            chunk_map.0.insert(chunk_coord, entity);
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+fn get_chunk_column_height_range(
+    chunk_x: i32,
+    chunk_z: i32,
+    fbm: &GeneratorWrapper<SafeNode>,
+) -> (f32, f32) {
+    let chunk_world_x = chunk_x as f32 * CHUNK_SIZE;
+    let chunk_world_z = chunk_z as f32 * CHUNK_SIZE;
+    let half = HALF_CHUNK;
+    let positions = [
+        (chunk_world_x - half, chunk_world_z - half),
+        (chunk_world_x + half, chunk_world_z - half),
+        (chunk_world_x - half, chunk_world_z + half),
+        (chunk_world_x + half, chunk_world_z + half),
+        (chunk_world_x, chunk_world_z),
+    ];
+    let mut min_height = f32::INFINITY;
+    let mut max_height = f32::NEG_INFINITY;
+    for (x, z) in positions {
+        let height = fbm.gen_single_2d(x * NOISE_FREQUENCY, z * NOISE_FREQUENCY, NOISE_SEED as i32);
+        min_height = min_height.min(height);
+        max_height = max_height.max(height);
+    }
+    (min_height, max_height)
+}
+
+fn chunk_needs_noise(
+    chunk_coord: (i32, i32, i32),
+    min_terrain_height: f32,
+    max_terrain_height: f32,
+) -> Option<bool> {
+    let chunk_world_y = chunk_coord.1 as f32 * CHUNK_SIZE;
+    let chunk_bottom = chunk_world_y - HALF_CHUNK;
+    let chunk_top = chunk_world_y + HALF_CHUNK;
+    let transition_width = 1.0;
+    let effective_min = min_terrain_height - transition_width;
+    let effective_max = max_terrain_height + transition_width;
+    if chunk_bottom > effective_max {
+        None
+    } else if chunk_top < effective_min {
+        Some(false)
+    } else {
+        Some(true)
     }
 }
 
