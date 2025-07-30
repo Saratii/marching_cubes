@@ -1,6 +1,5 @@
 use bevy::{
     asset::{Assets, Handle},
-    color::{Color, Srgba},
     ecs::{
         component::Component,
         entity::Entity,
@@ -14,30 +13,52 @@ use bevy::{
     utils::default,
 };
 use bevy_rapier3d::prelude::*;
-use std::collections::HashMap;
 use fastnoise2::{
     SafeNode,
     generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
 };
+use std::collections::HashMap;
 
 use crate::{
     conversions::chunk_coord_to_world_pos,
     marching_cubes::{HALF_CHUNK, march_cubes},
 };
 
-pub const CHUNK_SIZE: f32 = 10.0; // World size in units (8×8×8 world units)
-pub const VOXELS_PER_DIM: usize = 32; // Voxels per dimension per chunk (32×32×32 voxels)
+pub const CHUNK_SIZE: f32 = 10.0; // World size in meters
+pub const VOXELS_PER_DIM: usize = 64; // Voxels per dimension per chunk (32×32×32 voxels)
 pub const VOXEL_SIZE: f32 = CHUNK_SIZE / (VOXELS_PER_DIM - 1) as f32;
 const VOXELS_PER_CHUNK: usize =
     VOXELS_PER_DIM as usize * VOXELS_PER_DIM as usize * VOXELS_PER_DIM as usize; // Total voxels in a chunk
-const NOISE_SEED: u32 = 100; // Seed for noise generation
-const NOISE_FREQUENCY: f32 = 0.02; // Frequency of the noise
+pub const NOISE_SEED: u32 = 100; // Seed for noise generation
+pub const NOISE_FREQUENCY: f32 = 0.02; // Frequency of the noise
 
 #[derive(Resource)]
 pub struct NoiseFunction(pub GeneratorWrapper<SafeNode>);
 
 #[derive(Resource)]
 pub struct StandardTerrainMaterialHandle(pub Handle<StandardMaterial>);
+
+#[derive(Resource)]
+pub struct ChunkMap(pub HashMap<(i32, i32, i32), (Entity, TerrainChunk)>);
+
+#[derive(Clone)]
+pub struct Density {
+    pub dirt: f32,
+    pub grass: f32,
+}
+
+impl Density {
+    pub fn sum(&self) -> f32 {
+        self.dirt + self.grass
+    }
+}
+
+#[derive(Component)]
+pub struct TerrainChunk {
+    pub densities: Vec<Density>,
+    pub chunk_coord: (i32, i32, i32),
+    pub world_position: Vec3,
+}
 
 pub fn setup_map(
     mut commands: Commands,
@@ -46,10 +67,7 @@ pub fn setup_map(
 ) {
     let fbm =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
-    let standard_terrain_material_handle = materials.add(StandardMaterial {
-        base_color: Color::Srgba(Srgba::new(0.6, 0.2, 0.9, 1.0)),
-        ..default()
-    });
+    let standard_terrain_material_handle = materials.add(StandardMaterial { ..default() });
     let mut chunk_map = ChunkMap::new();
     let entity = chunk_map.spawn_chunk(
         &mut commands,
@@ -57,6 +75,7 @@ pub fn setup_map(
         (0, 0, 0),
         &fbm,
         &standard_terrain_material_handle,
+        true,
     );
     chunk_map.0.insert((0, 0, 0), entity);
     commands.insert_resource(chunk_map);
@@ -65,9 +84,6 @@ pub fn setup_map(
         standard_terrain_material_handle,
     ));
 }
-
-#[derive(Resource)]
-pub struct ChunkMap(pub HashMap<(i32, i32, i32), (Entity, TerrainChunk)>);
 
 impl ChunkMap {
     fn new() -> Self {
@@ -96,11 +112,13 @@ impl ChunkMap {
         chunk_coord: (i32, i32, i32),
         fbm: &GeneratorWrapper<SafeNode>,
         standard_terrain_material_handle: &Handle<StandardMaterial>,
+        needs_noise: bool,
     ) -> (Entity, TerrainChunk) {
         let chunk_center = Self::get_chunk_center_from_coord(chunk_coord);
-        let terrain_chunk = TerrainChunk::new(chunk_coord, fbm);
+        let terrain_chunk = TerrainChunk::new(chunk_coord, fbm, needs_noise);
         let chunk_mesh = march_cubes(&terrain_chunk.densities);
-        if chunk_mesh.count_vertices() == 0 { //this is not ideal
+        if chunk_mesh.count_vertices() == 0 {
+            //this is not ideal
             let entity = commands
                 .spawn((
                     Mesh3d(meshes.add(chunk_mesh)),
@@ -184,10 +202,18 @@ impl ChunkMap {
                             let falloff =
                                 1.0 - (distance / (voxel_radius * VOXEL_SIZE)).clamp(0.0, 1.0);
                             let dig_amount = strength * falloff;
-                            let current_density = chunk.get_density(x as i32, y as i32, z as i32);
-                            let new_density = current_density - dig_amount;
-                            chunk.set_density(x as i32, y as i32, z as i32, new_density);
-                            chunk_modified = true;
+                            let current_density =
+                                chunk.get_mut_density(x as i32, y as i32, z as i32);
+                            let density_sum = current_density.sum();
+                            if density_sum > 0.0 {
+                                let dirt_ratio = current_density.dirt / density_sum;
+                                let grass_ratio = current_density.grass / density_sum;
+                                current_density.dirt =
+                                    (current_density.dirt - dig_amount * dirt_ratio).max(0.0);
+                                current_density.grass =
+                                    (current_density.grass - dig_amount * grass_ratio).max(0.0);
+                                chunk_modified = true;
+                            }
                         }
                     }
                 }
@@ -200,8 +226,24 @@ impl ChunkMap {
 pub fn generate_densities(
     chunk_coord: &(i32, i32, i32),
     fbm: &GeneratorWrapper<SafeNode>,
-) -> Vec<f32> {
-    let mut densities = vec![0.0; VOXELS_PER_CHUNK];
+    needs_noise: bool,
+) -> Vec<Density> {
+    if !needs_noise {
+        return vec![
+            Density {
+                dirt: 1.0,
+                grass: 0.0
+            };
+            VOXELS_PER_CHUNK
+        ];
+    }
+    let mut densities = vec![
+        Density {
+            dirt: 0.0,
+            grass: 0.0,
+        };
+        VOXELS_PER_CHUNK
+    ];
     let chunk_start = Vec3::new(
         chunk_coord.0 as f32 * CHUNK_SIZE - HALF_CHUNK,
         chunk_coord.1 as f32 * CHUNK_SIZE - HALF_CHUNK,
@@ -219,7 +261,30 @@ pub fn generate_densities(
             for y in 0..VOXELS_PER_DIM {
                 let world_y = chunk_start.y + y as f32 * VOXEL_SIZE;
                 let i = z * VOXELS_PER_DIM * VOXELS_PER_DIM + y * VOXELS_PER_DIM + x;
-                densities[i] = (terrain_height - world_y).clamp(-2.0, 2.0);
+                let distance_to_surface = terrain_height - world_y;
+                let transition_width = 1.0;
+                let smooth_density = if distance_to_surface <= -transition_width {
+                    0.0
+                } else if distance_to_surface >= transition_width {
+                    1.0
+                } else {
+                    let t = (distance_to_surface + transition_width) / (2.0 * transition_width);
+                    let t = t.clamp(0.0, 1.0);
+                    t * t * (3.0 - 2.0 * t)
+                };
+                if smooth_density > 0.0 {
+                    if distance_to_surface > 0.5 {
+                        densities[i].dirt = smooth_density;
+                        densities[i].grass = 0.0;
+                    } else if distance_to_surface > -0.5 {
+                        let grass_factor = (-distance_to_surface + 0.5).clamp(0.0, 1.0);
+                        densities[i].dirt = smooth_density * (1.0 - grass_factor * 0.7);
+                        densities[i].grass = smooth_density * grass_factor * 0.7;
+                    } else {
+                        densities[i].dirt = smooth_density * 0.1;
+                        densities[i].grass = smooth_density * 0.9;
+                    }
+                }
             }
         }
     }
@@ -227,25 +292,22 @@ pub fn generate_densities(
 }
 
 #[derive(Component)]
-pub struct TerrainChunk {
-    pub densities: Vec<f32>,
-    pub chunk_coord: (i32, i32, i32),
-    pub world_position: Vec3,
-}
-
-#[derive(Component)]
 pub struct ChunkTag;
 
 impl TerrainChunk {
-    pub fn new(chunk_coord: (i32, i32, i32), fbm: &GeneratorWrapper<SafeNode>) -> Self {
+    pub fn new(
+        chunk_coord: (i32, i32, i32),
+        fbm: &GeneratorWrapper<SafeNode>,
+        needs_noise: bool,
+    ) -> Self {
         Self {
-            densities: generate_densities(&chunk_coord, fbm),
+            densities: generate_densities(&chunk_coord, fbm, needs_noise),
             chunk_coord,
             world_position: chunk_coord_to_world_pos(chunk_coord),
         }
     }
 
-    pub fn set_density(&mut self, x: i32, y: i32, z: i32, density: f32) {
+    pub fn set_density(&mut self, x: i32, y: i32, z: i32, density: Density) {
         let index = self.get_voxel_index(x, y, z);
         self.densities[index] = density;
     }
@@ -254,12 +316,17 @@ impl TerrainChunk {
         (z * VOXELS_PER_DIM as i32 * VOXELS_PER_DIM as i32 + y * VOXELS_PER_DIM as i32 + x) as usize
     }
 
-    pub fn get_density(&self, x: i32, y: i32, z: i32) -> f32 {
+    pub fn get_density(&self, x: i32, y: i32, z: i32) -> &Density {
         let index = self.get_voxel_index(x, y, z);
-        self.densities[index]
+        &self.densities[index]
+    }
+
+    pub fn get_mut_density(&mut self, x: i32, y: i32, z: i32) -> &mut Density {
+        let index = self.get_voxel_index(x, y, z);
+        &mut self.densities[index]
     }
 
     pub fn is_solid(&self, x: i32, y: i32, z: i32) -> bool {
-        self.get_density(x, y, z) > 0.
+        self.get_density(x, y, z).sum() > 0.5
     }
 }

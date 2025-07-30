@@ -64,8 +64,9 @@ pub fn spawn_player(
         PLAYER_CUBOID_SIZE.z,
     );
     let player_mesh_handle = meshes.add(player_mesh);
-    let material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.8, 0.3, 0.3),
+    let material: Handle<StandardMaterial> = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.8, 0.3, 0.3, 0.1),
+        alpha_mode: AlphaMode::Blend,
         ..default()
     });
     let yaw_rotation = Quat::from_rotation_y(camera_controller.yaw);
