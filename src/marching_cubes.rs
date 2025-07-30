@@ -7,7 +7,7 @@ use bevy::{
 };
 
 use crate::{
-    terrain_generation::{CHUNK_SIZE, Density, VOXEL_SIZE, VOXELS_PER_DIM},
+    terrain_generation::{CHUNK_SIZE, Density, VOXEL_SIZE, VOXELS_PER_CHUNK, VOXELS_PER_DIM},
     triangle_table::TRIANGLE_TABLE,
 };
 
@@ -46,7 +46,7 @@ impl VertexCache {
     }
 }
 
-pub fn march_cubes(densities: &Vec<Density>) -> Mesh {
+pub fn march_cubes(densities: &Box<[Density; VOXELS_PER_CHUNK]>) -> Mesh {
     let mut vertex_cache = VertexCache::new();
     let mut indices = Vec::new();
     for x in 0..VOXELS_PER_DIM - 1 {
@@ -100,7 +100,7 @@ fn process_cube_with_cache(
     z: usize,
     vertex_cache: &mut VertexCache,
     indices: &mut Vec<u32>,
-    densities: &[Density],
+    densities: &[Density; VOXELS_PER_CHUNK],
 ) {
     let cube_vertices = get_cube_vertices(x, y, z);
     let cube_values = sample_cube_values_from_densities(x, y, z, densities);
@@ -379,7 +379,7 @@ fn sample_density_sum_at_point_with_interpolation(point: Vec3, densities: &[Dens
 fn build_mesh_from_cache_and_indices(
     vertex_cache: VertexCache,
     indices: Vec<u32>,
-    densities: &[Density],
+    densities: &[Density; VOXELS_PER_CHUNK],
 ) -> Mesh {
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
@@ -431,7 +431,7 @@ fn get_edge_vertex_indices(edge_index: usize) -> (usize, usize) {
     }
 }
 
-fn calculate_vertex_color(point: Vec3, densities: &[Density]) -> [f32; 4] {
+fn calculate_vertex_color(point: Vec3, densities: &[Density; VOXELS_PER_CHUNK]) -> [f32; 4] {
     let voxel_pos = Vec3::new(
         (point.x + HALF_CHUNK) / VOXEL_SIZE,
         (point.y + HALF_CHUNK) / VOXEL_SIZE,
@@ -463,8 +463,8 @@ fn calculate_vertex_color(point: Vec3, densities: &[Density]) -> [f32; 4] {
         let c1 = c01 * (1.0 - fract.y) + c11 * fract.y;
         c0 * (1.0 - fract.z) + c1 * fract.z
     };
-    let grass_amount = interpolate_density(|d| d.grass);
-    let dirt_amount = interpolate_density(|d| d.dirt);
+    let grass_amount = interpolate_density(|d| d.grass as f32 / 255.0);
+    let dirt_amount = interpolate_density(|d| d.dirt as f32 / 255.0);
     let total_density = grass_amount + dirt_amount;
     if grass_amount > 0.1 {
         let grass_intensity = (grass_amount / total_density).clamp(0.3, 1.0);

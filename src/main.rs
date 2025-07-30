@@ -19,11 +19,11 @@ use marching_cubes::player::player::{
     initial_grab_cursor, player_movement, spawn_player, toggle_camera,
 };
 use marching_cubes::terrain_generation::{
-    CHUNK_SIZE, ChunkMap, ChunkTag, NOISE_FREQUENCY, NOISE_SEED, NoiseFunction,
-    StandardTerrainMaterialHandle, VOXEL_SIZE, setup_map,
+    CHUNK_SIZE, ChunkMap, ChunkTag, Density, NOISE_FREQUENCY, NOISE_SEED, NoiseFunction,
+    StandardTerrainMaterialHandle, TerrainChunk, VOXEL_SIZE, setup_map,
 };
 
-pub const CHUNK_CREATION_RADIUS: i32 = 10; //in chunks
+pub const CHUNK_CREATION_RADIUS: i16 = 10; //in chunks
 pub const CHUNK_GENERATION_CIRCULAR_RADIUS_SQUARED: f32 =
     (CHUNK_CREATION_RADIUS as f32 * CHUNK_SIZE) * (CHUNK_CREATION_RADIUS as f32 * CHUNK_SIZE);
 
@@ -69,6 +69,7 @@ fn main() {
                 camera_look,
                 cursor_grab,
                 player_movement,
+                debug_listener,
             ),
         )
         .run();
@@ -103,7 +104,7 @@ fn update_chunks(
         for dz in -CHUNK_CREATION_RADIUS..=CHUNK_CREATION_RADIUS {
             let xz_dist_sq = (dx * dx + dz * dz) as f32;
             if xz_dist_sq <= radius_squared {
-                let max_dy = (radius_squared - xz_dist_sq).sqrt() as i32;
+                let max_dy = (radius_squared - xz_dist_sq).sqrt() as i16;
                 let chunk_x = player_chunk.0 + dx;
                 let chunk_z = player_chunk.2 + dz;
                 let (min_height, max_height) =
@@ -131,8 +132,8 @@ fn update_chunks(
 }
 
 fn get_chunk_column_height_range(
-    chunk_x: i32,
-    chunk_z: i32,
+    chunk_x: i16,
+    chunk_z: i16,
     fbm: &GeneratorWrapper<SafeNode>,
 ) -> (f32, f32) {
     let chunk_world_x = chunk_x as f32 * CHUNK_SIZE;
@@ -156,7 +157,7 @@ fn get_chunk_column_height_range(
 }
 
 fn chunk_needs_noise(
-    chunk_coord: (i32, i32, i32),
+    chunk_coord: (i16, i16, i16),
     min_terrain_height: f32,
     max_terrain_height: f32,
 ) -> Option<bool> {
@@ -278,7 +279,7 @@ fn screen_to_world_ray(
     camera: &Camera,
     camera_transform: &GlobalTransform,
     chunk_map: &ResMut<ChunkMap>,
-) -> Option<(Entity, Vec3, Vec3, (i32, i32, i32))> {
+) -> Option<(Entity, Vec3, Vec3, (i16, i16, i16))> {
     let ray = camera
         .viewport_to_world(camera_transform, cursor_pos)
         .unwrap();
@@ -304,4 +305,27 @@ fn screen_to_world_ray(
         }
     }
     None
+}
+
+fn debug_listener(keyboard: Res<ButtonInput<KeyCode>>, chunk_map: Res<ChunkMap>) {
+    if keyboard.just_pressed(KeyCode::KeyF) {
+        let map = &chunk_map.0;
+        let struct_size = size_of_val(map);
+        let mut vec_heap_size = 0;
+        for (_, (_, chunk)) in map.iter() {
+            vec_heap_size += chunk.densities.len() * size_of::<Density>();
+        }
+        println!("Size of a Density: {} bytes", size_of::<Density>());
+        let hashmap_heap =
+            map.capacity() * (size_of::<(i16, i16, i16)>() + size_of::<(Entity, TerrainChunk)>());
+        let total = struct_size + hashmap_heap + vec_heap_size;
+        println!("Num Chunks: {}", map.len());
+        println!("HashMap heap: {} bytes", hashmap_heap);
+        println!("Vec heap: {} bytes", vec_heap_size);
+        println!(
+            "TOTAL: {} bytes ({:.2} MB)\n",
+            total,
+            total as f64 / 1_048_576.0
+        );
+    }
 }
