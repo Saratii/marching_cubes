@@ -7,12 +7,13 @@ use bevy::{
 };
 
 use crate::{
-    terrain_generation::{CHUNK_SIZE, Density, VOXEL_SIZE, VOXELS_PER_CHUNK, VOXELS_PER_DIM},
+    terrain::terrain::{
+        CHUNK_SIZE, Density, HALF_CHUNK, VOXEL_SIZE, VOXELS_PER_CHUNK, VOXELS_PER_DIM,
+    },
     triangle_table::TRIANGLE_TABLE,
 };
 
-const ISO_LEVEL: f32 = 0.5;
-pub const HALF_CHUNK: f32 = CHUNK_SIZE / 2.0;
+pub const ISO_LEVEL: f32 = 0.5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct EdgeId {

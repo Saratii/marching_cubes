@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use bevy::diagnostic::{
     EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin, SystemInformationDiagnosticsPlugin,
 };
@@ -13,24 +15,34 @@ use fastnoise2::SafeNode;
 use fastnoise2::generator::GeneratorWrapper;
 use iyes_perf_ui::PerfUiPlugin;
 use iyes_perf_ui::prelude::PerfUiDefaultEntries;
-use marching_cubes::marching_cubes::{HALF_CHUNK, march_cubes};
+use marching_cubes::marching_cubes::march_cubes;
 use marching_cubes::player::player::{
     CameraController, KeyBindings, PlayerTag, camera_look, camera_zoom, cursor_grab,
     initial_grab_cursor, player_movement, spawn_player, toggle_camera,
 };
-use marching_cubes::terrain_generation::{
-    CHUNK_SIZE, ChunkMap, ChunkTag, Density, NOISE_FREQUENCY, NOISE_SEED, NoiseFunction,
-    StandardTerrainMaterialHandle, TerrainChunk, VOXEL_SIZE, setup_map,
+use marching_cubes::terrain::chunk_generator::{GenerateChunkEvent, NOISE_FREQUENCY, NOISE_SEED};
+use marching_cubes::terrain::chunk_thread::{
+    MyMapGenTasks, catch_chunk_generation_request, spawn_generated_chunks,
 };
-
-pub const CHUNK_CREATION_RADIUS: i16 = 10; //in chunks
-pub const CHUNK_GENERATION_CIRCULAR_RADIUS_SQUARED: f32 =
-    (CHUNK_CREATION_RADIUS as f32 * CHUNK_SIZE) * (CHUNK_CREATION_RADIUS as f32 * CHUNK_SIZE);
+use marching_cubes::terrain::terrain::{
+    CHUNK_CREATION_RADIUS, CHUNK_SIZE, ChunkMap, ChunkTag, Density, HALF_CHUNK, NoiseFunction,
+    TerrainChunk, VOXEL_SIZE, VOXELS_PER_CHUNK, VOXELS_PER_DIM, setup_map,
+};
+use rayon::ThreadPoolBuilder;
 
 fn main() {
+    ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build_global()
+        .unwrap();
     App::new()
         .insert_resource(KeyBindings::default())
         .insert_resource(CameraController::default())
+        .insert_resource(MyMapGenTasks {
+            generation_tasks: Vec::new(),
+            chunks_being_generated: HashSet::new(),
+        })
+        .add_event::<GenerateChunkEvent>()
         .add_plugins((
             DefaultPlugins
                 .set(WindowPlugin {
@@ -70,6 +82,8 @@ fn main() {
                 cursor_grab,
                 player_movement,
                 debug_listener,
+                catch_chunk_generation_request,
+                spawn_generated_chunks,
             ),
         )
         .run();
@@ -90,16 +104,16 @@ fn setup(mut commands: Commands) {
 
 //this should ideally only trigger when the player moves across chunk borders
 fn update_chunks(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut chunk_map: ResMut<ChunkMap>,
+    chunk_map: ResMut<ChunkMap>,
     player_transform: Single<&Transform, With<PlayerTag>>,
     perlin: Res<NoiseFunction>,
-    standard_terrain_material_handle: Res<StandardTerrainMaterialHandle>,
+    mut chunk_generation_events: EventWriter<GenerateChunkEvent>,
+    map_gen_tasks: Res<MyMapGenTasks>,
 ) {
     let player_chunk = ChunkMap::get_chunk_coord_from_world_pos(player_transform.translation);
     let radius = CHUNK_CREATION_RADIUS as f32;
     let radius_squared = radius * radius;
+    let mut chunk_data = Vec::new();
     for dx in -CHUNK_CREATION_RADIUS..=CHUNK_CREATION_RADIUS {
         for dz in -CHUNK_CREATION_RADIUS..=CHUNK_CREATION_RADIUS {
             let xz_dist_sq = (dx * dx + dz * dz) as f32;
@@ -111,23 +125,20 @@ fn update_chunks(
                     get_chunk_column_height_range(chunk_x, chunk_z, &perlin.0);
                 for dy in -max_dy..=max_dy {
                     let chunk_coord = (chunk_x, player_chunk.1 + dy, chunk_z);
-                    if !chunk_map.0.contains_key(&chunk_coord) {
+                    if !chunk_map.0.contains_key(&chunk_coord)
+                        && !map_gen_tasks.chunks_being_generated.contains(&chunk_coord)
+                    {
                         let needs_noise = chunk_needs_noise(chunk_coord, min_height, max_height);
                         if needs_noise.is_some() {
-                            let entity = chunk_map.spawn_chunk(
-                                &mut commands,
-                                &mut meshes,
-                                chunk_coord,
-                                &perlin.0,
-                                &standard_terrain_material_handle.0,
-                                needs_noise.unwrap(),
-                            );
-                            chunk_map.0.insert(chunk_coord, entity);
+                            chunk_data.push((chunk_coord, needs_noise.unwrap()));
                         }
                     }
                 }
             }
         }
+    }
+    if !chunk_data.is_empty() {
+        chunk_generation_events.write(GenerateChunkEvent { chunk_data });
     }
 }
 
@@ -307,7 +318,11 @@ fn screen_to_world_ray(
     None
 }
 
-fn debug_listener(keyboard: Res<ButtonInput<KeyCode>>, chunk_map: Res<ChunkMap>) {
+fn debug_listener(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    chunk_map: Res<ChunkMap>,
+    my_tasks: Res<MyMapGenTasks>,
+) {
     if keyboard.just_pressed(KeyCode::KeyF) {
         let map = &chunk_map.0;
         let struct_size = size_of_val(map);
@@ -316,10 +331,18 @@ fn debug_listener(keyboard: Res<ButtonInput<KeyCode>>, chunk_map: Res<ChunkMap>)
             vec_heap_size += chunk.densities.len() * size_of::<Density>();
         }
         println!("Size of a Density: {} bytes", size_of::<Density>());
+        println!(
+            "Densities per chunk: {} ({}^3)",
+            VOXELS_PER_CHUNK, VOXELS_PER_DIM
+        );
         let hashmap_heap =
             map.capacity() * (size_of::<(i16, i16, i16)>() + size_of::<(Entity, TerrainChunk)>());
         let total = struct_size + hashmap_heap + vec_heap_size;
         println!("Num Chunks: {}", map.len());
+        println!(
+            "Chunks on generation thread: {}",
+            my_tasks.chunks_being_generated.len()
+        );
         println!("HashMap heap: {} bytes", hashmap_heap);
         println!("Vec heap: {} bytes", vec_heap_size);
         println!(

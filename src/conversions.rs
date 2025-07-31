@@ -1,6 +1,6 @@
 use bevy::math::Vec3;
 
-use crate::terrain_generation::CHUNK_SIZE;
+use crate::terrain::terrain::CHUNK_SIZE;
 
 pub fn chunk_coord_to_world_pos(chunk_coord: (i16, i16, i16)) -> Vec3 {
     Vec3::new(
