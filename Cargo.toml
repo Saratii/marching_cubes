@@ -11,6 +11,7 @@ criterion = "0.6.0"
 fastnoise2 = "0.3.1"
 mimalloc = "0.1.47"
 bevy_rapier3d = { version = "0.30.0", features = [ "simd-stable", "debug-render-3d" ] }
+rayon = "1.10.0"
 
 [[bench]]
 name = "chunk_generation"

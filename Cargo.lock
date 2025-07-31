@@ -2922,6 +2922,7 @@ dependencies = [
  "iyes_perf_ui",
  "mimalloc",
  "rand 0.9.1",
+ "rayon",
 ]
 
 [[package]]
