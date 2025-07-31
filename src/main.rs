@@ -32,7 +32,7 @@ use rayon::ThreadPoolBuilder;
 
 fn main() {
     ThreadPoolBuilder::new()
-        .num_threads(4)
+        .num_threads(8)
         .build_global()
         .unwrap();
     App::new()
@@ -339,6 +339,7 @@ fn debug_listener(
             map.capacity() * (size_of::<(i16, i16, i16)>() + size_of::<(Entity, TerrainChunk)>());
         let total = struct_size + hashmap_heap + vec_heap_size;
         println!("Num Chunks: {}", map.len());
+        println!("Tasks running: {}", my_tasks.generation_tasks.len());
         println!(
             "Chunks on generation thread: {}",
             my_tasks.chunks_being_generated.len()

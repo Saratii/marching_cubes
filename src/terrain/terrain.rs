@@ -118,7 +118,7 @@ impl ChunkMap {
         &mut self,
         commands: &mut Commands,
         meshes: &mut ResMut<Assets<Mesh>>,
-        standard_terrain_material_handle: &Handle<StandardMaterial>,
+        standard_terrain_material_handle: Handle<StandardMaterial>,
         terrain_chunk: TerrainChunk,
         mesh: Mesh,
         transform: Transform,
@@ -126,17 +126,14 @@ impl ChunkMap {
     ) -> (Entity, TerrainChunk) {
         let bundle = (
             Mesh3d(meshes.add(mesh)),
-            MeshMaterial3d(standard_terrain_material_handle.clone()),
+            MeshMaterial3d(standard_terrain_material_handle),
             ChunkTag,
             transform,
         );
-        let entity = commands.spawn(bundle).id();
-        match collider {
-            Some(collider) => {
-                commands.entity(entity).insert(collider);
-            }
-            None => {}
-        }
+        let entity = match collider {
+            Some(collider) => commands.spawn((bundle, collider)).id(),
+            None => commands.spawn(bundle).id(),
+        };
         (entity, terrain_chunk)
     }
 
@@ -241,7 +238,7 @@ pub fn setup_map(
     let entity = chunk_map.spawn_chunk(
         &mut commands,
         &mut meshes,
-        &standard_terrain_material_handle,
+        standard_terrain_material_handle.clone(),
         terrain_chunk,
         mesh,
         Transform::from_translation(Vec3::ZERO),
