@@ -26,7 +26,7 @@ use crate::{
     terrain::chunk_generator::generate_densities,
 };
 
-pub const CHUNK_SIZE: f32 = 16.0; // World size in meters
+pub const CHUNK_SIZE: f32 = 8.0; // World size in meters
 pub const CHUNK_DENSITY: f32 = 8.0; // Voxels per meter
 pub const VOXELS_PER_DIM: usize = (CHUNK_SIZE * CHUNK_DENSITY) as usize; // 64 voxels per dimension
 pub const VOXEL_SIZE: f32 = CHUNK_SIZE / (VOXELS_PER_DIM - 1) as f32;

@@ -195,14 +195,31 @@ fn handle_digging_input(
     window: Single<&Window>,
     mut chunk_map: ResMut<ChunkMap>,
     mut commands: Commands,
+    mut dig_timer: Local<f32>,
+    time: Res<Time>,
 ) {
-    if mouse_input.just_pressed(MouseButton::Left) {
+    const DIG_STRENGTH: f32 = 0.2;
+    const DIG_TIMER: f32 = 0.05; // seconds
+    const DIG_RADIUS: f32 = 0.2; // meters
+    let should_dig = if mouse_input.pressed(MouseButton::Left) {
+        *dig_timer += time.delta_secs();
+        if *dig_timer >= DIG_TIMER {
+            *dig_timer = 0.0;
+            true
+        } else {
+            false
+        }
+    } else {
+        *dig_timer = 0.0;
+        false
+    };
+    if should_dig {
         if let Some(cursor_pos) = window.cursor_position() {
             if let Ok((camera, camera_transform)) = camera_query.single() {
                 if let Some((_, world_pos, _, _)) =
                     screen_to_world_ray(cursor_pos, camera, camera_transform, &chunk_map)
                 {
-                    let modified_chunks = chunk_map.dig_sphere(world_pos, 0.5, 5.0);
+                    let modified_chunks = chunk_map.dig_sphere(world_pos, DIG_RADIUS, DIG_STRENGTH);
                     for chunk_coord in modified_chunks {
                         if let Some((entity, chunk)) = chunk_map.0.get(&chunk_coord) {
                             if let Ok((_, mut mesh_handle)) = chunk_mesh_query.get_mut(*entity) {
