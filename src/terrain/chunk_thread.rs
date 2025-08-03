@@ -22,7 +22,8 @@ use crate::{
         terrain::{ChunkMap, NoiseFunction, StandardTerrainMaterialHandle, TerrainChunk},
     },
 };
-
+use fastnoise2::SafeNode;
+use fastnoise2::generator::GeneratorWrapper;
 const MAX_CHUNKS_PER_TASK: usize = 10000000;
 
 #[derive(bevy::ecs::resource::Resource)]
@@ -62,25 +63,10 @@ pub fn catch_chunk_generation_request(
                 chunk_coords
                     .par_iter()
                     .map(|(coord, needs_noise)| {
-                        let terrain_chunk =
-                            TerrainChunk::new(*coord, &noise_gen_clone, *needs_noise);
-                        let mesh = march_cubes(&terrain_chunk.densities);
-                        let chunk_center = chunk_coord_to_world_pos(*coord);
-                        let transform = Transform::from_translation(chunk_center);
-                        let collider = if *needs_noise {
-                            Collider::from_bevy_mesh(
-                                &mesh,
-                                &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
-                            )
-                        } else {
-                            None
-                        };
-                        (
-                            *coord,
-                            terrain_chunk,
-                            mesh,
-                            transform,
-                            collider,
+                        generate_chunk_data(
+                            coord,
+                            &noise_gen_clone,
+                            *needs_noise,
                             material_handle.clone(),
                         )
                     })
@@ -90,6 +76,40 @@ pub fn catch_chunk_generation_request(
             my_tasks.generation_tasks.push(task);
         }
     }
+}
+
+pub fn generate_chunk_data(
+    coord: &(i16, i16, i16),
+    noise_gen: &GeneratorWrapper<SafeNode>,
+    needs_noise: bool,
+    standard_terrain_material_handle: Handle<StandardMaterial>,
+) -> (
+    (i16, i16, i16),
+    TerrainChunk,
+    Mesh,
+    Transform,
+    Option<Collider>,
+    Handle<StandardMaterial>,
+) {
+    let terrain_chunk = TerrainChunk::new(*coord, noise_gen, needs_noise);
+    let mesh = march_cubes(&terrain_chunk.densities);
+    let transform = Transform::from_translation(chunk_coord_to_world_pos(*coord));
+    let collider = if needs_noise {
+        Collider::from_bevy_mesh(
+            &mesh,
+            &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
+        )
+    } else {
+        None
+    };
+    (
+        *coord,
+        terrain_chunk,
+        mesh,
+        transform,
+        collider,
+        standard_terrain_material_handle,
+    )
 }
 
 pub fn spawn_generated_chunks(
