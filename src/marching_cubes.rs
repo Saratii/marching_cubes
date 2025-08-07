@@ -7,13 +7,26 @@ use bevy::{
 };
 
 use crate::{
-    terrain::terrain::{
-        CHUNK_SIZE, Density, HALF_CHUNK, VOXEL_SIZE, VOXELS_PER_CHUNK, VOXELS_PER_DIM,
-    },
+    terrain::terrain::{Density, HALF_CHUNK, VOXEL_SIZE, VOXELS_PER_CHUNK, VOXELS_PER_DIM},
     triangle_table::TRIANGLE_TABLE,
 };
 
 pub const ISO_LEVEL: f32 = 0.5;
+
+const EDGE_VERTICES: [(usize, usize); 12] = [
+    (0, 1),
+    (1, 2),
+    (2, 3),
+    (3, 0), // Bottom
+    (4, 5),
+    (5, 6),
+    (6, 7),
+    (7, 4), // Top
+    (0, 4),
+    (1, 5),
+    (2, 6),
+    (3, 7), // Vertical
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct EdgeId {
@@ -71,11 +84,7 @@ fn calculate_cube_index(values: &[f32; 8]) -> u8 {
 }
 
 fn get_cube_vertices(x: usize, y: usize, z: usize) -> [Vec3; 8] {
-    let start_pos = Vec3::new(
-        (-0.5) * CHUNK_SIZE,
-        (-0.5) * CHUNK_SIZE,
-        (-0.5) * CHUNK_SIZE,
-    );
+    let start_pos = Vec3::splat(-HALF_CHUNK);
     let base_x = start_pos.x + x as f32 * VOXEL_SIZE;
     let base_y = start_pos.y + y as f32 * VOXEL_SIZE;
     let base_z = start_pos.z + z as f32 * VOXEL_SIZE;
@@ -119,12 +128,12 @@ fn process_cube_with_cache(
         vertex_cache,
     );
     for triangle in triangles {
-        indices.extend(triangle);
+        indices.extend_from_slice(&triangle);
     }
 }
 
-fn get_edge_table_for_cube(cube_index: u8) -> Vec<i32> {
-    TRIANGLE_TABLE[cube_index as usize].to_vec()
+fn get_edge_table_for_cube(cube_index: u8) -> &'static [i32] {
+    &TRIANGLE_TABLE[cube_index as usize]
 }
 
 fn triangulate_cube_with_cache(
@@ -275,7 +284,7 @@ fn get_canonical_edge_id(edge_index: usize, cube_x: usize, cube_y: usize, cube_z
 }
 
 fn interpolate_edge(edge_index: usize, vertices: &[Vec3; 8], values: &[f32; 8]) -> Vec3 {
-    let (v1_idx, v2_idx) = get_edge_vertex_indices(edge_index);
+    let (v1_idx, v2_idx) = EDGE_VERTICES[edge_index];
     let v1 = vertices[v1_idx];
     let v2 = vertices[v2_idx];
     let val1 = values[v1_idx];
@@ -313,7 +322,7 @@ fn sample_cube_values_from_densities(
 }
 
 fn calculate_vertex_normal(point: Vec3, densities: &[Density]) -> Vec3 {
-    let epsilon = 0.1;
+    let epsilon = 0.000001;
     let grad_x = sample_density_sum_at_point_with_interpolation(
         point + Vec3::new(epsilon, 0.0, 0.0),
         densities,
@@ -412,24 +421,6 @@ fn build_mesh_from_cache_and_indices(
         mesh.insert_indices(Indices::U32(indices));
     }
     mesh
-}
-
-fn get_edge_vertex_indices(edge_index: usize) -> (usize, usize) {
-    match edge_index {
-        0 => (0, 1),
-        1 => (1, 2),
-        2 => (2, 3),
-        3 => (3, 0),
-        4 => (4, 5),
-        5 => (5, 6),
-        6 => (6, 7),
-        7 => (7, 4),
-        8 => (0, 4),
-        9 => (1, 5),
-        10 => (2, 6),
-        11 => (3, 7),
-        _ => (0, 0),
-    }
 }
 
 fn calculate_vertex_color(point: Vec3, densities: &[Density; VOXELS_PER_CHUNK]) -> [f32; 4] {
