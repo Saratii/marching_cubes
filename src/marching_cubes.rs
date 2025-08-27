@@ -7,7 +7,10 @@ use bevy::{
 };
 
 use crate::{
-    terrain::terrain::{HALF_CHUNK, VOXEL_SIZE, VOXELS_PER_CHUNK, VOXELS_PER_CHUNK_DIM, VoxelData},
+    terrain::terrain::{
+        CUBES_PER_CHUNK_DIM, HALF_CHUNK, VOXEL_SIZE, VOXELS_PER_CHUNK, VOXELS_PER_CHUNK_DIM,
+        VoxelData,
+    },
     triangle_table::TRIANGLE_TABLE,
 };
 
@@ -96,9 +99,9 @@ fn voxel_color_from_index(
 pub fn march_cubes(densities: &Box<[VoxelData; VOXELS_PER_CHUNK]>) -> Mesh {
     let mut vertex_cache = VertexCache::new();
     let mut indices = Vec::new();
-    for x in 0..VOXELS_PER_CHUNK_DIM - 1 {
-        for y in 0..VOXELS_PER_CHUNK_DIM - 1 {
-            for z in 0..VOXELS_PER_CHUNK_DIM - 1 {
+    for x in 0..CUBES_PER_CHUNK_DIM {
+        for y in 0..CUBES_PER_CHUNK_DIM {
+            for z in 0..CUBES_PER_CHUNK_DIM {
                 process_cube_with_cache(x, y, z, &mut vertex_cache, &mut indices, densities);
             }
         }
