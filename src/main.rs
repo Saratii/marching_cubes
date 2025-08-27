@@ -15,6 +15,7 @@ use fastnoise2::SafeNode;
 use fastnoise2::generator::GeneratorWrapper;
 use iyes_perf_ui::PerfUiPlugin;
 use iyes_perf_ui::prelude::PerfUiDefaultEntries;
+use marching_cubes::conversions::world_pos_to_chunk_coord;
 use marching_cubes::marching_cubes::march_cubes;
 use marching_cubes::player::player::{
     CameraController, KeyBindings, PlayerTag, camera_look, camera_zoom, cursor_grab,
@@ -25,8 +26,8 @@ use marching_cubes::terrain::chunk_thread::{
     MyMapGenTasks, catch_chunk_generation_request, spawn_generated_chunks,
 };
 use marching_cubes::terrain::terrain::{
-    CHUNK_CREATION_RADIUS, CHUNK_SIZE, ChunkMap, ChunkTag, Density, HALF_CHUNK, NoiseFunction,
-    TerrainChunk, VOXEL_SIZE, VOXELS_PER_CHUNK, VOXELS_PER_DIM, setup_map,
+    CHUNK_CREATION_RADIUS, CHUNK_SIZE, ChunkMap, ChunkTag, HALF_CHUNK, NoiseFunction, VOXEL_SIZE,
+    setup_map,
 };
 use rayon::ThreadPoolBuilder;
 
@@ -81,7 +82,6 @@ fn main() {
                 camera_look,
                 cursor_grab,
                 player_movement,
-                debug_listener,
                 catch_chunk_generation_request,
                 spawn_generated_chunks,
             ),
@@ -110,7 +110,7 @@ fn update_chunks(
     mut chunk_generation_events: EventWriter<GenerateChunkEvent>,
     map_gen_tasks: Res<MyMapGenTasks>,
 ) {
-    let player_chunk = ChunkMap::get_chunk_coord_from_world_pos(player_transform.translation);
+    let player_chunk = world_pos_to_chunk_coord(player_transform.translation);
     let radius = CHUNK_CREATION_RADIUS as f32;
     let radius_squared = radius * radius;
     let mut chunk_data = Vec::new();
@@ -318,12 +318,12 @@ fn screen_to_world_ray(
     let mut distance_traveled = 0.0;
     while distance_traveled < max_distance {
         let current_pos = ray_origin + ray_direction * distance_traveled;
-        let chunk_coord = ChunkMap::get_chunk_coord_from_world_pos(current_pos);
+        let chunk_coord = world_pos_to_chunk_coord(current_pos);
         if let Some(chunk) = chunk_map.0.get(&chunk_coord) {
             let local_pos = current_pos - chunk.1.world_position;
-            let voxel_x = ((local_pos.x + HALF_CHUNK) / VOXEL_SIZE).floor() as i32;
-            let voxel_y = ((local_pos.y + HALF_CHUNK) / VOXEL_SIZE).floor() as i32;
-            let voxel_z = ((local_pos.z + HALF_CHUNK) / VOXEL_SIZE).floor() as i32;
+            let voxel_x = ((local_pos.x + HALF_CHUNK) / VOXEL_SIZE).floor() as u32;
+            let voxel_y = ((local_pos.y + HALF_CHUNK) / VOXEL_SIZE).floor() as u32;
+            let voxel_z = ((local_pos.z + HALF_CHUNK) / VOXEL_SIZE).floor() as u32;
             if chunk.1.is_solid(voxel_x, voxel_y, voxel_z) {
                 return Some((chunk.0, current_pos, chunk.1.world_position, chunk_coord));
             }
@@ -333,40 +333,4 @@ fn screen_to_world_ray(
         }
     }
     None
-}
-
-fn debug_listener(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    chunk_map: Res<ChunkMap>,
-    my_tasks: Res<MyMapGenTasks>,
-) {
-    if keyboard.just_pressed(KeyCode::KeyF) {
-        let map = &chunk_map.0;
-        let struct_size = size_of_val(map);
-        let mut vec_heap_size = 0;
-        for (_, (_, chunk)) in map.iter() {
-            vec_heap_size += chunk.densities.len() * size_of::<Density>();
-        }
-        println!("Size of a Density: {} bytes", size_of::<Density>());
-        println!(
-            "Densities per chunk: {} ({}^3)",
-            VOXELS_PER_CHUNK, VOXELS_PER_DIM
-        );
-        let hashmap_heap =
-            map.capacity() * (size_of::<(i16, i16, i16)>() + size_of::<(Entity, TerrainChunk)>());
-        let total = struct_size + hashmap_heap + vec_heap_size;
-        println!("Num Chunks: {}", map.len());
-        println!("Tasks running: {}", my_tasks.generation_tasks.len());
-        println!(
-            "Chunks on generation thread: {}",
-            my_tasks.chunks_being_generated.len()
-        );
-        println!("HashMap heap: {} bytes", hashmap_heap);
-        println!("Vec heap: {} bytes", vec_heap_size);
-        println!(
-            "TOTAL: {} bytes ({:.2} MB)\n",
-            total,
-            total as f64 / 1_048_576.0
-        );
-    }
 }
