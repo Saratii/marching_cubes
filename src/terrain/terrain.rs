@@ -21,16 +21,15 @@ use fastnoise2::{
 };
 
 use crate::{
-    conversions::chunk_coord_to_world_pos,
-    marching_cubes::{ISO_LEVEL, march_cubes},
+    conversions::chunk_coord_to_world_pos, marching_cubes::march_cubes,
     terrain::chunk_generator::generate_densities,
 };
 
 pub const CHUNK_SIZE: f32 = 8.0; // World size in meters
-pub const CHUNK_DENSITY: f32 = 8.0; // Voxels per meter
-pub const VOXELS_PER_DIM: usize = (CHUNK_SIZE * CHUNK_DENSITY) as usize; // 64 voxels per dimension
-pub const VOXEL_SIZE: f32 = CHUNK_SIZE / (VOXELS_PER_DIM - 1) as f32;
-pub const VOXELS_PER_CHUNK: usize = VOXELS_PER_DIM * VOXELS_PER_DIM * VOXELS_PER_DIM;
+pub const VOXELS_PER_CHUNK_DIM: usize = 64; // 64 voxels per dimension
+pub const VOXEL_SIZE: f32 = CHUNK_SIZE / (VOXELS_PER_CHUNK_DIM - 1) as f32;
+pub const VOXELS_PER_CHUNK: usize =
+    VOXELS_PER_CHUNK_DIM * VOXELS_PER_CHUNK_DIM * VOXELS_PER_CHUNK_DIM;
 pub const HALF_CHUNK: f32 = CHUNK_SIZE / 2.0;
 pub const CHUNK_CREATION_RADIUS: i16 = 20; //in world units
 pub const CHUNK_GENERATION_CIRCULAR_RADIUS_SQUARED: f32 =
@@ -46,20 +45,14 @@ pub struct NoiseFunction(pub GeneratorWrapper<SafeNode>);
 pub struct StandardTerrainMaterialHandle(pub Handle<StandardMaterial>);
 
 #[derive(Clone, Copy, Debug)]
-pub struct Density {
-    pub dirt: u8,
-    pub grass: u8,
-}
-
-impl Density {
-    pub fn sum(&self) -> f32 {
-        self.dirt as f32 / 255. + self.grass as f32 / 255.
-    }
+pub struct VoxelData {
+    pub sdf: f32,
+    pub material: u8,
 }
 
 #[derive(Component)]
 pub struct TerrainChunk {
-    pub densities: Box<[Density; VOXELS_PER_CHUNK]>,
+    pub densities: Box<[VoxelData; VOXELS_PER_CHUNK]>,
     pub world_position: Vec3,
 }
 
@@ -75,27 +68,29 @@ impl TerrainChunk {
         }
     }
 
-    pub fn set_density(&mut self, x: i32, y: i32, z: i32, density: Density) {
+    pub fn set_density(&mut self, x: u32, y: u32, z: u32, density: VoxelData) {
         let index = self.get_voxel_index(x, y, z);
-        self.densities[index] = density;
+        self.densities[index as usize] = density;
     }
 
-    fn get_voxel_index(&self, x: i32, y: i32, z: i32) -> usize {
-        (z * VOXELS_PER_DIM as i32 * VOXELS_PER_DIM as i32 + y * VOXELS_PER_DIM as i32 + x) as usize
+    fn get_voxel_index(&self, x: u32, y: u32, z: u32) -> u32 {
+        z * VOXELS_PER_CHUNK_DIM as u32 * VOXELS_PER_CHUNK_DIM as u32
+            + y * VOXELS_PER_CHUNK_DIM as u32
+            + x
     }
 
-    pub fn get_density(&self, x: i32, y: i32, z: i32) -> &Density {
+    pub fn get_density(&self, x: u32, y: u32, z: u32) -> &VoxelData {
         let index = self.get_voxel_index(x, y, z);
-        &self.densities[index]
+        &self.densities[index as usize]
     }
 
-    pub fn get_mut_density(&mut self, x: i32, y: i32, z: i32) -> &mut Density {
+    pub fn get_mut_density(&mut self, x: u32, y: u32, z: u32) -> &mut VoxelData {
         let index = self.get_voxel_index(x, y, z);
-        &mut self.densities[index]
+        &mut self.densities[index as usize]
     }
 
-    pub fn is_solid(&self, x: i32, y: i32, z: i32) -> bool {
-        self.get_density(x, y, z).sum() > ISO_LEVEL
+    pub fn is_solid(&self, x: u32, y: u32, z: u32) -> bool {
+        self.get_density(x, y, z).sdf > 0.0
     }
 }
 
@@ -105,13 +100,6 @@ pub struct ChunkMap(pub HashMap<(i16, i16, i16), (Entity, TerrainChunk)>);
 impl ChunkMap {
     fn new() -> Self {
         Self { 0: HashMap::new() }
-    }
-
-    pub fn get_chunk_coord_from_world_pos(world_pos: Vec3) -> (i16, i16, i16) {
-        let chunk_x = (world_pos.x / CHUNK_SIZE).round() as i16;
-        let chunk_y = (world_pos.y / CHUNK_SIZE).round() as i16;
-        let chunk_z = (world_pos.z / CHUNK_SIZE).round() as i16;
-        (chunk_x, chunk_y, chunk_z)
     }
 
     pub fn spawn_chunk(
@@ -182,9 +170,9 @@ impl ChunkMap {
     ) -> bool {
         let mut chunk_modified = false;
         if let Some((_, chunk)) = self.0.get_mut(&chunk_coord) {
-            for z in 0..VOXELS_PER_DIM {
-                for y in 0..VOXELS_PER_DIM {
-                    for x in 0..VOXELS_PER_DIM {
+            for z in 0..VOXELS_PER_CHUNK_DIM {
+                for y in 0..VOXELS_PER_CHUNK_DIM {
+                    for x in 0..VOXELS_PER_CHUNK_DIM {
                         let world_x = chunk_center.x - HALF_CHUNK + x as f32 * VOXEL_SIZE;
                         let world_y = chunk_center.y - HALF_CHUNK + y as f32 * VOXEL_SIZE;
                         let world_z = chunk_center.z - HALF_CHUNK + z as f32 * VOXEL_SIZE;
@@ -195,20 +183,10 @@ impl ChunkMap {
                                 1.0 - (distance / (voxel_radius * VOXEL_SIZE)).clamp(0.0, 1.0);
                             let dig_amount = strength * falloff;
                             let current_density =
-                                chunk.get_mut_density(x as i32, y as i32, z as i32);
-                            let density_sum = current_density.sum();
+                                chunk.get_mut_density(x as u32, y as u32, z as u32);
+                            let density_sum = current_density.sdf;
                             if density_sum > 0.0 {
-                                let dirt_ratio = current_density.dirt as f32 / 255. / density_sum;
-                                let grass_ratio = current_density.grass as f32 / 255. / density_sum;
-                                current_density.dirt =
-                                    ((current_density.dirt as f32 / 255. - dig_amount * dirt_ratio)
-                                        .max(0.0)
-                                        * 255.0) as u8;
-                                current_density.grass = ((current_density.grass as f32 / 255.
-                                    - dig_amount * grass_ratio)
-                                    .max(0.0)
-                                    * 255.0)
-                                    as u8;
+                                current_density.sdf -= dig_amount;
                                 chunk_modified = true;
                             }
                         }

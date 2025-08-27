@@ -7,11 +7,9 @@ use bevy::{
 };
 
 use crate::{
-    terrain::terrain::{Density, HALF_CHUNK, VOXEL_SIZE, VOXELS_PER_CHUNK, VOXELS_PER_DIM},
+    terrain::terrain::{HALF_CHUNK, VOXEL_SIZE, VOXELS_PER_CHUNK, VOXELS_PER_CHUNK_DIM, VoxelData},
     triangle_table::TRIANGLE_TABLE,
 };
-
-pub const ISO_LEVEL: f32 = 0.5;
 
 const EDGE_VERTICES: [(usize, usize); 12] = [
     (0, 1),
@@ -39,6 +37,7 @@ struct EdgeId {
 struct VertexCache {
     edge_to_vertex: HashMap<EdgeId, u32>,
     vertices: Vec<Vec3>,
+    colors: Vec<[f32; 4]>,
 }
 
 impl VertexCache {
@@ -46,26 +45,60 @@ impl VertexCache {
         Self {
             edge_to_vertex: HashMap::new(),
             vertices: Vec::new(),
+            colors: Vec::new(),
         }
     }
-    fn get_or_create_vertex(&mut self, edge_id: EdgeId, position: Vec3) -> u32 {
+    fn get_or_create_vertex(&mut self, edge_id: EdgeId, position: Vec3, color: [f32; 4]) -> u32 {
         if let Some(&vertex_index) = self.edge_to_vertex.get(&edge_id) {
             vertex_index
         } else {
             let vertex_index = self.vertices.len() as u32;
             self.vertices.push(position);
+            self.colors.push(color);
             self.edge_to_vertex.insert(edge_id, vertex_index);
             vertex_index
         }
     }
 }
 
-pub fn march_cubes(densities: &Box<[Density; VOXELS_PER_CHUNK]>) -> Mesh {
+fn voxel_color_from_index(
+    cube_x: usize,
+    cube_y: usize,
+    cube_z: usize,
+    corner: usize,
+    sdf: &[VoxelData; VOXELS_PER_CHUNK],
+) -> [f32; 4] {
+    let (dx, dy, dz) = match corner {
+        0 => (0, 0, 0),
+        1 => (1, 0, 0),
+        2 => (1, 1, 0),
+        3 => (0, 1, 0),
+        4 => (0, 0, 1),
+        5 => (1, 0, 1),
+        6 => (1, 1, 1),
+        7 => (0, 1, 1),
+        _ => (0, 0, 0),
+    };
+    let x = cube_x + dx;
+    let y = cube_y + dy;
+    let z = cube_z + dz;
+    let idx = z * VOXELS_PER_CHUNK_DIM * VOXELS_PER_CHUNK_DIM + y * VOXELS_PER_CHUNK_DIM + x;
+    match sdf[idx].material {
+        1 => [73. / 255., 34. / 255., 1. / 255., 1.0], // dirt
+        2 => [17. / 255., 124. / 255., 19. / 255., 1.0], // grass
+        255 => [1.0, 0.0, 1.0, 1.0],                   // debug
+        num => {
+            panic!("{}", num);
+        }
+    }
+}
+
+pub fn march_cubes(densities: &Box<[VoxelData; VOXELS_PER_CHUNK]>) -> Mesh {
     let mut vertex_cache = VertexCache::new();
     let mut indices = Vec::new();
-    for x in 0..VOXELS_PER_DIM - 1 {
-        for y in 0..VOXELS_PER_DIM - 1 {
-            for z in 0..VOXELS_PER_DIM - 1 {
+    for x in 0..VOXELS_PER_CHUNK_DIM - 1 {
+        for y in 0..VOXELS_PER_CHUNK_DIM - 1 {
+            for z in 0..VOXELS_PER_CHUNK_DIM - 1 {
                 process_cube_with_cache(x, y, z, &mut vertex_cache, &mut indices, densities);
             }
         }
@@ -76,7 +109,7 @@ pub fn march_cubes(densities: &Box<[Density; VOXELS_PER_CHUNK]>) -> Mesh {
 fn calculate_cube_index(values: &[f32; 8]) -> u8 {
     let mut cube_index = 0;
     for i in 0..8 {
-        if values[i] > ISO_LEVEL {
+        if values[i] > 0.0 {
             cube_index |= 1 << i;
         }
     }
@@ -110,10 +143,10 @@ fn process_cube_with_cache(
     z: usize,
     vertex_cache: &mut VertexCache,
     indices: &mut Vec<u32>,
-    densities: &[Density; VOXELS_PER_CHUNK],
+    densities: &[VoxelData; VOXELS_PER_CHUNK],
 ) {
     let cube_vertices = get_cube_vertices(x, y, z);
-    let cube_values = sample_cube_values_from_densities(x, y, z, densities);
+    let cube_values = sample_cube_values_from_sdf(x, y, z, densities);
     let cube_index = calculate_cube_index(&cube_values);
     if cube_index == 0 || cube_index == 255 {
         return;
@@ -126,6 +159,7 @@ fn process_cube_with_cache(
         y,
         z,
         vertex_cache,
+        densities,
     );
     for triangle in triangles {
         indices.extend_from_slice(&triangle);
@@ -144,6 +178,7 @@ fn triangulate_cube_with_cache(
     cube_y: usize,
     cube_z: usize,
     vertex_cache: &mut VertexCache,
+    densities: &[VoxelData; VOXELS_PER_CHUNK],
 ) -> Vec<[u32; 3]> {
     let edge_table = get_edge_table_for_cube(cube_index);
     let mut result = Vec::new();
@@ -158,6 +193,7 @@ fn triangulate_cube_with_cache(
                 cube_y,
                 cube_z,
                 vertex_cache,
+                densities,
             );
             let v2 = get_or_create_edge_vertex(
                 edge_table[i + 1] as usize,
@@ -167,6 +203,7 @@ fn triangulate_cube_with_cache(
                 cube_y,
                 cube_z,
                 vertex_cache,
+                densities,
             );
             let v3 = get_or_create_edge_vertex(
                 edge_table[i + 2] as usize,
@@ -176,6 +213,7 @@ fn triangulate_cube_with_cache(
                 cube_y,
                 cube_z,
                 vertex_cache,
+                densities,
             );
             result.push([v1, v3, v2]);
             i += 3;
@@ -194,10 +232,15 @@ fn get_or_create_edge_vertex(
     cube_y: usize,
     cube_z: usize,
     vertex_cache: &mut VertexCache,
+    densities: &[VoxelData; VOXELS_PER_CHUNK],
 ) -> u32 {
     let edge_id = get_canonical_edge_id(edge_index, cube_x, cube_y, cube_z);
+    let (v1_idx, v2_idx) = EDGE_VERTICES[edge_index];
+    let val1 = values[v1_idx];
     let position = interpolate_edge(edge_index, vertices, values);
-    vertex_cache.get_or_create_vertex(edge_id, position)
+    let solid_corner = if val1 >= 0.0 { v1_idx } else { v2_idx };
+    let color = voxel_color_from_index(cube_x, cube_y, cube_z, solid_corner, densities);
+    vertex_cache.get_or_create_vertex(edge_id, position, color)
 }
 
 fn get_canonical_edge_id(edge_index: usize, cube_x: usize, cube_y: usize, cube_z: usize) -> EdgeId {
@@ -292,104 +335,89 @@ fn interpolate_edge(edge_index: usize, vertices: &[Vec3; 8], values: &[f32; 8]) 
     let t = if (val2 - val1).abs() < 0.0001 {
         0.5
     } else {
-        ((ISO_LEVEL - val1) / (val2 - val1)).clamp(0.0, 1.0)
+        ((0.0 - val1) / (val2 - val1)).clamp(0.0, 1.0)
     };
     v1 + t * (v2 - v1)
 }
 
-fn sample_cube_values_from_densities(
+fn sample_cube_values_from_sdf(
     x: usize,
     y: usize,
     z: usize,
-    densities: &[Density],
+    sdf: &[VoxelData; VOXELS_PER_CHUNK],
 ) -> [f32; 8] {
-    let get_density = |x: usize, y: usize, z: usize| -> f32 {
-        let idx =
-            (z * VOXELS_PER_DIM * VOXELS_PER_DIM + y * VOXELS_PER_DIM + x).min(densities.len() - 1);
-        let density = &densities[idx];
-        density.sum()
+    let get_sdf = |x: usize, y: usize, z: usize| -> f32 {
+        let idx = z * VOXELS_PER_CHUNK_DIM * VOXELS_PER_CHUNK_DIM + y * VOXELS_PER_CHUNK_DIM + x;
+        sdf[idx].sdf as f32
     };
     [
-        get_density(x, y, z),
-        get_density(x + 1, y, z),
-        get_density(x + 1, y + 1, z),
-        get_density(x, y + 1, z),
-        get_density(x, y, z + 1),
-        get_density(x + 1, y, z + 1),
-        get_density(x + 1, y + 1, z + 1),
-        get_density(x, y + 1, z + 1),
+        get_sdf(x, y, z),
+        get_sdf(x + 1, y, z),
+        get_sdf(x + 1, y + 1, z),
+        get_sdf(x, y + 1, z),
+        get_sdf(x, y, z + 1),
+        get_sdf(x + 1, y, z + 1),
+        get_sdf(x + 1, y + 1, z + 1),
+        get_sdf(x, y + 1, z + 1),
     ]
 }
 
-fn calculate_vertex_normal(point: Vec3, densities: &[Density]) -> Vec3 {
-    let epsilon = 0.000001;
-    let grad_x = sample_density_sum_at_point_with_interpolation(
-        point + Vec3::new(epsilon, 0.0, 0.0),
-        densities,
-    ) - sample_density_sum_at_point_with_interpolation(
-        point - Vec3::new(epsilon, 0.0, 0.0),
-        densities,
-    );
-    let grad_y = sample_density_sum_at_point_with_interpolation(
-        point + Vec3::new(0.0, epsilon, 0.0),
-        densities,
-    ) - sample_density_sum_at_point_with_interpolation(
-        point - Vec3::new(0.0, epsilon, 0.0),
-        densities,
-    );
-    let grad_z = sample_density_sum_at_point_with_interpolation(
-        point + Vec3::new(0.0, 0.0, epsilon),
-        densities,
-    ) - sample_density_sum_at_point_with_interpolation(
-        point - Vec3::new(0.0, 0.0, epsilon),
-        densities,
-    );
+fn calculate_vertex_normal(point: Vec3, sdf: &[VoxelData]) -> Vec3 {
+    let epsilon = VOXEL_SIZE;
+    let grad_x = sample_sdf_at_point_with_interpolation(point + Vec3::new(epsilon, 0.0, 0.0), sdf)
+        - sample_sdf_at_point_with_interpolation(point - Vec3::new(epsilon, 0.0, 0.0), sdf);
+
+    let grad_y = sample_sdf_at_point_with_interpolation(point + Vec3::new(0.0, epsilon, 0.0), sdf)
+        - sample_sdf_at_point_with_interpolation(point - Vec3::new(0.0, epsilon, 0.0), sdf);
+
+    let grad_z = sample_sdf_at_point_with_interpolation(point + Vec3::new(0.0, 0.0, epsilon), sdf)
+        - sample_sdf_at_point_with_interpolation(point - Vec3::new(0.0, 0.0, epsilon), sdf);
+
     Vec3::new(-grad_x, -grad_y, -grad_z).normalize_or_zero()
 }
 
-fn sample_density_sum_at_point_with_interpolation(point: Vec3, densities: &[Density]) -> f32 {
+fn sample_sdf_at_point_with_interpolation(point: Vec3, sdf: &[VoxelData]) -> f32 {
     let voxel_x = (point.x + HALF_CHUNK) / VOXEL_SIZE;
     let voxel_y = (point.y + HALF_CHUNK) / VOXEL_SIZE;
     let voxel_z = (point.z + HALF_CHUNK) / VOXEL_SIZE;
-    let voxel_x = voxel_x.clamp(0.0, (VOXELS_PER_DIM - 1) as f32);
-    let voxel_y = voxel_y.clamp(0.0, (VOXELS_PER_DIM - 1) as f32);
-    let voxel_z = voxel_z.clamp(0.0, (VOXELS_PER_DIM - 1) as f32);
+    let voxel_x = voxel_x.clamp(0.0, (VOXELS_PER_CHUNK_DIM - 1) as f32);
+    let voxel_y = voxel_y.clamp(0.0, (VOXELS_PER_CHUNK_DIM - 1) as f32);
+    let voxel_z = voxel_z.clamp(0.0, (VOXELS_PER_CHUNK_DIM - 1) as f32);
     let x0 = voxel_x.floor() as usize;
     let y0 = voxel_y.floor() as usize;
     let z0 = voxel_z.floor() as usize;
-    let x1 = (x0 + 1).min(VOXELS_PER_DIM - 1);
-    let y1 = (y0 + 1).min(VOXELS_PER_DIM - 1);
-    let z1 = (z0 + 1).min(VOXELS_PER_DIM - 1);
+    let x1 = (x0 + 1).min(VOXELS_PER_CHUNK_DIM - 1);
+    let y1 = (y0 + 1).min(VOXELS_PER_CHUNK_DIM - 1);
+    let z1 = (z0 + 1).min(VOXELS_PER_CHUNK_DIM - 1);
     let fx = voxel_x - x0 as f32;
     let fy = voxel_y - y0 as f32;
     let fz = voxel_z - z0 as f32;
-    let get_density = |x: usize, y: usize, z: usize| -> f32 {
-        let idx =
-            (z * VOXELS_PER_DIM * VOXELS_PER_DIM + y * VOXELS_PER_DIM + x).min(densities.len() - 1);
-        let density = &densities[idx];
-        density.sum()
+    let get_sdf = |x: usize, y: usize, z: usize| -> f32 {
+        let idx = z * VOXELS_PER_CHUNK_DIM * VOXELS_PER_CHUNK_DIM + y * VOXELS_PER_CHUNK_DIM + x;
+        sdf[idx].sdf as f32
     };
-    let c000 = get_density(x0, y0, z0);
-    let c100 = get_density(x1, y0, z0);
-    let c010 = get_density(x0, y1, z0);
-    let c110 = get_density(x1, y1, z0);
-    let c001 = get_density(x0, y0, z1);
-    let c101 = get_density(x1, y0, z1);
-    let c011 = get_density(x0, y1, z1);
-    let c111 = get_density(x1, y1, z1);
+    let c000 = get_sdf(x0, y0, z0);
+    let c100 = get_sdf(x1, y0, z0);
+    let c010 = get_sdf(x0, y1, z0);
+    let c110 = get_sdf(x1, y1, z0);
+    let c001 = get_sdf(x0, y0, z1);
+    let c101 = get_sdf(x1, y0, z1);
+    let c011 = get_sdf(x0, y1, z1);
+    let c111 = get_sdf(x1, y1, z1);
     let c00 = c000 * (1.0 - fx) + c100 * fx;
-    let c01 = c001 * (1.0 - fx) + c101 * fx;
     let c10 = c010 * (1.0 - fx) + c110 * fx;
+    let c01 = c001 * (1.0 - fx) + c101 * fx;
     let c11 = c011 * (1.0 - fx) + c111 * fx;
     let c0 = c00 * (1.0 - fy) + c10 * fy;
     let c1 = c01 * (1.0 - fy) + c11 * fy;
+
     c0 * (1.0 - fz) + c1 * fz
 }
 
 fn build_mesh_from_cache_and_indices(
     vertex_cache: VertexCache,
     indices: Vec<u32>,
-    densities: &[Density; VOXELS_PER_CHUNK],
+    densities: &[VoxelData; VOXELS_PER_CHUNK],
 ) -> Mesh {
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
@@ -410,63 +438,11 @@ fn build_mesh_from_cache_and_indices(
             .iter()
             .map(|v| calculate_vertex_normal(*v, densities).into())
             .collect();
-        let colors: Vec<[f32; 4]> = vertex_cache
-            .vertices
-            .iter()
-            .map(|v| calculate_vertex_color(*v, &densities))
-            .collect();
+        let colors: Vec<[f32; 4]> = vertex_cache.colors;
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
         mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
         mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
         mesh.insert_indices(Indices::U32(indices));
     }
     mesh
-}
-
-fn calculate_vertex_color(point: Vec3, densities: &[Density; VOXELS_PER_CHUNK]) -> [f32; 4] {
-    let voxel_pos = Vec3::new(
-        (point.x + HALF_CHUNK) / VOXEL_SIZE,
-        (point.y + HALF_CHUNK) / VOXEL_SIZE,
-        (point.z + HALF_CHUNK) / VOXEL_SIZE,
-    )
-    .clamp(Vec3::ZERO, Vec3::splat((VOXELS_PER_DIM - 1) as f32));
-    let base = voxel_pos.floor().as_uvec3();
-    let fract = voxel_pos - base.as_vec3();
-    let x0 = base.x as usize;
-    let y0 = base.y as usize;
-    let z0 = base.z as usize;
-    let x1 = (x0 + 1).min(VOXELS_PER_DIM - 1);
-    let y1 = (y0 + 1).min(VOXELS_PER_DIM - 1);
-    let z1 = (z0 + 1).min(VOXELS_PER_DIM - 1);
-    let get_density = |x: usize, y: usize, z: usize| -> &Density {
-        let idx = z * VOXELS_PER_DIM * VOXELS_PER_DIM + y * VOXELS_PER_DIM + x;
-        &densities[idx]
-    };
-    let interpolate_density = |extract: fn(&Density) -> f32| -> f32 {
-        let c00 = extract(get_density(x0, y0, z0)) * (1.0 - fract.x)
-            + extract(get_density(x1, y0, z0)) * fract.x;
-        let c01 = extract(get_density(x0, y0, z1)) * (1.0 - fract.x)
-            + extract(get_density(x1, y0, z1)) * fract.x;
-        let c10 = extract(get_density(x0, y1, z0)) * (1.0 - fract.x)
-            + extract(get_density(x1, y1, z0)) * fract.x;
-        let c11 = extract(get_density(x0, y1, z1)) * (1.0 - fract.x)
-            + extract(get_density(x1, y1, z1)) * fract.x;
-        let c0 = c00 * (1.0 - fract.y) + c10 * fract.y;
-        let c1 = c01 * (1.0 - fract.y) + c11 * fract.y;
-        c0 * (1.0 - fract.z) + c1 * fract.z
-    };
-    let grass_amount = interpolate_density(|d| d.grass as f32 / 255.0);
-    let dirt_amount = interpolate_density(|d| d.dirt as f32 / 255.0);
-    let total_density = grass_amount + dirt_amount;
-    if grass_amount > 0.1 {
-        let grass_intensity = (grass_amount / total_density).clamp(0.3, 1.0);
-        [
-            17. / 255. * grass_intensity,
-            124. / 255. * grass_intensity,
-            19. / 255. * grass_intensity,
-            1.0,
-        ]
-    } else {
-        [73. / 255., 34. / 255., 1. / 255., 1.0] //dirt
-    }
 }
