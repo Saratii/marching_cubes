@@ -27,7 +27,7 @@ use marching_cubes::terrain::chunk_thread::{
 };
 use marching_cubes::terrain::terrain::{
     CHUNK_CREATION_RADIUS, CHUNK_SIZE, ChunkMap, ChunkTag, HALF_CHUNK, NoiseFunction, VOXEL_SIZE,
-    setup_map,
+    VOXELS_PER_CHUNK_DIM, setup_map,
 };
 use rayon::ThreadPoolBuilder;
 
@@ -198,9 +198,9 @@ fn handle_digging_input(
     mut dig_timer: Local<f32>,
     time: Res<Time>,
 ) {
-    const DIG_STRENGTH: f32 = 0.2;
-    const DIG_TIMER: f32 = 0.05; // seconds
-    const DIG_RADIUS: f32 = 0.2; // meters
+    const DIG_STRENGTH: f32 = 2.2;
+    const DIG_TIMER: f32 = 0.02; // seconds
+    const DIG_RADIUS: f32 = 2.2; // world space
     let should_dig = if mouse_input.pressed(MouseButton::Left) {
         *dig_timer += time.delta_secs();
         if *dig_timer >= DIG_TIMER {
@@ -215,28 +215,28 @@ fn handle_digging_input(
     };
     if should_dig {
         if let Some(cursor_pos) = window.cursor_position() {
-            if let Ok((camera, camera_transform)) = camera_query.single() {
-                if let Some((_, world_pos, _, _)) =
-                    screen_to_world_ray(cursor_pos, camera, camera_transform, &chunk_map)
-                {
-                    let modified_chunks = chunk_map.dig_sphere(world_pos, DIG_RADIUS, DIG_STRENGTH);
-                    for chunk_coord in modified_chunks {
-                        if let Some((entity, chunk)) = chunk_map.0.get(&chunk_coord) {
-                            if let Ok((_, mut mesh_handle)) = chunk_mesh_query.get_mut(*entity) {
-                                let new_mesh = march_cubes(&chunk.densities);
-                                if let Some(_) = new_mesh.compute_aabb() {
-                                    let min = Vec3::new(-HALF_CHUNK, -HALF_CHUNK, -HALF_CHUNK);
-                                    let max = Vec3::new(HALF_CHUNK, HALF_CHUNK, HALF_CHUNK);
-                                    let center = (min + max) / 2.0;
-                                    let half_extents = (max - min) / 2.0;
-                                    let expanded_aabb = Aabb {
-                                        center: center.into(),
-                                        half_extents: half_extents.into(),
-                                    };
-                                    commands.entity(*entity).insert(expanded_aabb);
-                                    commands.entity(*entity).remove::<Collider>();
-                                    if new_mesh.count_vertices() > 0 {
-                                        commands.entity(*entity).insert(
+            let (camera, camera_transform) = camera_query.single().unwrap();
+            if let Some((_, world_pos, _, _)) =
+                screen_to_world_ray(cursor_pos, camera, camera_transform, &chunk_map)
+            {
+                let modified_chunks = chunk_map.dig_sphere(world_pos, DIG_RADIUS, DIG_STRENGTH);
+                for chunk_coord in modified_chunks {
+                    if let Some((entity, chunk)) = chunk_map.0.get(&chunk_coord) {
+                        if let Ok((_, mut mesh_handle)) = chunk_mesh_query.get_mut(*entity) {
+                            let new_mesh = march_cubes(&chunk.densities);
+                            if let Some(_) = new_mesh.compute_aabb() {
+                                let min = Vec3::new(-HALF_CHUNK, -HALF_CHUNK, -HALF_CHUNK);
+                                let max = Vec3::new(HALF_CHUNK, HALF_CHUNK, HALF_CHUNK);
+                                let center = (min + max) / 2.0;
+                                let half_extents = (max - min) / 2.0;
+                                let expanded_aabb = Aabb {
+                                    center: center.into(),
+                                    half_extents: half_extents.into(),
+                                };
+                                commands.entity(*entity).insert(expanded_aabb);
+                                commands.entity(*entity).remove::<Collider>();
+                                if new_mesh.count_vertices() > 0 {
+                                    commands.entity(*entity).insert(
                                             Collider::from_bevy_mesh(
                                                 &new_mesh,
                                                 &ComputedColliderShape::TriMesh(
@@ -245,10 +245,9 @@ fn handle_digging_input(
                                             )
                                             .unwrap(),
                                         );
-                                    }
                                 }
-                                *mesh_handle = Mesh3d(meshes.add(new_mesh));
                             }
+                            *mesh_handle = Mesh3d(meshes.add(new_mesh));
                         }
                     }
                 }
@@ -314,23 +313,28 @@ fn screen_to_world_ray(
     let ray_origin = ray.origin;
     let ray_direction = ray.direction;
     let max_distance = 100.0;
-    let step_size = 0.1;
+    let step_size = 0.05;
     let mut distance_traveled = 0.0;
     while distance_traveled < max_distance {
         let current_pos = ray_origin + ray_direction * distance_traveled;
         let chunk_coord = world_pos_to_chunk_coord(current_pos);
+
         if let Some(chunk) = chunk_map.0.get(&chunk_coord) {
-            let local_pos = current_pos - chunk.1.world_position;
-            let voxel_x = ((local_pos.x + HALF_CHUNK) / VOXEL_SIZE).floor() as u32;
-            let voxel_y = ((local_pos.y + HALF_CHUNK) / VOXEL_SIZE).floor() as u32;
-            let voxel_z = ((local_pos.z + HALF_CHUNK) / VOXEL_SIZE).floor() as u32;
-            if chunk.1.is_solid(voxel_x, voxel_y, voxel_z) {
+            let chunk_world_center = chunk.1.world_position;
+            let chunk_world_min = chunk_world_center - Vec3::splat(HALF_CHUNK);
+            let relative_pos = current_pos - chunk_world_min;
+            let voxel_x = (relative_pos.x / VOXEL_SIZE).floor();
+            let voxel_y = (relative_pos.y / VOXEL_SIZE).floor();
+            let voxel_z = (relative_pos.z / VOXEL_SIZE).floor();
+            let voxel_x_idx = voxel_x as u32;
+            let voxel_y_idx = voxel_y as u32;
+            let voxel_z_idx = voxel_z as u32;
+            if chunk.1.is_solid(voxel_x_idx, voxel_y_idx, voxel_z_idx) {
                 return Some((chunk.0, current_pos, chunk.1.world_position, chunk_coord));
             }
-            distance_traveled += step_size;
-        } else {
-            return None;
         }
+        distance_traveled += step_size;
     }
+
     None
 }
