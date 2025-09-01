@@ -1,57 +1,96 @@
-pub mod triangle_table;
+use std::collections::HashSet;
 
 use bevy::diagnostic::{
     EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin, SystemInformationDiagnosticsPlugin,
 };
+use bevy::pbr::PbrPlugin;
 use bevy::prelude::*;
 use bevy::render::diagnostic::RenderDiagnosticsPlugin;
-use bevy::render::mesh::{Indices, PrimitiveTopology};
+use bevy::render::mesh::MeshAabb;
+use bevy::render::primitives::Aabb;
 use bevy::window::PresentMode;
-use bevy_flycam::PlayerPlugin;
+use bevy_rapier3d::plugin::{NoUserData, RapierPhysicsPlugin};
+use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
+use fastnoise2::SafeNode;
+use fastnoise2::generator::GeneratorWrapper;
 use iyes_perf_ui::PerfUiPlugin;
 use iyes_perf_ui::prelude::PerfUiDefaultEntries;
-use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
-use rand::prelude::*;
-
-use crate::triangle_table::TRIANGLE_TABLE;
+use marching_cubes::conversions::world_pos_to_chunk_coord;
+use marching_cubes::marching_cubes::march_cubes;
+use marching_cubes::player::player::{
+    CameraController, KeyBindings, PlayerTag, camera_look, camera_zoom, cursor_grab,
+    initial_grab_cursor, player_movement, spawn_player, toggle_camera,
+};
+use marching_cubes::terrain::chunk_generator::{GenerateChunkEvent, NOISE_FREQUENCY, NOISE_SEED};
+use marching_cubes::terrain::chunk_thread::{
+    MyMapGenTasks, catch_chunk_generation_request, spawn_generated_chunks,
+};
+use marching_cubes::terrain::terrain::{
+    CHUNK_CREATION_RADIUS, CHUNK_SIZE, ChunkMap, ChunkTag, HALF_CHUNK, NoiseFunction, VOXEL_SIZE,
+    VOXELS_PER_CHUNK_DIM, setup_map,
+};
+use rayon::ThreadPoolBuilder;
 
 fn main() {
+    ThreadPoolBuilder::new()
+        .num_threads(8)
+        .build_global()
+        .unwrap();
     App::new()
+        .insert_resource(KeyBindings::default())
+        .insert_resource(CameraController::default())
+        .insert_resource(MyMapGenTasks {
+            generation_tasks: Vec::new(),
+            chunks_being_generated: HashSet::new(),
+        })
+        .add_event::<GenerateChunkEvent>()
         .add_plugins((
-            DefaultPlugins.set(WindowPlugin {
-                primary_window: Some(Window {
-                    present_mode: PresentMode::AutoNoVsync,
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        present_mode: PresentMode::AutoNoVsync,
+                        ..default()
+                    }),
                     ..default()
-                }),
-                ..default()
-            }),
+                })
+                .set(PbrPlugin { ..default() }),
             FrameTimeDiagnosticsPlugin::default(),
             EntityCountDiagnosticsPlugin,
             RenderDiagnosticsPlugin,
             SystemInformationDiagnosticsPlugin,
             PerfUiPlugin,
-            PlayerPlugin,
+            RapierPhysicsPlugin::<NoUserData>::default(),
         ))
-        .add_systems(Startup, setup)
+        .insert_resource(ClearColor(Color::srgb(0.0, 1.0, 1.0)))
+        .add_systems(
+            Startup,
+            (
+                setup,
+                setup_map,
+                setup_crosshair,
+                spawn_player,
+                initial_grab_cursor,
+            ),
+        )
+        .add_systems(
+            Update,
+            (
+                handle_digging_input,
+                update_chunks,
+                toggle_camera,
+                camera_zoom,
+                camera_look,
+                cursor_grab,
+                player_movement,
+                catch_chunk_generation_request,
+                spawn_generated_chunks,
+            ),
+        )
         .run();
 }
 
-fn setup(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
+fn setup(mut commands: Commands) {
     commands.spawn(PerfUiDefaultEntries::default());
-    let noise_params = TerrainParams::default();
-    let chunk_mesh = create_marching_cubes_chunk(128, 128, &noise_params);
-    commands.spawn((
-        Mesh3d(meshes.add(chunk_mesh)),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            ..default()
-        })),
-        Transform::from_xyz(0.0, 0.0, 0.0),
-    ));
     commands.spawn((
         DirectionalLight { ..default() },
         Transform::from_rotation(Quat::from_euler(
@@ -63,231 +102,239 @@ fn setup(
     ));
 }
 
-fn create_marching_cubes_chunk(width: u32, depth: u32, terrain_params: &TerrainParams) -> Mesh {
-    let mut vertices = Vec::new();
-    let mut indices = Vec::new();
-    let mut colors = Vec::new();
-    let mut rng = rand::rng();
-    let fbm = Fbm::<Perlin>::new(terrain_params.seed)
-        .set_frequency(terrain_params.frequency)
-        .set_octaves(terrain_params.octaves)
-        .set_lacunarity(terrain_params.lacunarity)
-        .set_persistence(terrain_params.persistence);
-    let base_resolution = 128;
-    let resolution_x = (width * base_resolution / 64).max(base_resolution);
-    let resolution_y = base_resolution;
-    let resolution_z = (depth * base_resolution / 64).max(base_resolution);
-    let step_x = (width as f32 + 4.0) / resolution_x as f32;
-    let step_z = (depth as f32 + 4.0) / resolution_z as f32;
-    let chunk_height = 100.0;
-    let step_y = chunk_height / resolution_y as f32;
-    let start_y = terrain_params.base_height - (chunk_height / 2.0);
-    for x in 0..resolution_x {
-        for y in 0..resolution_y {
-            for z in 0..resolution_z {
-                let pos = Vec3::new(
-                    (x as f32 * step_x) - 2.0,
-                    start_y + (y as f32 * step_y),
-                    (z as f32 * step_z) - 2.0,
-                );
-                let cube_index = get_cube_index_terrain(
-                    pos,
-                    Vec3::new(step_x, step_y, step_z),
-                    width as f32,
-                    depth as f32,
-                    &terrain_params,
-                    &fbm,
-                );
-                let triangles = TRIANGLE_TABLE[cube_index as usize];
-                let mut i = 0;
-                while triangles[i] != -1 {
-                    let triangle_color = [
-                        rng.random_range(0.2..1.0),
-                        rng.random_range(0.2..1.0),
-                        rng.random_range(0.2..1.0),
-                        1.0,
-                    ];
-
-                    let edge_indices = [
-                        triangles[i] as usize,
-                        triangles[i + 1] as usize,
-                        triangles[i + 2] as usize,
-                    ];
-                    let mut triangle_indices = [0u32; 3];
-                    for (j, &edge_idx) in edge_indices.iter().enumerate() {
-                        let edge_vertex = get_edge_vertex_terrain(
-                            pos,
-                            Vec3::new(step_x, step_y, step_z),
-                            edge_idx,
-                            width as f32,
-                            depth as f32,
-                            &terrain_params,
-                            &fbm,
-                        );
-                        let vertex_idx = vertices.len() as u32;
-                        vertices.push([edge_vertex.x, edge_vertex.y, edge_vertex.z]);
-                        colors.push(triangle_color);
-                        triangle_indices[j] = vertex_idx;
+//this should ideally only trigger when the player moves across chunk borders
+fn update_chunks(
+    chunk_map: ResMut<ChunkMap>,
+    player_transform: Single<&Transform, With<PlayerTag>>,
+    perlin: Res<NoiseFunction>,
+    mut chunk_generation_events: EventWriter<GenerateChunkEvent>,
+    map_gen_tasks: Res<MyMapGenTasks>,
+) {
+    let player_chunk = world_pos_to_chunk_coord(player_transform.translation);
+    let radius = CHUNK_CREATION_RADIUS as f32;
+    let radius_squared = radius * radius;
+    let mut chunk_data = Vec::new();
+    for dx in -CHUNK_CREATION_RADIUS..=CHUNK_CREATION_RADIUS {
+        for dz in -CHUNK_CREATION_RADIUS..=CHUNK_CREATION_RADIUS {
+            let xz_dist_sq = (dx * dx + dz * dz) as f32;
+            if xz_dist_sq <= radius_squared {
+                let max_dy = (radius_squared - xz_dist_sq).sqrt() as i16;
+                let chunk_x = player_chunk.0 + dx;
+                let chunk_z = player_chunk.2 + dz;
+                let (min_height, max_height) =
+                    get_chunk_column_height_range(chunk_x, chunk_z, &perlin.0);
+                for dy in -max_dy..=max_dy {
+                    let chunk_coord = (chunk_x, player_chunk.1 + dy, chunk_z);
+                    if !chunk_map.0.contains_key(&chunk_coord)
+                        && !map_gen_tasks.chunks_being_generated.contains(&chunk_coord)
+                    {
+                        let needs_noise = chunk_needs_noise(chunk_coord, min_height, max_height);
+                        if needs_noise.is_some() {
+                            chunk_data.push((chunk_coord, needs_noise.unwrap()));
+                        }
                     }
-                    indices.extend_from_slice(&[
-                        triangle_indices[0],
-                        triangle_indices[1],
-                        triangle_indices[2],
-                    ]);
-                    i += 3;
                 }
             }
         }
     }
-    let mut normals = vec![[0.0; 3]; vertices.len()];
-    for triangle in indices.chunks(3) {
-        let v0 = Vec3::from(vertices[triangle[0] as usize]);
-        let v1 = Vec3::from(vertices[triangle[1] as usize]);
-        let v2 = Vec3::from(vertices[triangle[2] as usize]);
-        let cross = (v1 - v0).cross(v2 - v0);
-        if cross.length_squared() > 0.000001 {
-            let normal = cross.normalize();
-            for &idx in triangle {
-                let n = &mut normals[idx as usize];
-                n[0] += normal.x;
-                n[1] += normal.y;
-                n[2] += normal.z;
+    if !chunk_data.is_empty() {
+        chunk_generation_events.write(GenerateChunkEvent { chunk_data });
+    }
+}
+
+fn get_chunk_column_height_range(
+    chunk_x: i16,
+    chunk_z: i16,
+    fbm: &GeneratorWrapper<SafeNode>,
+) -> (f32, f32) {
+    let chunk_world_x = chunk_x as f32 * CHUNK_SIZE;
+    let chunk_world_z = chunk_z as f32 * CHUNK_SIZE;
+    let half = HALF_CHUNK;
+    let positions = [
+        (chunk_world_x - half, chunk_world_z - half),
+        (chunk_world_x + half, chunk_world_z - half),
+        (chunk_world_x - half, chunk_world_z + half),
+        (chunk_world_x + half, chunk_world_z + half),
+        (chunk_world_x, chunk_world_z),
+    ];
+    let mut min_height = f32::INFINITY;
+    let mut max_height = f32::NEG_INFINITY;
+    for (x, z) in positions {
+        let height = fbm.gen_single_2d(x * NOISE_FREQUENCY, z * NOISE_FREQUENCY, NOISE_SEED as i32);
+        min_height = min_height.min(height);
+        max_height = max_height.max(height);
+    }
+    (min_height, max_height)
+}
+
+fn chunk_needs_noise(
+    chunk_coord: (i16, i16, i16),
+    min_terrain_height: f32,
+    max_terrain_height: f32,
+) -> Option<bool> {
+    let chunk_world_y = chunk_coord.1 as f32 * CHUNK_SIZE;
+    let chunk_bottom = chunk_world_y - HALF_CHUNK;
+    let chunk_top = chunk_world_y + HALF_CHUNK;
+    let transition_width = 1.0;
+    let effective_min = min_terrain_height - transition_width;
+    let effective_max = max_terrain_height + transition_width;
+    if chunk_bottom > effective_max {
+        None
+    } else if chunk_top < effective_min {
+        Some(false)
+    } else {
+        Some(true)
+    }
+}
+
+fn handle_digging_input(
+    mouse_input: Res<ButtonInput<MouseButton>>,
+    mut chunk_mesh_query: Query<(Entity, &mut Mesh3d), With<ChunkTag>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<Camera>>,
+    window: Single<&Window>,
+    mut chunk_map: ResMut<ChunkMap>,
+    mut commands: Commands,
+    mut dig_timer: Local<f32>,
+    time: Res<Time>,
+) {
+    const DIG_STRENGTH: f32 = 2.2;
+    const DIG_TIMER: f32 = 0.02; // seconds
+    const DIG_RADIUS: f32 = 2.2; // world space
+    let should_dig = if mouse_input.pressed(MouseButton::Left) {
+        *dig_timer += time.delta_secs();
+        if *dig_timer >= DIG_TIMER {
+            *dig_timer = 0.0;
+            true
+        } else {
+            false
+        }
+    } else {
+        *dig_timer = 0.0;
+        false
+    };
+    if should_dig {
+        if let Some(cursor_pos) = window.cursor_position() {
+            let (camera, camera_transform) = camera_query.single().unwrap();
+            if let Some((_, world_pos, _, _)) =
+                screen_to_world_ray(cursor_pos, camera, camera_transform, &chunk_map)
+            {
+                let modified_chunks = chunk_map.dig_sphere(world_pos, DIG_RADIUS, DIG_STRENGTH);
+                for chunk_coord in modified_chunks {
+                    if let Some((entity, chunk)) = chunk_map.0.get(&chunk_coord) {
+                        if let Ok((_, mut mesh_handle)) = chunk_mesh_query.get_mut(*entity) {
+                            let new_mesh = march_cubes(&chunk.densities);
+                            if let Some(_) = new_mesh.compute_aabb() {
+                                let min = Vec3::new(-HALF_CHUNK, -HALF_CHUNK, -HALF_CHUNK);
+                                let max = Vec3::new(HALF_CHUNK, HALF_CHUNK, HALF_CHUNK);
+                                let center = (min + max) / 2.0;
+                                let half_extents = (max - min) / 2.0;
+                                let expanded_aabb = Aabb {
+                                    center: center.into(),
+                                    half_extents: half_extents.into(),
+                                };
+                                commands.entity(*entity).insert(expanded_aabb);
+                                commands.entity(*entity).remove::<Collider>();
+                                if new_mesh.count_vertices() > 0 {
+                                    commands.entity(*entity).insert(
+                                            Collider::from_bevy_mesh(
+                                                &new_mesh,
+                                                &ComputedColliderShape::TriMesh(
+                                                    TriMeshFlags::default(),
+                                                ),
+                                            )
+                                            .unwrap(),
+                                        );
+                                }
+                            }
+                            *mesh_handle = Mesh3d(meshes.add(new_mesh));
+                        }
+                    }
+                }
             }
         }
     }
-    for normal in &mut normals {
-        let len_squared = normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2];
-        if len_squared > 0.0 {
-            let len = len_squared.sqrt();
-            normal[0] /= len;
-            normal[1] /= len;
-            normal[2] /= len;
+}
+
+fn setup_crosshair(mut commands: Commands) {
+    commands
+        .spawn(Node {
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            position_type: PositionType::Absolute,
+            ..default()
+        })
+        .with_children(|parent| {
+            parent
+                .spawn(Node {
+                    width: Val::Px(20.0),
+                    height: Val::Px(20.0),
+                    position_type: PositionType::Relative,
+                    ..default()
+                })
+                .with_children(|crosshair| {
+                    crosshair.spawn((
+                        Node {
+                            width: Val::Px(20.0),
+                            height: Val::Px(2.0),
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(0.0),
+                            top: Val::Px(9.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::WHITE),
+                    ));
+                    crosshair.spawn((
+                        Node {
+                            width: Val::Px(2.0),
+                            height: Val::Px(20.0),
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(9.0),
+                            top: Val::Px(0.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::WHITE),
+                    ));
+                });
+        });
+}
+
+fn screen_to_world_ray(
+    cursor_pos: Vec2,
+    camera: &Camera,
+    camera_transform: &GlobalTransform,
+    chunk_map: &ResMut<ChunkMap>,
+) -> Option<(Entity, Vec3, Vec3, (i16, i16, i16))> {
+    let ray = camera
+        .viewport_to_world(camera_transform, cursor_pos)
+        .unwrap();
+    let ray_origin = ray.origin;
+    let ray_direction = ray.direction;
+    let max_distance = 100.0;
+    let step_size = 0.05;
+    let mut distance_traveled = 0.0;
+    while distance_traveled < max_distance {
+        let current_pos = ray_origin + ray_direction * distance_traveled;
+        let chunk_coord = world_pos_to_chunk_coord(current_pos);
+
+        if let Some(chunk) = chunk_map.0.get(&chunk_coord) {
+            let chunk_world_center = chunk.1.world_position;
+            let chunk_world_min = chunk_world_center - Vec3::splat(HALF_CHUNK);
+            let relative_pos = current_pos - chunk_world_min;
+            let voxel_x = (relative_pos.x / VOXEL_SIZE).floor();
+            let voxel_y = (relative_pos.y / VOXEL_SIZE).floor();
+            let voxel_z = (relative_pos.z / VOXEL_SIZE).floor();
+            let voxel_x_idx = voxel_x as u32;
+            let voxel_y_idx = voxel_y as u32;
+            let voxel_z_idx = voxel_z as u32;
+            if chunk.1.is_solid(voxel_x_idx, voxel_y_idx, voxel_z_idx) {
+                return Some((chunk.0, current_pos, chunk.1.world_position, chunk_coord));
+            }
         }
+        distance_traveled += step_size;
     }
-    let uvs: Vec<[f32; 2]> = vertices
-        .iter()
-        .map(|v| [v[0] / width as f32, v[2] / depth as f32])
-        .collect();
-    Mesh::new(PrimitiveTopology::TriangleList, default())
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vertices)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
-        .with_inserted_indices(Indices::U32(indices))
-}
 
-fn terrain_sdf(
-    pos: Vec3,
-    width: f32,
-    depth: f32,
-    params: &TerrainParams,
-    fbm: &Fbm<Perlin>,
-) -> f32 {
-    let noise_val = fbm.get([pos.x as f64, pos.z as f64]) as f32;
-    let terrain_height = params.base_height + noise_val * params.amplitude;
-    let distance_to_surface = pos.y - terrain_height;
-    let p_xz = Vec2::new(pos.x, pos.z);
-    let closest_point_in_bounds = Vec2::new(pos.x.clamp(0.0, width), pos.z.clamp(0.0, depth));
-    let boundary_distance = p_xz.distance(closest_point_in_bounds);
-    if boundary_distance > 0.0 {
-        (distance_to_surface.powi(2) + boundary_distance.powi(2)).sqrt()
-    } else {
-        distance_to_surface
-    }
-}
-
-fn get_cube_index_terrain(
-    pos: Vec3,
-    step: Vec3,
-    width: f32,
-    depth: f32,
-    terrain_params: &TerrainParams,
-    fbm: &Fbm<Perlin>,
-) -> u8 {
-    let mut cube_index = 0u8;
-    let corners = [
-        Vec3::new(0.0, 0.0, 0.0),
-        Vec3::new(step.x, 0.0, 0.0),
-        Vec3::new(step.x, step.y, 0.0),
-        Vec3::new(0.0, step.y, 0.0),
-        Vec3::new(0.0, 0.0, step.z),
-        Vec3::new(step.x, 0.0, step.z),
-        Vec3::new(step.x, step.y, step.z),
-        Vec3::new(0.0, step.y, step.z),
-    ];
-    for (i, corner) in corners.iter().enumerate() {
-        let world_pos = pos + *corner;
-        if terrain_sdf(world_pos, width, depth, terrain_params, fbm) > 0.0 {
-            cube_index |= 1 << i;
-        }
-    }
-    cube_index
-}
-
-fn get_edge_vertex_terrain(
-    pos: Vec3,
-    step: Vec3,
-    edge_idx: usize,
-    width: f32,
-    depth: f32,
-    terrain_params: &TerrainParams,
-    fbm: &Fbm<Perlin>,
-) -> Vec3 {
-    let edge_vertices = [
-        (Vec3::ZERO, Vec3::new(step.x, 0.0, 0.0)),
-        (Vec3::new(step.x, 0.0, 0.0), Vec3::new(step.x, step.y, 0.0)),
-        (Vec3::new(step.x, step.y, 0.0), Vec3::new(0.0, step.y, 0.0)),
-        (Vec3::new(0.0, step.y, 0.0), Vec3::ZERO),
-        (Vec3::new(0.0, 0.0, step.z), Vec3::new(step.x, 0.0, step.z)),
-        (
-            Vec3::new(step.x, 0.0, step.z),
-            Vec3::new(step.x, step.y, step.z),
-        ),
-        (
-            Vec3::new(step.x, step.y, step.z),
-            Vec3::new(0.0, step.y, step.z),
-        ),
-        (Vec3::new(0.0, step.y, step.z), Vec3::new(0.0, 0.0, step.z)),
-        (Vec3::ZERO, Vec3::new(0.0, 0.0, step.z)),
-        (Vec3::new(step.x, 0.0, 0.0), Vec3::new(step.x, 0.0, step.z)),
-        (
-            Vec3::new(step.x, step.y, 0.0),
-            Vec3::new(step.x, step.y, step.z),
-        ),
-        (Vec3::new(0.0, step.y, 0.0), Vec3::new(0.0, step.y, step.z)),
-    ];
-    let (v1, v2) = edge_vertices[edge_idx];
-    let p1 = pos + v1;
-    let p2 = pos + v2;
-    let val1 = terrain_sdf(p1, width, depth, terrain_params, fbm);
-    let val2 = terrain_sdf(p2, width, depth, terrain_params, fbm);
-    if (val1 * val2) >= 0.0 {
-        return p1;
-    }
-    let t = val1 / (val1 - val2);
-    p1.lerp(p2, t)
-}
-
-pub struct TerrainParams {
-    pub seed: u32,
-    pub frequency: f64,
-    pub octaves: usize,
-    pub lacunarity: f64,
-    pub persistence: f64,
-    pub base_height: f32,
-    pub amplitude: f32,
-}
-
-impl Default for TerrainParams {
-    fn default() -> Self {
-        Self {
-            seed: 100,
-            frequency: 0.02,
-            octaves: 3,
-            lacunarity: 2.1,
-            persistence: 0.4,
-            base_height: 0.0,
-            amplitude: 5.0,
-        }
-    }
+    None
 }
