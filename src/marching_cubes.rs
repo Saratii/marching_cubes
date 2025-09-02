@@ -8,8 +8,7 @@ use bevy::{
 
 use crate::{
     terrain::terrain::{
-        CUBES_PER_CHUNK_DIM, HALF_CHUNK, VOXEL_SIZE, VOXELS_PER_CHUNK, VOXELS_PER_CHUNK_DIM,
-        VoxelData,
+        CUBES_PER_CHUNK_DIM, HALF_CHUNK, VOXEL_SIZE, VOXELS_PER_CHUNK_DIM, VoxelData,
     },
     triangle_table::TRIANGLE_TABLE,
 };
@@ -69,7 +68,7 @@ fn voxel_color_from_index(
     cube_y: usize,
     cube_z: usize,
     corner: usize,
-    sdf: &[VoxelData; VOXELS_PER_CHUNK],
+    sdf: &[VoxelData],
 ) -> [f32; 4] {
     let (dx, dy, dz) = match corner {
         0 => (0, 0, 0),
@@ -96,7 +95,7 @@ fn voxel_color_from_index(
     }
 }
 
-pub fn march_cubes(densities: &Box<[VoxelData; VOXELS_PER_CHUNK]>) -> Mesh {
+pub fn march_cubes(densities: &[VoxelData]) -> Mesh {
     let mut vertex_cache = VertexCache::new();
     let mut indices = Vec::new();
     for x in 0..CUBES_PER_CHUNK_DIM {
@@ -146,7 +145,7 @@ fn process_cube_with_cache(
     z: usize,
     vertex_cache: &mut VertexCache,
     indices: &mut Vec<u32>,
-    densities: &[VoxelData; VOXELS_PER_CHUNK],
+    densities: &[VoxelData],
 ) {
     let cube_vertices = get_cube_vertices(x, y, z);
     let cube_values = sample_cube_values_from_sdf(x, y, z, densities);
@@ -181,7 +180,7 @@ fn triangulate_cube_with_cache(
     cube_y: usize,
     cube_z: usize,
     vertex_cache: &mut VertexCache,
-    densities: &[VoxelData; VOXELS_PER_CHUNK],
+    densities: &[VoxelData],
 ) -> Vec<[u32; 3]> {
     let edge_table = get_edge_table_for_cube(cube_index);
     let mut result = Vec::new();
@@ -235,7 +234,7 @@ fn get_or_create_edge_vertex(
     cube_y: usize,
     cube_z: usize,
     vertex_cache: &mut VertexCache,
-    densities: &[VoxelData; VOXELS_PER_CHUNK],
+    densities: &[VoxelData],
 ) -> u32 {
     let edge_id = get_canonical_edge_id(edge_index, cube_x, cube_y, cube_z);
     let (v1_idx, v2_idx) = EDGE_VERTICES[edge_index];
@@ -343,12 +342,7 @@ fn interpolate_edge(edge_index: usize, vertices: &[Vec3; 8], values: &[f32; 8]) 
     v1 + t * (v2 - v1)
 }
 
-fn sample_cube_values_from_sdf(
-    x: usize,
-    y: usize,
-    z: usize,
-    sdf: &[VoxelData; VOXELS_PER_CHUNK],
-) -> [f32; 8] {
+fn sample_cube_values_from_sdf(x: usize, y: usize, z: usize, sdf: &[VoxelData]) -> [f32; 8] {
     let get_sdf = |x: usize, y: usize, z: usize| -> f32 {
         let idx = z * VOXELS_PER_CHUNK_DIM * VOXELS_PER_CHUNK_DIM + y * VOXELS_PER_CHUNK_DIM + x;
         sdf[idx].sdf as f32
@@ -420,7 +414,7 @@ fn sample_sdf_at_point_with_interpolation(point: Vec3, sdf: &[VoxelData]) -> f32
 fn build_mesh_from_cache_and_indices(
     vertex_cache: VertexCache,
     indices: Vec<u32>,
-    densities: &[VoxelData; VOXELS_PER_CHUNK],
+    densities: &[VoxelData],
 ) -> Mesh {
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,

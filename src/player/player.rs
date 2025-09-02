@@ -5,13 +5,18 @@ use bevy::{
 };
 use bevy_rapier3d::prelude::*;
 
+use crate::{
+    conversions::world_pos_to_chunk_coord, data_loader::chunk_loader::deallocate_chunks,
+    terrain::terrain::ChunkMap,
+};
+
 const CAMERA_3RD_PERSON_OFFSET: Vec3 = Vec3 {
     x: 0.0,
     y: 5.0,
     z: 10.0,
 };
-const PLAYER_SPEED: f32 = 5.0;
-const PLAYER_SPAWN: Vec3 = Vec3::new(0., 20., 0.);
+const PLAYER_SPEED: f32 = 15.0;
+pub const PLAYER_SPAWN: Vec3 = Vec3::new(0., 20., 0.);
 const PLAYER_CUBOID_SIZE: Vec3 = Vec3::new(0.5, 1.5, 0.5);
 const CAMERA_FIRST_PERSON_OFFSET: Vec3 = Vec3::new(0., 0.75 * PLAYER_CUBOID_SIZE.y, 0.);
 const MIN_ZOOM_DISTANCE: f32 = 5.0;
@@ -271,5 +276,25 @@ pub fn player_movement(
         }
         movement_vec.y = vertical_velocity.y;
         controller.translation = Some(movement_vec * time.delta_secs());
+    }
+}
+
+pub fn detect_chunk_border_crossing(
+    player_query: Query<&Transform, (With<PlayerTag>, Changed<Transform>)>,
+    mut last_chunk: Local<Option<(i16, i16, i16)>>,
+    mut chunk_map: ResMut<ChunkMap>,
+    mut commands: Commands,
+) {
+    for transform in player_query.iter() {
+        let current_chunk = world_pos_to_chunk_coord(transform.translation);
+        if last_chunk.is_none() {
+            *last_chunk = Some(current_chunk);
+            continue;
+        }
+        let previous_chunk = last_chunk.unwrap();
+        if current_chunk != previous_chunk {
+            deallocate_chunks(current_chunk, &mut chunk_map.0, &mut commands);
+            *last_chunk = Some(current_chunk);
+        }
     }
 }

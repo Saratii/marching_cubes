@@ -16,6 +16,9 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 use crate::{
     conversions::chunk_coord_to_world_pos,
+    data_loader::chunk_loader::{
+        ChunkDataFile, ChunkIndexFile, ChunkIndexMap, create_chunk_file_data,
+    },
     marching_cubes::march_cubes,
     terrain::{
         chunk_generator::GenerateChunkEvent,
@@ -52,23 +55,15 @@ pub fn catch_chunk_generation_request(
     let noise_gen = fbm.0.clone();
     let task_pool = AsyncComputeTaskPool::get();
     for event in chunk_generation_events.read() {
-        for (chunk_coord, _) in &event.chunk_data {
-            my_tasks.chunks_being_generated.insert(*chunk_coord);
-        }
-        for chunk_batch in event.chunk_data.chunks(MAX_CHUNKS_PER_TASK) {
+        for chunk_batch in event.chunk_coords.chunks(MAX_CHUNKS_PER_TASK) {
             let chunk_coords = chunk_batch.to_vec();
             let noise_gen_clone = noise_gen.clone();
             let material_handle = standard_terrain_material_handle.0.clone();
             let task = task_pool.spawn(async move {
                 chunk_coords
                     .par_iter()
-                    .map(|(coord, needs_noise)| {
-                        generate_chunk_data(
-                            coord,
-                            &noise_gen_clone,
-                            *needs_noise,
-                            material_handle.clone(),
-                        )
+                    .map(|coord| {
+                        generate_chunk_data(coord, &noise_gen_clone, material_handle.clone())
                     })
                     .collect::<Vec<_>>()
             });
@@ -81,7 +76,6 @@ pub fn catch_chunk_generation_request(
 pub fn generate_chunk_data(
     coord: &(i16, i16, i16),
     noise_gen: &GeneratorWrapper<SafeNode>,
-    needs_noise: bool,
     standard_terrain_material_handle: Handle<StandardMaterial>,
 ) -> (
     (i16, i16, i16),
@@ -91,10 +85,10 @@ pub fn generate_chunk_data(
     Option<Collider>,
     Handle<StandardMaterial>,
 ) {
-    let terrain_chunk = TerrainChunk::new(*coord, noise_gen, needs_noise);
+    let terrain_chunk = TerrainChunk::new(*coord, noise_gen);
     let mesh = march_cubes(&terrain_chunk.densities);
     let transform = Transform::from_translation(chunk_coord_to_world_pos(*coord));
-    let collider = if needs_noise {
+    let collider = if mesh.count_vertices() > 0 {
         Collider::from_bevy_mesh(
             &mesh,
             &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
@@ -117,6 +111,9 @@ pub fn spawn_generated_chunks(
     mut chunk_map: ResMut<ChunkMap>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut chunk_index_map: ResMut<ChunkIndexMap>,
+    chunk_data_file: Res<ChunkDataFile>,
+    index_file: Res<ChunkIndexFile>,
 ) {
     let mut chunk_coords_to_be_removed = Vec::new();
     my_tasks.generation_tasks.retain_mut(|task| {
@@ -130,6 +127,13 @@ pub fn spawn_generated_chunks(
             for (i, (chunk_coord, terrain_chunk, mesh, transform, collider, material_handle)) in
                 chunk_data.into_iter().enumerate()
             {
+                create_chunk_file_data(
+                    &terrain_chunk,
+                    chunk_coord,
+                    &mut chunk_index_map.0,
+                    &chunk_data_file.0,
+                    &index_file.0,
+                );
                 chunk_coords_to_be_removed[start_index + i] = chunk_coord;
                 let entity = chunk_map.spawn_chunk(
                     &mut commands,
