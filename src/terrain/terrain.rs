@@ -1,27 +1,20 @@
 use std::collections::HashMap;
 
-use bevy::{
-    asset::{Assets, Handle},
-    ecs::{
-        component::Component,
-        entity::Entity,
-        resource::Resource,
-        system::{Commands, ResMut},
-    },
-    math::Vec3,
-    pbr::{MeshMaterial3d, StandardMaterial},
-    render::mesh::{Mesh, Mesh3d},
-    transform::components::Transform,
-    utils::default,
-};
+use bevy::prelude::*;
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
 use fastnoise2::{
     SafeNode,
     generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{
-    conversions::chunk_coord_to_world_pos, marching_cubes::march_cubes,
+    conversions::{chunk_coord_to_world_pos, world_pos_to_chunk_coord},
+    data_loader::chunk_loader::{
+        ChunkDataFile, ChunkIndexFile, ChunkIndexMap, create_chunk_file_data, load_chunk_data,
+    },
+    marching_cubes::march_cubes,
+    player::player::PLAYER_SPAWN,
     terrain::chunk_generator::generate_densities,
 };
 
@@ -32,9 +25,8 @@ pub const CHUNK_SIZE: f32 = CUBES_PER_CHUNK_DIM as f32 * VOXEL_SIZE; // 7.875 me
 pub const VOXELS_PER_CHUNK: usize =
     VOXELS_PER_CHUNK_DIM * VOXELS_PER_CHUNK_DIM * VOXELS_PER_CHUNK_DIM;
 pub const HALF_CHUNK: f32 = CHUNK_SIZE / 2.0;
-pub const CHUNK_CREATION_RADIUS: i16 = 20; //in world units
-pub const CHUNK_GENERATION_CIRCULAR_RADIUS_SQUARED: f32 =
-    (CHUNK_CREATION_RADIUS as f32 * CHUNK_SIZE) * (CHUNK_CREATION_RADIUS as f32 * CHUNK_SIZE);
+pub const CHUNK_CREATION_RADIUS: f32 = 2.0; //in world units
+pub const CHUNK_CREATION_RADIUS_SQUARED: f32 = CHUNK_CREATION_RADIUS * CHUNK_CREATION_RADIUS;
 
 #[derive(Component)]
 pub struct ChunkTag;
@@ -45,26 +37,22 @@ pub struct NoiseFunction(pub GeneratorWrapper<SafeNode>);
 #[derive(Resource)]
 pub struct StandardTerrainMaterialHandle(pub Handle<StandardMaterial>);
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct VoxelData {
     pub sdf: f32,
     pub material: u8,
 }
 
-#[derive(Component)]
+#[derive(Component, Serialize, Deserialize)]
 pub struct TerrainChunk {
-    pub densities: Box<[VoxelData; VOXELS_PER_CHUNK]>,
+    pub densities: Box<[VoxelData]>,
     pub world_position: Vec3,
 }
 
 impl TerrainChunk {
-    pub fn new(
-        chunk_coord: (i16, i16, i16),
-        fbm: &GeneratorWrapper<SafeNode>,
-        needs_noise: bool,
-    ) -> Self {
+    pub fn new(chunk_coord: (i16, i16, i16), fbm: &GeneratorWrapper<SafeNode>) -> Self {
         Self {
-            densities: generate_densities(&chunk_coord, fbm, needs_noise),
+            densities: generate_densities(&chunk_coord, fbm),
             world_position: chunk_coord_to_world_pos(chunk_coord),
         }
     }
@@ -199,34 +187,80 @@ impl ChunkMap {
     }
 }
 
-pub fn setup_map(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
+pub fn setup_map(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>) {
     let fbm =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
     let standard_terrain_material_handle = materials.add(StandardMaterial { ..default() });
-    let mut chunk_map = ChunkMap::new();
-    let terrain_chunk = TerrainChunk::new((0, 0, 0), &fbm, true);
-    let mesh = march_cubes(&terrain_chunk.densities);
-    let collider = Collider::from_bevy_mesh(
-        &mesh,
-        &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
-    );
-    let entity = chunk_map.spawn_chunk(
-        &mut commands,
-        &mut meshes,
-        standard_terrain_material_handle.clone(),
-        terrain_chunk,
-        mesh,
-        Transform::from_translation(Vec3::ZERO),
-        collider,
-    );
-    chunk_map.0.insert((0, 0, 0), entity);
-    commands.insert_resource(chunk_map);
+    commands.insert_resource(ChunkMap::new());
     commands.insert_resource(NoiseFunction(fbm));
     commands.insert_resource(StandardTerrainMaterialHandle(
         standard_terrain_material_handle,
     ));
+}
+
+pub fn spawn_initial_chunks(
+    mut commands: Commands,
+    mut chunk_index_map: ResMut<ChunkIndexMap>,
+    mut chunk_map: ResMut<ChunkMap>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    standard_material: Res<StandardTerrainMaterialHandle>,
+    fbm: Res<NoiseFunction>,
+    mut chunk_data_file: ResMut<ChunkDataFile>,
+    mut index_file: ResMut<ChunkIndexFile>,
+) {
+    let player_chunk = world_pos_to_chunk_coord(PLAYER_SPAWN);
+    let min_chunk = (
+        player_chunk.0 - CHUNK_CREATION_RADIUS as i16,
+        player_chunk.1 - CHUNK_CREATION_RADIUS as i16,
+        player_chunk.2 - CHUNK_CREATION_RADIUS as i16,
+    );
+    let max_chunk = (
+        player_chunk.0 + CHUNK_CREATION_RADIUS as i16,
+        player_chunk.1 + CHUNK_CREATION_RADIUS as i16,
+        player_chunk.2 + CHUNK_CREATION_RADIUS as i16,
+    );
+    for chunk_x in min_chunk.0..=max_chunk.0 {
+        for chunk_z in min_chunk.2..=max_chunk.2 {
+            for chunk_y in min_chunk.1..=max_chunk.1 {
+                let chunk_coord = (chunk_x, chunk_y, chunk_z);
+                let chunk_world_pos = chunk_coord_to_world_pos(chunk_coord);
+                if chunk_world_pos.distance_squared(PLAYER_SPAWN) < CHUNK_CREATION_RADIUS_SQUARED {
+                    let terrain_chunk = if chunk_index_map.0.contains_key(&chunk_coord) {
+                        load_chunk_data(&mut chunk_data_file.0, &chunk_index_map.0, chunk_coord)
+                    } else {
+                        let chunk = TerrainChunk::new(chunk_coord, &fbm.0);
+                        create_chunk_file_data(
+                            &chunk,
+                            chunk_coord,
+                            &mut chunk_index_map.0,
+                            &mut chunk_data_file.0,
+                            &mut index_file.0,
+                        );
+                        chunk
+                    };
+                    let mesh = march_cubes(&terrain_chunk.densities);
+                    let transform =
+                        Transform::from_translation(chunk_coord_to_world_pos(chunk_coord));
+                    let collider = if mesh.count_vertices() > 0 {
+                        Collider::from_bevy_mesh(
+                            &mesh,
+                            &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
+                        )
+                    } else {
+                        None
+                    };
+                    let entity = chunk_map.spawn_chunk(
+                        &mut commands,
+                        &mut meshes,
+                        standard_material.0.clone(),
+                        terrain_chunk,
+                        mesh,
+                        transform,
+                        collider,
+                    );
+                    chunk_map.0.insert(chunk_coord, entity);
+                }
+            }
+        }
+    }
 }

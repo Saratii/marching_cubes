@@ -10,13 +10,12 @@ pub const NOISE_FREQUENCY: f32 = 0.02; // Frequency of the noise
 
 #[derive(Event)]
 pub struct GenerateChunkEvent {
-    pub chunk_data: Vec<((i16, i16, i16), bool)>,
+    pub chunk_coords: Vec<(i16, i16, i16)>,
 }
 
 pub fn generate_densities(
     chunk_coord: &(i16, i16, i16),
     fbm: &GeneratorWrapper<SafeNode>,
-    needs_noise: bool,
 ) -> Box<[VoxelData; VOXELS_PER_CHUNK]> {
     let mut densities = vec![
         VoxelData {

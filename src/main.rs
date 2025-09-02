@@ -11,23 +11,23 @@ use bevy::render::primitives::Aabb;
 use bevy::window::PresentMode;
 use bevy_rapier3d::plugin::{NoUserData, RapierPhysicsPlugin};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
-use fastnoise2::SafeNode;
-use fastnoise2::generator::GeneratorWrapper;
 use iyes_perf_ui::PerfUiPlugin;
 use iyes_perf_ui::prelude::PerfUiDefaultEntries;
-use marching_cubes::conversions::world_pos_to_chunk_coord;
+use marching_cubes::conversions::{chunk_coord_to_world_pos, world_pos_to_chunk_coord};
+use marching_cubes::data_loader::chunk_loader::setup_chunk_loading;
 use marching_cubes::marching_cubes::march_cubes;
 use marching_cubes::player::player::{
     CameraController, KeyBindings, PlayerTag, camera_look, camera_zoom, cursor_grab,
-    initial_grab_cursor, player_movement, spawn_player, toggle_camera,
+    detect_chunk_border_crossing, initial_grab_cursor, player_movement, spawn_player,
+    toggle_camera,
 };
-use marching_cubes::terrain::chunk_generator::{GenerateChunkEvent, NOISE_FREQUENCY, NOISE_SEED};
+use marching_cubes::terrain::chunk_generator::GenerateChunkEvent;
 use marching_cubes::terrain::chunk_thread::{
     MyMapGenTasks, catch_chunk_generation_request, spawn_generated_chunks,
 };
 use marching_cubes::terrain::terrain::{
-    CHUNK_CREATION_RADIUS, CHUNK_SIZE, ChunkMap, ChunkTag, HALF_CHUNK, NoiseFunction, VOXEL_SIZE,
-    VOXELS_PER_CHUNK_DIM, setup_map,
+    CHUNK_CREATION_RADIUS, CHUNK_CREATION_RADIUS_SQUARED, ChunkMap, ChunkTag, HALF_CHUNK,
+    VOXEL_SIZE, setup_map, spawn_initial_chunks,
 };
 use rayon::ThreadPoolBuilder;
 
@@ -70,6 +70,8 @@ fn main() {
                 setup_crosshair,
                 spawn_player,
                 initial_grab_cursor,
+                spawn_initial_chunks.after(setup_chunk_loading),
+                setup_chunk_loading,
             ),
         )
         .add_systems(
@@ -84,6 +86,7 @@ fn main() {
                 player_movement,
                 catch_chunk_generation_request,
                 spawn_generated_chunks,
+                detect_chunk_border_crossing,
             ),
         )
         .run();
@@ -106,84 +109,41 @@ fn setup(mut commands: Commands) {
 fn update_chunks(
     chunk_map: ResMut<ChunkMap>,
     player_transform: Single<&Transform, With<PlayerTag>>,
-    perlin: Res<NoiseFunction>,
     mut chunk_generation_events: EventWriter<GenerateChunkEvent>,
-    map_gen_tasks: Res<MyMapGenTasks>,
+    mut map_gen_tasks: ResMut<MyMapGenTasks>,
 ) {
     let player_chunk = world_pos_to_chunk_coord(player_transform.translation);
-    let radius = CHUNK_CREATION_RADIUS as f32;
-    let radius_squared = radius * radius;
-    let mut chunk_data = Vec::new();
-    for dx in -CHUNK_CREATION_RADIUS..=CHUNK_CREATION_RADIUS {
-        for dz in -CHUNK_CREATION_RADIUS..=CHUNK_CREATION_RADIUS {
-            let xz_dist_sq = (dx * dx + dz * dz) as f32;
-            if xz_dist_sq <= radius_squared {
-                let max_dy = (radius_squared - xz_dist_sq).sqrt() as i16;
-                let chunk_x = player_chunk.0 + dx;
-                let chunk_z = player_chunk.2 + dz;
-                let (min_height, max_height) =
-                    get_chunk_column_height_range(chunk_x, chunk_z, &perlin.0);
-                for dy in -max_dy..=max_dy {
-                    let chunk_coord = (chunk_x, player_chunk.1 + dy, chunk_z);
+    let mut chunk_coords = Vec::new();
+    let min_chunk = (
+        player_chunk.0 - CHUNK_CREATION_RADIUS as i16,
+        player_chunk.1 - CHUNK_CREATION_RADIUS as i16,
+        player_chunk.2 - CHUNK_CREATION_RADIUS as i16,
+    );
+    let max_chunk = (
+        player_chunk.0 + CHUNK_CREATION_RADIUS as i16,
+        player_chunk.1 + CHUNK_CREATION_RADIUS as i16,
+        player_chunk.2 + CHUNK_CREATION_RADIUS as i16,
+    );
+    for chunk_x in min_chunk.0..=max_chunk.0 {
+        for chunk_z in min_chunk.2..=max_chunk.2 {
+            for chunk_y in min_chunk.1..=max_chunk.1 {
+                let chunk_coord = (chunk_x, chunk_y, chunk_z);
+                let chunk_world_pos = chunk_coord_to_world_pos(chunk_coord);
+                if chunk_world_pos.distance_squared(player_transform.translation)
+                    < CHUNK_CREATION_RADIUS_SQUARED
+                {
                     if !chunk_map.0.contains_key(&chunk_coord)
                         && !map_gen_tasks.chunks_being_generated.contains(&chunk_coord)
                     {
-                        let needs_noise = chunk_needs_noise(chunk_coord, min_height, max_height);
-                        if needs_noise.is_some() {
-                            chunk_data.push((chunk_coord, needs_noise.unwrap()));
-                        }
+                        chunk_coords.push(chunk_coord);
+                        map_gen_tasks.chunks_being_generated.insert(chunk_coord);
                     }
                 }
             }
         }
     }
-    if !chunk_data.is_empty() {
-        chunk_generation_events.write(GenerateChunkEvent { chunk_data });
-    }
-}
-
-fn get_chunk_column_height_range(
-    chunk_x: i16,
-    chunk_z: i16,
-    fbm: &GeneratorWrapper<SafeNode>,
-) -> (f32, f32) {
-    let chunk_world_x = chunk_x as f32 * CHUNK_SIZE;
-    let chunk_world_z = chunk_z as f32 * CHUNK_SIZE;
-    let half = HALF_CHUNK;
-    let positions = [
-        (chunk_world_x - half, chunk_world_z - half),
-        (chunk_world_x + half, chunk_world_z - half),
-        (chunk_world_x - half, chunk_world_z + half),
-        (chunk_world_x + half, chunk_world_z + half),
-        (chunk_world_x, chunk_world_z),
-    ];
-    let mut min_height = f32::INFINITY;
-    let mut max_height = f32::NEG_INFINITY;
-    for (x, z) in positions {
-        let height = fbm.gen_single_2d(x * NOISE_FREQUENCY, z * NOISE_FREQUENCY, NOISE_SEED as i32);
-        min_height = min_height.min(height);
-        max_height = max_height.max(height);
-    }
-    (min_height, max_height)
-}
-
-fn chunk_needs_noise(
-    chunk_coord: (i16, i16, i16),
-    min_terrain_height: f32,
-    max_terrain_height: f32,
-) -> Option<bool> {
-    let chunk_world_y = chunk_coord.1 as f32 * CHUNK_SIZE;
-    let chunk_bottom = chunk_world_y - HALF_CHUNK;
-    let chunk_top = chunk_world_y + HALF_CHUNK;
-    let transition_width = 1.0;
-    let effective_min = min_terrain_height - transition_width;
-    let effective_max = max_terrain_height + transition_width;
-    if chunk_bottom > effective_max {
-        None
-    } else if chunk_top < effective_min {
-        Some(false)
-    } else {
-        Some(true)
+    if !chunk_coords.is_empty() {
+        chunk_generation_events.write(GenerateChunkEvent { chunk_coords });
     }
 }
 
