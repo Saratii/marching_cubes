@@ -13,8 +13,12 @@ use bevy_rapier3d::plugin::{NoUserData, RapierPhysicsPlugin};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
 use iyes_perf_ui::PerfUiPlugin;
 use iyes_perf_ui::prelude::PerfUiDefaultEntries;
-use marching_cubes::conversions::{chunk_coord_to_world_pos, world_pos_to_chunk_coord};
-use marching_cubes::data_loader::chunk_loader::setup_chunk_loading;
+use marching_cubes::conversions::{
+    chunk_coord_to_world_pos, world_pos_to_chunk_coord, world_pos_to_voxel_index,
+};
+use marching_cubes::data_loader::chunk_loader::{
+    ChunkDataFile, ChunkIndexMap, load_chunk_data, setup_chunk_loading, update_chunk_file_data,
+};
 use marching_cubes::marching_cubes::march_cubes;
 use marching_cubes::player::player::{
     CameraController, KeyBindings, PlayerTag, camera_look, camera_zoom, cursor_grab,
@@ -27,7 +31,7 @@ use marching_cubes::terrain::chunk_thread::{
 };
 use marching_cubes::terrain::terrain::{
     CHUNK_CREATION_RADIUS, CHUNK_CREATION_RADIUS_SQUARED, ChunkMap, ChunkTag, HALF_CHUNK,
-    VOXEL_SIZE, setup_map, spawn_initial_chunks,
+    StandardTerrainMaterialHandle, setup_map, spawn_initial_chunks,
 };
 use rayon::ThreadPoolBuilder;
 
@@ -107,10 +111,15 @@ fn setup(mut commands: Commands) {
 
 //this should ideally only trigger when the player moves across chunk borders
 fn update_chunks(
-    chunk_map: ResMut<ChunkMap>,
+    mut chunk_map: ResMut<ChunkMap>,
     player_transform: Single<&Transform, With<PlayerTag>>,
     mut chunk_generation_events: EventWriter<GenerateChunkEvent>,
     mut map_gen_tasks: ResMut<MyMapGenTasks>,
+    chunk_index_map: Res<ChunkIndexMap>,
+    mut chunk_data_file: ResMut<ChunkDataFile>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    standard_terrain_material_handle: Res<StandardTerrainMaterialHandle>,
 ) {
     let player_chunk = world_pos_to_chunk_coord(player_transform.translation);
     let mut chunk_coords = Vec::new();
@@ -135,8 +144,36 @@ fn update_chunks(
                     if !chunk_map.0.contains_key(&chunk_coord)
                         && !map_gen_tasks.chunks_being_generated.contains(&chunk_coord)
                     {
-                        chunk_coords.push(chunk_coord);
-                        map_gen_tasks.chunks_being_generated.insert(chunk_coord);
+                        if chunk_index_map.0.contains_key(&chunk_coord) {
+                            let chunk_data = load_chunk_data(
+                                &mut chunk_data_file.0,
+                                &chunk_index_map.0,
+                                chunk_coord,
+                            );
+                            let mesh = march_cubes(&chunk_data.densities);
+                            let transform =
+                                Transform::from_translation(chunk_coord_to_world_pos(chunk_coord));
+                            let collider = if mesh.count_vertices() > 0 {
+                                Collider::from_bevy_mesh(
+                                    &mesh,
+                                    &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
+                                )
+                            } else {
+                                None
+                            };
+                            let entity = chunk_map.spawn_chunk(
+                                &mut commands,
+                                &mut meshes,
+                                standard_terrain_material_handle.0.clone(),
+                                mesh,
+                                transform,
+                                collider,
+                            );
+                            chunk_map.0.insert(chunk_coord, (entity, chunk_data));
+                        } else {
+                            chunk_coords.push(chunk_coord);
+                            map_gen_tasks.chunks_being_generated.insert(chunk_coord);
+                        }
                     }
                 }
             }
@@ -157,6 +194,8 @@ fn handle_digging_input(
     mut commands: Commands,
     mut dig_timer: Local<f32>,
     time: Res<Time>,
+    mut chunk_data_file: ResMut<ChunkDataFile>,
+    chunk_index_map: Res<ChunkIndexMap>,
 ) {
     const DIG_STRENGTH: f32 = 2.2;
     const DIG_TIMER: f32 = 0.02; // seconds
@@ -180,6 +219,9 @@ fn handle_digging_input(
                 screen_to_world_ray(cursor_pos, camera, camera_transform, &chunk_map)
             {
                 let modified_chunks = chunk_map.dig_sphere(world_pos, DIG_RADIUS, DIG_STRENGTH);
+                if modified_chunks.is_empty() {
+                    return;
+                }
                 for chunk_coord in modified_chunks {
                     if let Some((entity, chunk)) = chunk_map.0.get(&chunk_coord) {
                         if let Ok((_, mut mesh_handle)) = chunk_mesh_query.get_mut(*entity) {
@@ -209,6 +251,12 @@ fn handle_digging_input(
                             }
                             *mesh_handle = Mesh3d(meshes.add(new_mesh));
                         }
+                        update_chunk_file_data(
+                            &chunk_index_map.0,
+                            chunk_coord,
+                            &chunk,
+                            &mut chunk_data_file.0,
+                        );
                     }
                 }
             }
@@ -272,29 +320,20 @@ fn screen_to_world_ray(
         .unwrap();
     let ray_origin = ray.origin;
     let ray_direction = ray.direction;
-    let max_distance = 100.0;
+    let max_distance = 8.0;
     let step_size = 0.05;
     let mut distance_traveled = 0.0;
     while distance_traveled < max_distance {
         let current_pos = ray_origin + ray_direction * distance_traveled;
         let chunk_coord = world_pos_to_chunk_coord(current_pos);
-
         if let Some(chunk) = chunk_map.0.get(&chunk_coord) {
-            let chunk_world_center = chunk.1.world_position;
-            let chunk_world_min = chunk_world_center - Vec3::splat(HALF_CHUNK);
-            let relative_pos = current_pos - chunk_world_min;
-            let voxel_x = (relative_pos.x / VOXEL_SIZE).floor();
-            let voxel_y = (relative_pos.y / VOXEL_SIZE).floor();
-            let voxel_z = (relative_pos.z / VOXEL_SIZE).floor();
-            let voxel_x_idx = voxel_x as u32;
-            let voxel_y_idx = voxel_y as u32;
-            let voxel_z_idx = voxel_z as u32;
-            if chunk.1.is_solid(voxel_x_idx, voxel_y_idx, voxel_z_idx) {
-                return Some((chunk.0, current_pos, chunk.1.world_position, chunk_coord));
+            let voxel_idx = world_pos_to_voxel_index(current_pos, chunk_coord);
+            let chunk_world_pos = chunk_coord_to_world_pos(chunk_coord);
+            if chunk.1.is_solid(voxel_idx.0, voxel_idx.1, voxel_idx.2) {
+                return Some((chunk.0, current_pos, chunk_world_pos, chunk_coord));
             }
         }
         distance_traveled += step_size;
     }
-
     None
 }
