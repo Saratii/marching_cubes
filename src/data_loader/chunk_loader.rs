@@ -156,16 +156,14 @@ pub fn deallocate_chunks(
     chunk_map: &mut HashMap<(i16, i16, i16), (Entity, TerrainChunk)>,
     commands: &mut Commands,
 ) {
-    let player_chunk_world_pos = chunk_coord_to_world_pos(player_chunk);
-    let mut chunks_to_remove = Vec::new();
-    for (chunk_coord, chunk) in chunk_map.iter() {
-        let world_pos = chunk_coord_to_world_pos(*chunk_coord);
+    let player_chunk_world_pos = chunk_coord_to_world_pos(&player_chunk);
+    chunk_map.retain(|chunk_coord, (entity, _chunk)| {
+        let world_pos = chunk_coord_to_world_pos(chunk_coord);
         if world_pos.distance_squared(player_chunk_world_pos) > CHUNK_CREATION_RADIUS_SQUARED {
-            commands.entity(chunk.0).despawn();
-            chunks_to_remove.push(*chunk_coord);
+            commands.entity(*entity).despawn();
+            false
+        } else {
+            true
         }
-    }
-    for chunk_coord in chunks_to_remove {
-        chunk_map.remove(&chunk_coord);
-    }
+    });
 }

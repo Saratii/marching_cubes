@@ -89,34 +89,12 @@ impl ChunkMap {
         Self { 0: HashMap::new() }
     }
 
-    pub fn spawn_chunk(
-        &mut self,
-        commands: &mut Commands,
-        meshes: &mut ResMut<Assets<Mesh>>,
-        standard_terrain_material_handle: Handle<StandardMaterial>,
-        mesh: Mesh,
-        transform: Transform,
-        collider: Option<Collider>,
-    ) -> Entity {
-        let bundle = (
-            Mesh3d(meshes.add(mesh)),
-            MeshMaterial3d(standard_terrain_material_handle),
-            ChunkTag,
-            transform,
-        );
-        let entity = match collider {
-            Some(collider) => commands.spawn((bundle, collider)).id(),
-            None => commands.spawn(bundle).id(),
-        };
-        entity
-    }
-
     pub fn dig_sphere(&mut self, center: Vec3, radius: f32, strength: f32) -> Vec<(i16, i16, i16)> {
         let mut modified_chunks = Vec::new();
         let min_world = center - Vec3::splat(radius);
         let max_world = center + Vec3::splat(radius);
-        let min_chunk = world_pos_to_chunk_coord(min_world);
-        let max_chunk = world_pos_to_chunk_coord(max_world);
+        let min_chunk = world_pos_to_chunk_coord(&min_world);
+        let max_chunk = world_pos_to_chunk_coord(&max_world);
         for chunk_x in min_chunk.0..=max_chunk.0 {
             for chunk_y in min_chunk.1..=max_chunk.1 {
                 for chunk_z in min_chunk.2..=max_chunk.2 {
@@ -124,7 +102,7 @@ impl ChunkMap {
                     if !self.0.contains_key(&chunk_coord) {
                         continue;
                     }
-                    let chunk_center = chunk_coord_to_world_pos(chunk_coord);
+                    let chunk_center = chunk_coord_to_world_pos(&chunk_coord);
                     let chunk_modified = self.modify_chunk_voxels(
                         chunk_coord,
                         chunk_center,
@@ -178,6 +156,27 @@ impl ChunkMap {
     }
 }
 
+pub fn spawn_chunk(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    standard_terrain_material_handle: Handle<StandardMaterial>,
+    mesh: Mesh,
+    transform: Transform,
+    collider: Option<Collider>,
+) -> Entity {
+    let bundle = (
+        Mesh3d(meshes.add(mesh)),
+        MeshMaterial3d(standard_terrain_material_handle),
+        ChunkTag,
+        transform,
+    );
+    let entity = match collider {
+        Some(collider) => commands.spawn((bundle, collider)).id(),
+        None => commands.spawn(bundle).id(),
+    };
+    entity
+}
+
 pub fn setup_map(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>) {
     let fbm =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
@@ -199,7 +198,7 @@ pub fn spawn_initial_chunks(
     mut index_file: ResMut<ChunkIndexFile>,
     mut chunk_data_file: ResMut<ChunkDataFile>,
 ) {
-    let player_chunk = world_pos_to_chunk_coord(PLAYER_SPAWN);
+    let player_chunk = world_pos_to_chunk_coord(&PLAYER_SPAWN);
     let min_chunk = (
         player_chunk.0 - CHUNK_CREATION_RADIUS as i16,
         player_chunk.1 - CHUNK_CREATION_RADIUS as i16,
@@ -214,7 +213,7 @@ pub fn spawn_initial_chunks(
         for chunk_z in min_chunk.2..=max_chunk.2 {
             for chunk_y in min_chunk.1..=max_chunk.1 {
                 let chunk_coord = (chunk_x, chunk_y, chunk_z);
-                let chunk_world_pos = chunk_coord_to_world_pos(chunk_coord);
+                let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
                 if chunk_world_pos.distance_squared(PLAYER_SPAWN) < CHUNK_CREATION_RADIUS_SQUARED {
                     let terrain_chunk = if chunk_index_map.0.contains_key(&chunk_coord) {
                         load_chunk_data(&mut chunk_data_file.0, &chunk_index_map.0, chunk_coord)
@@ -231,7 +230,7 @@ pub fn spawn_initial_chunks(
                     };
                     let mesh = march_cubes(&terrain_chunk.densities);
                     let transform =
-                        Transform::from_translation(chunk_coord_to_world_pos(chunk_coord));
+                        Transform::from_translation(chunk_coord_to_world_pos(&chunk_coord));
                     let collider = if mesh.count_vertices() > 0 {
                         Collider::from_bevy_mesh(
                             &mesh,
@@ -240,7 +239,7 @@ pub fn spawn_initial_chunks(
                     } else {
                         None
                     };
-                    let entity = chunk_map.spawn_chunk(
+                    let entity = spawn_chunk(
                         &mut commands,
                         &mut meshes,
                         standard_material.0.clone(),
