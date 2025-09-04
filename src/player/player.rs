@@ -15,7 +15,7 @@ use crate::{
         chunk_generator::GenerateChunkEvent,
         chunk_thread::MyMapGenTasks,
         terrain::{
-            CHUNK_CREATION_RADIUS, CHUNK_CREATION_RADIUS_SQUARED, ChunkMap,
+            CHUNK_CREATION_RADIUS, CHUNK_CREATION_RADIUS_SQUARED, CHUNK_SIZE, ChunkMap,
             StandardTerrainMaterialHandle, TerrainChunk, spawn_chunk,
         },
     },
@@ -350,6 +350,11 @@ fn update_chunks(
     );
     for chunk_x in min_chunk.0..=max_chunk.0 {
         for chunk_z in min_chunk.2..=max_chunk.2 {
+            let dx = (chunk_x as f32 * CHUNK_SIZE) - player_translation.x;
+            let dz = (chunk_z as f32 * CHUNK_SIZE) - player_translation.z;
+            if dx * dx + dz * dz > CHUNK_CREATION_RADIUS_SQUARED {
+                continue; // skip third dimension of chunk loop if too far in xz plane
+            }
             for chunk_y in min_chunk.1..=max_chunk.1 {
                 let chunk_coord = (chunk_x, chunk_y, chunk_z);
                 let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
@@ -362,9 +367,7 @@ fn update_chunks(
                         if chunk_index_map.contains_key(&chunk_coord) {
                             let chunk_data =
                                 load_chunk_data(chunk_data_file, chunk_index_map, chunk_coord);
-                            let mesh = march_cubes(&chunk_data.densities);
-                            let transform =
-                                Transform::from_translation(chunk_coord_to_world_pos(&chunk_coord));
+                            let mesh: Mesh = march_cubes(&chunk_data.densities);
                             let collider = if mesh.count_vertices() > 0 {
                                 Collider::from_bevy_mesh(
                                     &mesh,
@@ -378,7 +381,7 @@ fn update_chunks(
                                 meshes,
                                 standard_terrain_material_handle.clone(),
                                 mesh,
-                                transform,
+                                Transform::from_translation(chunk_world_pos),
                                 collider,
                             );
                             chunk_map.insert(chunk_coord, (entity, chunk_data));
