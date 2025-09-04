@@ -18,8 +18,8 @@ use crate::{
     terrain::chunk_generator::generate_densities,
 };
 
-pub const VOXELS_PER_CHUNK_DIM: usize = 16; // Number of voxel sample points
-pub const VOXEL_SIZE: f32 = 0.2; // Size of each voxel in meters
+pub const VOXELS_PER_CHUNK_DIM: usize = 32; // Number of voxel sample points
+pub const VOXEL_SIZE: f32 = 0.1; // Size of each voxel in meters
 pub const CUBES_PER_CHUNK_DIM: usize = VOXELS_PER_CHUNK_DIM - 1; // 63 cubes
 pub const CHUNK_SIZE: f32 = CUBES_PER_CHUNK_DIM as f32 * VOXEL_SIZE; // 7.875 meters
 pub const VOXELS_PER_CHUNK: usize =
