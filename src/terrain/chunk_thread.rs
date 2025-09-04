@@ -112,8 +112,8 @@ pub fn spawn_generated_chunks(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut chunk_index_map: ResMut<ChunkIndexMap>,
-    chunk_data_file: Res<ChunkDataFile>,
-    index_file: Res<ChunkIndexFile>,
+    mut chunk_data_file: ResMut<ChunkDataFile>,
+    mut index_file: ResMut<ChunkIndexFile>,
 ) {
     let mut chunk_coords_to_be_removed = Vec::new();
     my_tasks.generation_tasks.retain_mut(|task| {
@@ -131,20 +131,19 @@ pub fn spawn_generated_chunks(
                     &terrain_chunk,
                     chunk_coord,
                     &mut chunk_index_map.0,
-                    &chunk_data_file.0,
-                    &index_file.0,
+                    &mut chunk_data_file.0,
+                    &mut index_file.0,
                 );
                 chunk_coords_to_be_removed[start_index + i] = chunk_coord;
                 let entity = chunk_map.spawn_chunk(
                     &mut commands,
                     &mut meshes,
                     material_handle,
-                    terrain_chunk,
                     mesh,
                     transform,
                     collider,
                 );
-                chunk_map.0.insert(chunk_coord, entity);
+                chunk_map.0.insert(chunk_coord, (entity, terrain_chunk));
             }
         }
         retain

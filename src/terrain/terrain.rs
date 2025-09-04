@@ -19,13 +19,13 @@ use crate::{
 };
 
 pub const VOXELS_PER_CHUNK_DIM: usize = 16; // Number of voxel sample points
-pub const VOXEL_SIZE: f32 = 0.125; // Size of each voxel in meters
+pub const VOXEL_SIZE: f32 = 0.2; // Size of each voxel in meters
 pub const CUBES_PER_CHUNK_DIM: usize = VOXELS_PER_CHUNK_DIM - 1; // 63 cubes
 pub const CHUNK_SIZE: f32 = CUBES_PER_CHUNK_DIM as f32 * VOXEL_SIZE; // 7.875 meters
 pub const VOXELS_PER_CHUNK: usize =
     VOXELS_PER_CHUNK_DIM * VOXELS_PER_CHUNK_DIM * VOXELS_PER_CHUNK_DIM;
 pub const HALF_CHUNK: f32 = CHUNK_SIZE / 2.0;
-pub const CHUNK_CREATION_RADIUS: f32 = 2.0; //in world units
+pub const CHUNK_CREATION_RADIUS: f32 = 50.0; //in world units
 pub const CHUNK_CREATION_RADIUS_SQUARED: f32 = CHUNK_CREATION_RADIUS * CHUNK_CREATION_RADIUS;
 
 #[derive(Component)]
@@ -46,14 +46,12 @@ pub struct VoxelData {
 #[derive(Component, Serialize, Deserialize)]
 pub struct TerrainChunk {
     pub densities: Box<[VoxelData]>,
-    pub world_position: Vec3,
 }
 
 impl TerrainChunk {
     pub fn new(chunk_coord: (i16, i16, i16), fbm: &GeneratorWrapper<SafeNode>) -> Self {
         Self {
             densities: generate_densities(&chunk_coord, fbm),
-            world_position: chunk_coord_to_world_pos(chunk_coord),
         }
     }
 
@@ -96,11 +94,10 @@ impl ChunkMap {
         commands: &mut Commands,
         meshes: &mut ResMut<Assets<Mesh>>,
         standard_terrain_material_handle: Handle<StandardMaterial>,
-        terrain_chunk: TerrainChunk,
         mesh: Mesh,
         transform: Transform,
         collider: Option<Collider>,
-    ) -> (Entity, TerrainChunk) {
+    ) -> Entity {
         let bundle = (
             Mesh3d(meshes.add(mesh)),
             MeshMaterial3d(standard_terrain_material_handle),
@@ -111,23 +108,18 @@ impl ChunkMap {
             Some(collider) => commands.spawn((bundle, collider)).id(),
             None => commands.spawn(bundle).id(),
         };
-        (entity, terrain_chunk)
+        entity
     }
 
     pub fn dig_sphere(&mut self, center: Vec3, radius: f32, strength: f32) -> Vec<(i16, i16, i16)> {
         let mut modified_chunks = Vec::new();
-        let voxel_radius = radius / VOXEL_SIZE;
         let min_world = center - Vec3::splat(radius);
         let max_world = center + Vec3::splat(radius);
-        let min_chunk_x = (min_world.x / CHUNK_SIZE).floor() as i16;
-        let max_chunk_x = (max_world.x / CHUNK_SIZE).ceil() as i16;
-        let min_chunk_y = (min_world.y / CHUNK_SIZE).floor() as i16;
-        let max_chunk_y = (max_world.y / CHUNK_SIZE).ceil() as i16;
-        let min_chunk_z = (min_world.z / CHUNK_SIZE).floor() as i16;
-        let max_chunk_z = (max_world.z / CHUNK_SIZE).ceil() as i16;
-        for chunk_x in min_chunk_x..=max_chunk_x {
-            for chunk_y in min_chunk_y..=max_chunk_y {
-                for chunk_z in min_chunk_z..=max_chunk_z {
+        let min_chunk = world_pos_to_chunk_coord(min_world);
+        let max_chunk = world_pos_to_chunk_coord(max_world);
+        for chunk_x in min_chunk.0..=max_chunk.0 {
+            for chunk_y in min_chunk.1..=max_chunk.1 {
+                for chunk_z in min_chunk.2..=max_chunk.2 {
                     let chunk_coord = (chunk_x, chunk_y, chunk_z);
                     if !self.0.contains_key(&chunk_coord) {
                         continue;
@@ -137,7 +129,7 @@ impl ChunkMap {
                         chunk_coord,
                         chunk_center,
                         center,
-                        voxel_radius,
+                        radius,
                         strength,
                     );
                     if chunk_modified && !modified_chunks.contains(&chunk_coord) {
@@ -154,7 +146,7 @@ impl ChunkMap {
         chunk_coord: (i16, i16, i16),
         chunk_center: Vec3,
         dig_center: Vec3,
-        voxel_radius: f32,
+        radius: f32,
         strength: f32,
     ) -> bool {
         let mut chunk_modified = false;
@@ -167,9 +159,8 @@ impl ChunkMap {
                         let world_z = chunk_center.z - HALF_CHUNK + z as f32 * VOXEL_SIZE;
                         let voxel_world_pos = Vec3::new(world_x, world_y, world_z);
                         let distance = voxel_world_pos.distance(dig_center);
-                        if distance <= voxel_radius * VOXEL_SIZE {
-                            let falloff =
-                                1.0 - (distance / (voxel_radius * VOXEL_SIZE)).clamp(0.0, 1.0);
+                        if distance <= radius {
+                            let falloff = 1.0 - (distance / radius).clamp(0.0, 1.0);
                             let dig_amount = strength * falloff;
                             let current_density =
                                 chunk.get_mut_density(x as u32, y as u32, z as u32);
@@ -205,8 +196,8 @@ pub fn spawn_initial_chunks(
     mut meshes: ResMut<Assets<Mesh>>,
     standard_material: Res<StandardTerrainMaterialHandle>,
     fbm: Res<NoiseFunction>,
-    mut chunk_data_file: ResMut<ChunkDataFile>,
     mut index_file: ResMut<ChunkIndexFile>,
+    mut chunk_data_file: ResMut<ChunkDataFile>,
 ) {
     let player_chunk = world_pos_to_chunk_coord(PLAYER_SPAWN);
     let min_chunk = (
@@ -253,12 +244,11 @@ pub fn spawn_initial_chunks(
                         &mut commands,
                         &mut meshes,
                         standard_material.0.clone(),
-                        terrain_chunk,
                         mesh,
                         transform,
                         collider,
                     );
-                    chunk_map.0.insert(chunk_coord, entity);
+                    chunk_map.0.insert(chunk_coord, (entity, terrain_chunk));
                 }
             }
         }
