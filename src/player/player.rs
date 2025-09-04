@@ -1,3 +1,5 @@
+use std::{collections::HashMap, fs::File};
+
 use bevy::{
     input::mouse::{MouseMotion, MouseWheel},
     prelude::*,
@@ -6,8 +8,17 @@ use bevy::{
 use bevy_rapier3d::prelude::*;
 
 use crate::{
-    conversions::world_pos_to_chunk_coord, data_loader::chunk_loader::deallocate_chunks,
-    terrain::terrain::ChunkMap,
+    conversions::{chunk_coord_to_world_pos, world_pos_to_chunk_coord},
+    data_loader::chunk_loader::{ChunkDataFile, ChunkIndexMap, deallocate_chunks, load_chunk_data},
+    marching_cubes::march_cubes,
+    terrain::{
+        chunk_generator::GenerateChunkEvent,
+        chunk_thread::MyMapGenTasks,
+        terrain::{
+            CHUNK_CREATION_RADIUS, CHUNK_CREATION_RADIUS_SQUARED, ChunkMap,
+            StandardTerrainMaterialHandle, TerrainChunk, spawn_chunk,
+        },
+    },
 };
 
 const CAMERA_3RD_PERSON_OFFSET: Vec3 = Vec3 {
@@ -280,21 +291,107 @@ pub fn player_movement(
 }
 
 pub fn detect_chunk_border_crossing(
-    player_query: Query<&Transform, (With<PlayerTag>, Changed<Transform>)>,
+    player_transform: Single<&Transform, (With<PlayerTag>, Changed<Transform>)>,
     mut last_chunk: Local<Option<(i16, i16, i16)>>,
     mut chunk_map: ResMut<ChunkMap>,
     mut commands: Commands,
+    mut chunk_generation_events: EventWriter<GenerateChunkEvent>,
+    mut map_gen_tasks: ResMut<MyMapGenTasks>,
+    chunk_index_map: Res<ChunkIndexMap>,
+    mut chunk_data_file: ResMut<ChunkDataFile>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    standard_terrain_material_handle: Res<StandardTerrainMaterialHandle>,
 ) {
-    for transform in player_query.iter() {
-        let current_chunk = world_pos_to_chunk_coord(transform.translation);
-        if last_chunk.is_none() {
-            *last_chunk = Some(current_chunk);
-            continue;
+    let current_chunk = world_pos_to_chunk_coord(&player_transform.translation);
+    if last_chunk.is_none() {
+        *last_chunk = Some(current_chunk);
+        return;
+    }
+    if current_chunk != last_chunk.unwrap() {
+        deallocate_chunks(current_chunk, &mut chunk_map.0, &mut commands);
+        *last_chunk = Some(current_chunk);
+        update_chunks(
+            &mut chunk_map.0,
+            &player_transform.translation,
+            &mut chunk_generation_events,
+            &mut map_gen_tasks,
+            &chunk_index_map.0,
+            &mut chunk_data_file.0,
+            &mut commands,
+            &mut meshes,
+            &standard_terrain_material_handle.0,
+            &current_chunk,
+        );
+    }
+}
+
+fn update_chunks(
+    chunk_map: &mut HashMap<(i16, i16, i16), (Entity, TerrainChunk)>,
+    player_translation: &Vec3,
+    chunk_generation_events: &mut EventWriter<GenerateChunkEvent>,
+    map_gen_tasks: &mut MyMapGenTasks,
+    chunk_index_map: &HashMap<(i16, i16, i16), u64>,
+    chunk_data_file: &mut File,
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    standard_terrain_material_handle: &Handle<StandardMaterial>,
+    player_chunk: &(i16, i16, i16),
+) {
+    let mut chunk_coords = Vec::new();
+    let min_chunk = (
+        player_chunk.0 - CHUNK_CREATION_RADIUS as i16,
+        player_chunk.1 - CHUNK_CREATION_RADIUS as i16,
+        player_chunk.2 - CHUNK_CREATION_RADIUS as i16,
+    );
+    let max_chunk = (
+        player_chunk.0 + CHUNK_CREATION_RADIUS as i16,
+        player_chunk.1 + CHUNK_CREATION_RADIUS as i16,
+        player_chunk.2 + CHUNK_CREATION_RADIUS as i16,
+    );
+    for chunk_x in min_chunk.0..=max_chunk.0 {
+        for chunk_z in min_chunk.2..=max_chunk.2 {
+            for chunk_y in min_chunk.1..=max_chunk.1 {
+                let chunk_coord = (chunk_x, chunk_y, chunk_z);
+                let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
+                if chunk_world_pos.distance_squared(*player_translation)
+                    < CHUNK_CREATION_RADIUS_SQUARED
+                {
+                    if !chunk_map.contains_key(&chunk_coord)
+                        && !map_gen_tasks.chunks_being_generated.contains(&chunk_coord)
+                    {
+                        if chunk_index_map.contains_key(&chunk_coord) {
+                            let chunk_data =
+                                load_chunk_data(chunk_data_file, chunk_index_map, chunk_coord);
+                            let mesh = march_cubes(&chunk_data.densities);
+                            let transform =
+                                Transform::from_translation(chunk_coord_to_world_pos(&chunk_coord));
+                            let collider = if mesh.count_vertices() > 0 {
+                                Collider::from_bevy_mesh(
+                                    &mesh,
+                                    &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
+                                )
+                            } else {
+                                None
+                            };
+                            let entity = spawn_chunk(
+                                commands,
+                                meshes,
+                                standard_terrain_material_handle.clone(),
+                                mesh,
+                                transform,
+                                collider,
+                            );
+                            chunk_map.insert(chunk_coord, (entity, chunk_data));
+                        } else {
+                            chunk_coords.push(chunk_coord);
+                            map_gen_tasks.chunks_being_generated.insert(chunk_coord);
+                        }
+                    }
+                }
+            }
         }
-        let previous_chunk = last_chunk.unwrap();
-        if current_chunk != previous_chunk {
-            deallocate_chunks(current_chunk, &mut chunk_map.0, &mut commands);
-            *last_chunk = Some(current_chunk);
-        }
+    }
+    if !chunk_coords.is_empty() {
+        chunk_generation_events.write(GenerateChunkEvent { chunk_coords });
     }
 }

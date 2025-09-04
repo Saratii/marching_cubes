@@ -22,7 +22,9 @@ use crate::{
     marching_cubes::march_cubes,
     terrain::{
         chunk_generator::GenerateChunkEvent,
-        terrain::{ChunkMap, NoiseFunction, StandardTerrainMaterialHandle, TerrainChunk},
+        terrain::{
+            ChunkMap, NoiseFunction, StandardTerrainMaterialHandle, TerrainChunk, spawn_chunk,
+        },
     },
 };
 use fastnoise2::SafeNode;
@@ -87,7 +89,7 @@ pub fn generate_chunk_data(
 ) {
     let terrain_chunk = TerrainChunk::new(*coord, noise_gen);
     let mesh = march_cubes(&terrain_chunk.densities);
-    let transform = Transform::from_translation(chunk_coord_to_world_pos(*coord));
+    let transform = Transform::from_translation(chunk_coord_to_world_pos(coord));
     let collider = if mesh.count_vertices() > 0 {
         Collider::from_bevy_mesh(
             &mesh,
@@ -135,7 +137,7 @@ pub fn spawn_generated_chunks(
                     &mut index_file.0,
                 );
                 chunk_coords_to_be_removed[start_index + i] = chunk_coord;
-                let entity = chunk_map.spawn_chunk(
+                let entity = spawn_chunk(
                     &mut commands,
                     &mut meshes,
                     material_handle,
