@@ -120,9 +120,9 @@ fn handle_digging_input(
     mut chunk_data_file: ResMut<ChunkDataFile>,
     chunk_index_map: Res<ChunkIndexMap>,
 ) {
-    const DIG_STRENGTH: f32 = 2.2;
+    const DIG_STRENGTH: f32 = 0.2;
     const DIG_TIMER: f32 = 0.02; // seconds
-    const DIG_RADIUS: f32 = 2.2; // world space
+    const DIG_RADIUS: f32 = 0.2; // world space
     let should_dig = if mouse_input.pressed(MouseButton::Left) {
         *dig_timer += time.delta_secs();
         if *dig_timer >= DIG_TIMER {
@@ -243,7 +243,7 @@ fn screen_to_world_ray(
         .unwrap();
     let ray_origin = ray.origin;
     let ray_direction = ray.direction;
-    let max_distance = 8.0;
+    let max_distance = 10.0;
     let step_size = 0.05;
     let mut distance_traveled = 0.0;
     while distance_traveled < max_distance {
