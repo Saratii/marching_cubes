@@ -18,7 +18,9 @@ Chunk Allocation/Deallocation:
     If they do not exist they are generated on the spot and written to storage. 
     For efficiency, the storage data is binary to avoid string allocations and have faster write operations. 
     An index file is used to lookup where the chunk data actually is by caching the start byte to avoid having to search the massive data file. 
-    Anytime a chunk is deformed, the data is overwritten in storage creating a persistant game state withing having to explictely "save". 
+    Anytime a chunk is deformed, the data is overwritten in storage creating a persistant game state withing having to explictely "save".
+    Because chunk operations are expensive, chunk updates require the distance from the last update to be greater than some constant grace area.
+    This allows the player to move around a small area that follows the player without any chunk unloading or unloading. 
 
 Backend Bevy:
     This engine uses the popular rust game backend, bevy. This allows much of the boilerplate code to be handled by bevy while still allowing low level attention to detail. 

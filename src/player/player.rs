@@ -301,7 +301,9 @@ pub fn detect_chunk_border_crossing(
     mut chunk_data_file: ResMut<ChunkDataFile>,
     mut meshes: ResMut<Assets<Mesh>>,
     standard_terrain_material_handle: Res<StandardTerrainMaterialHandle>,
+    mut last_position_of_load: Local<Option<Vec3>>,
 ) {
+    const GRACE_RADIUS: f32 = 10.0; //distance from last load where movement will not trigger a reload.
     let current_chunk = world_pos_to_chunk_coord(&player_transform.translation);
     if last_chunk.is_none() {
         *last_chunk = Some(current_chunk);
@@ -310,6 +312,17 @@ pub fn detect_chunk_border_crossing(
     if current_chunk != last_chunk.unwrap() {
         deallocate_chunks(current_chunk, &mut chunk_map.0, &mut commands);
         *last_chunk = Some(current_chunk);
+        if last_position_of_load.is_none() {
+            *last_position_of_load = Some(player_transform.translation);
+        } else if player_transform
+            .translation
+            .distance_squared(last_position_of_load.unwrap())
+            < GRACE_RADIUS * GRACE_RADIUS
+        {
+            return;
+        } else {
+            *last_position_of_load = Some(player_transform.translation);
+        }
         update_chunks(
             &mut chunk_map.0,
             &player_transform.translation,
