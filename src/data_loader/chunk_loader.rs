@@ -4,15 +4,17 @@ use bevy::prelude::*;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 #[derive(Resource)]
 pub struct ChunkIndexFile(pub File);
 
 #[derive(Resource)]
-pub struct ChunkDataFile(pub File);
+pub struct ChunkDataFile(pub Arc<File>);
 
 #[derive(Resource)]
-pub struct ChunkIndexMap(pub HashMap<(i16, i16, i16), u64>);
+pub struct ChunkIndexMap(pub Arc<Mutex<HashMap<(i16, i16, i16), u64>>>);
 
 // Binary format layout:
 // - Number of voxels: u32 (4 bytes)
@@ -98,19 +100,19 @@ pub fn update_chunk_file_data(
 }
 
 pub fn load_chunk_data(
-    data_file: &mut File,
+    data_file: &File,
     index_map: &HashMap<(i16, i16, i16), u64>,
-    chunk_coord: (i16, i16, i16),
+    chunk_coord: &(i16, i16, i16),
 ) -> TerrainChunk {
-    let byte_offset = *index_map.get(&chunk_coord).unwrap();
-    data_file.seek(SeekFrom::Start(byte_offset)).unwrap();
+    let byte_offset = *index_map.get(chunk_coord).unwrap();
+    { data_file }.seek(SeekFrom::Start(byte_offset)).unwrap();
     let mut header = [0u8; 4];
-    data_file.read_exact(&mut header).unwrap();
+    { data_file }.read_exact(&mut header).unwrap();
     let num_voxels = u32::from_le_bytes([header[0], header[1], header[2], header[3]]) as usize;
     let total_size = 4 + (num_voxels * 4) + num_voxels; // header + sdfs + materials
-    data_file.seek(SeekFrom::Start(byte_offset)).unwrap();
+    { data_file }.seek(SeekFrom::Start(byte_offset)).unwrap();
     let mut buffer = vec![0u8; total_size];
-    data_file.read_exact(&mut buffer).unwrap();
+    { data_file }.read_exact(&mut buffer).unwrap();
     deserialize_chunk_data(&buffer)
 }
 
@@ -146,8 +148,10 @@ pub fn setup_chunk_loading(mut commands: Commands) {
         .create(true)
         .open("data/chunk_data.txt")
         .unwrap();
-    commands.insert_resource(ChunkDataFile(data_file));
-    commands.insert_resource(ChunkIndexMap(load_chunk_index_map(&index_file)));
+    commands.insert_resource(ChunkDataFile(Arc::new(data_file)));
+    commands.insert_resource(ChunkIndexMap(Arc::new(Mutex::new(load_chunk_index_map(
+        &index_file,
+    )))));
     commands.insert_resource(ChunkIndexFile(index_file));
 }
 
@@ -166,4 +170,18 @@ pub fn deallocate_chunks(
             true
         }
     });
+}
+
+#[derive(Resource)]
+pub struct SpentInDealloc {
+    pub duration: Mutex<Duration>,
+    pub call_count: Mutex<u32>,
+    pub last_duration: Mutex<Duration>,
+}
+
+#[derive(Resource)]
+pub struct SpentInFinish {
+    pub duration: Mutex<Duration>,
+    pub call_count: Mutex<u32>,
+    pub last_duration: Mutex<Duration>,
 }

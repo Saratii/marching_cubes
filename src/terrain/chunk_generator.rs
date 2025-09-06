@@ -13,6 +13,11 @@ pub struct GenerateChunkEvent {
     pub chunk_coords: Vec<(i16, i16, i16)>,
 }
 
+#[derive(Event)]
+pub struct LoadChunksEvent {
+    pub chunk_coords: Vec<(i16, i16, i16)>,
+}
+
 pub fn generate_densities(
     chunk_coord: &(i16, i16, i16),
     fbm: &GeneratorWrapper<SafeNode>,

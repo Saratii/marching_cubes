@@ -190,7 +190,7 @@ pub fn setup_map(mut commands: Commands, mut materials: ResMut<Assets<StandardMa
 
 pub fn spawn_initial_chunks(
     mut commands: Commands,
-    mut chunk_index_map: ResMut<ChunkIndexMap>,
+    chunk_index_map: Res<ChunkIndexMap>,
     mut chunk_map: ResMut<ChunkMap>,
     mut meshes: ResMut<Assets<Mesh>>,
     standard_material: Res<StandardTerrainMaterialHandle>,
@@ -215,19 +215,21 @@ pub fn spawn_initial_chunks(
                 let chunk_coord = (chunk_x, chunk_y, chunk_z);
                 let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
                 if chunk_world_pos.distance_squared(PLAYER_SPAWN) < CHUNK_CREATION_RADIUS_SQUARED {
-                    let terrain_chunk = if chunk_index_map.0.contains_key(&chunk_coord) {
-                        load_chunk_data(&mut chunk_data_file.0, &chunk_index_map.0, chunk_coord)
+                    let mut locked_index_map = chunk_index_map.0.lock().unwrap();
+                    let terrain_chunk = if locked_index_map.contains_key(&chunk_coord) {
+                        load_chunk_data(&chunk_data_file.0, &mut locked_index_map, &chunk_coord)
                     } else {
                         let chunk = TerrainChunk::new(chunk_coord, &fbm.0);
                         create_chunk_file_data(
                             &chunk,
                             chunk_coord,
-                            &mut chunk_index_map.0,
+                            &mut locked_index_map,
                             &mut chunk_data_file.0,
                             &mut index_file.0,
                         );
                         chunk
                     };
+                    drop(locked_index_map);
                     let mesh = march_cubes(&terrain_chunk.densities);
                     let transform =
                         Transform::from_translation(chunk_coord_to_world_pos(&chunk_coord));

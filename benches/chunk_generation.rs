@@ -37,7 +37,7 @@ fn benchmark_load_chunk_data(c: &mut Criterion) {
             let chunk = load_chunk_data(
                 black_box(&mut data_file),
                 black_box(&index_map),
-                black_box(first_chunk_coord),
+                black_box(&first_chunk_coord),
             );
             black_box(chunk);
         })
@@ -56,7 +56,7 @@ fn benchmark_update_chunk_data(c: &mut Criterion) {
         .unwrap();
     let index_map = load_chunk_index_map(&index_file);
     let first_chunk_coord = *index_map.keys().next().unwrap();
-    let chunk = load_chunk_data(&mut data_file, &index_map, first_chunk_coord);
+    let chunk = load_chunk_data(&mut data_file, &index_map, &first_chunk_coord);
     c.bench_function("update_chunk_file_data_single_chunk", |b| {
         b.iter(|| {
             update_chunk_file_data(
