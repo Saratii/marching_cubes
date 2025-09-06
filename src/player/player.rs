@@ -1,4 +1,7 @@
-use std::{collections::HashMap, fs::File};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use bevy::{
     input::mouse::{MouseMotion, MouseWheel},
@@ -9,14 +12,13 @@ use bevy_rapier3d::prelude::*;
 
 use crate::{
     conversions::{chunk_coord_to_world_pos, world_pos_to_chunk_coord},
-    data_loader::chunk_loader::{ChunkDataFile, ChunkIndexMap, deallocate_chunks, load_chunk_data},
-    marching_cubes::march_cubes,
+    data_loader::chunk_loader::{ChunkIndexMap, SpentInDealloc, deallocate_chunks},
     terrain::{
-        chunk_generator::GenerateChunkEvent,
-        chunk_thread::MyMapGenTasks,
+        chunk_generator::{GenerateChunkEvent, LoadChunksEvent},
+        chunk_thread::{LoadChunkTasks, MyMapGenTasks},
         terrain::{
             CHUNK_CREATION_RADIUS, CHUNK_CREATION_RADIUS_SQUARED, CHUNK_SIZE, ChunkMap,
-            StandardTerrainMaterialHandle, TerrainChunk, spawn_chunk,
+            TerrainChunk,
         },
     },
 };
@@ -30,8 +32,8 @@ const PLAYER_SPEED: f32 = 15.0;
 pub const PLAYER_SPAWN: Vec3 = Vec3::new(0., 20., 0.);
 const PLAYER_CUBOID_SIZE: Vec3 = Vec3::new(0.5, 1.5, 0.5);
 const CAMERA_FIRST_PERSON_OFFSET: Vec3 = Vec3::new(0., 0.75 * PLAYER_CUBOID_SIZE.y, 0.);
-const MIN_ZOOM_DISTANCE: f32 = 5.0;
-const MAX_ZOOM_DISTANCE: f32 = 50.0;
+const MIN_ZOOM_DISTANCE: f32 = 4.0;
+const MAX_ZOOM_DISTANCE: f32 = 100.0;
 const ZOOM_SPEED: f32 = 5.0;
 const MOUSE_SENSITIVITY: f32 = 0.002;
 const MIN_PITCH: f32 = -1.5;
@@ -298,20 +300,21 @@ pub fn detect_chunk_border_crossing(
     mut chunk_generation_events: EventWriter<GenerateChunkEvent>,
     mut map_gen_tasks: ResMut<MyMapGenTasks>,
     chunk_index_map: Res<ChunkIndexMap>,
-    mut chunk_data_file: ResMut<ChunkDataFile>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    standard_terrain_material_handle: Res<StandardTerrainMaterialHandle>,
     mut last_position_of_load: Local<Option<Vec3>>,
+    mut chunk_load_event_writer: EventWriter<LoadChunksEvent>,
+    mut load_chunk_tasks: ResMut<LoadChunkTasks>,
+    dealloc_timer: ResMut<SpentInDealloc>,
 ) {
-    const GRACE_RADIUS: f32 = 10.0; //distance from last load where movement will not trigger a reload.
+    const GRACE_RADIUS: f32 = 10.0;
     let current_chunk = world_pos_to_chunk_coord(&player_transform.translation);
+
     if last_chunk.is_none() {
         *last_chunk = Some(current_chunk);
         return;
     }
     if current_chunk != last_chunk.unwrap() {
-        deallocate_chunks(current_chunk, &mut chunk_map.0, &mut commands);
         *last_chunk = Some(current_chunk);
+
         if last_position_of_load.is_none() {
             *last_position_of_load = Some(player_transform.translation);
         } else if player_transform
@@ -327,14 +330,18 @@ pub fn detect_chunk_border_crossing(
             &mut chunk_map.0,
             &player_transform.translation,
             &mut chunk_generation_events,
+            &mut chunk_load_event_writer,
             &mut map_gen_tasks,
+            &mut load_chunk_tasks,
             &chunk_index_map.0,
-            &mut chunk_data_file.0,
-            &mut commands,
-            &mut meshes,
-            &standard_terrain_material_handle.0,
             &current_chunk,
         );
+        let start_time = std::time::Instant::now();
+        deallocate_chunks(current_chunk, &mut chunk_map.0, &mut commands);
+        let duration = start_time.elapsed();
+        *dealloc_timer.duration.lock().unwrap() += duration;
+        *dealloc_timer.call_count.lock().unwrap() += 1;
+        *dealloc_timer.last_duration.lock().unwrap() = duration;
     }
 }
 
@@ -342,15 +349,14 @@ fn update_chunks(
     chunk_map: &mut HashMap<(i16, i16, i16), (Entity, TerrainChunk)>,
     player_translation: &Vec3,
     chunk_generation_events: &mut EventWriter<GenerateChunkEvent>,
+    chunk_load_event_writer: &mut EventWriter<LoadChunksEvent>,
     map_gen_tasks: &mut MyMapGenTasks,
-    chunk_index_map: &HashMap<(i16, i16, i16), u64>,
-    chunk_data_file: &mut File,
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    standard_terrain_material_handle: &Handle<StandardMaterial>,
+    load_chunk_tasks: &mut LoadChunkTasks,
+    chunk_index_map: &Arc<Mutex<HashMap<(i16, i16, i16), u64>>>,
     player_chunk: &(i16, i16, i16),
 ) {
-    let mut chunk_coords = Vec::new();
+    let mut chunks_coords_to_generate = Vec::new();
+    let mut chunk_coords_to_load = Vec::new();
     let min_chunk = (
         player_chunk.0 - CHUNK_CREATION_RADIUS as i16,
         player_chunk.1 - CHUNK_CREATION_RADIUS as i16,
@@ -376,38 +382,30 @@ fn update_chunks(
                 {
                     if !chunk_map.contains_key(&chunk_coord)
                         && !map_gen_tasks.chunks_being_generated.contains(&chunk_coord)
+                        && !load_chunk_tasks.chunks_being_loaded.contains(&chunk_coord)
                     {
+                        let chunk_index_map = chunk_index_map.lock().unwrap();
                         if chunk_index_map.contains_key(&chunk_coord) {
-                            let chunk_data =
-                                load_chunk_data(chunk_data_file, chunk_index_map, chunk_coord);
-                            let mesh: Mesh = march_cubes(&chunk_data.densities);
-                            let collider = if mesh.count_vertices() > 0 {
-                                Collider::from_bevy_mesh(
-                                    &mesh,
-                                    &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
-                                )
-                            } else {
-                                None
-                            };
-                            let entity = spawn_chunk(
-                                commands,
-                                meshes,
-                                standard_terrain_material_handle.clone(),
-                                mesh,
-                                Transform::from_translation(chunk_world_pos),
-                                collider,
-                            );
-                            chunk_map.insert(chunk_coord, (entity, chunk_data));
+                            chunk_coords_to_load.push(chunk_coord);
+                            load_chunk_tasks.chunks_being_loaded.insert(chunk_coord);
                         } else {
-                            chunk_coords.push(chunk_coord);
+                            chunks_coords_to_generate.push(chunk_coord);
                             map_gen_tasks.chunks_being_generated.insert(chunk_coord);
                         }
+                        drop(chunk_index_map);
                     }
                 }
             }
         }
     }
-    if !chunk_coords.is_empty() {
-        chunk_generation_events.write(GenerateChunkEvent { chunk_coords });
+    if chunks_coords_to_generate.len() > 0 {
+        chunk_generation_events.write(GenerateChunkEvent {
+            chunk_coords: chunks_coords_to_generate,
+        });
+    }
+    if chunk_coords_to_load.len() > 0 {
+        chunk_load_event_writer.write(LoadChunksEvent {
+            chunk_coords: chunk_coords_to_load,
+        });
     }
 }

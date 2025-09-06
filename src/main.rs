@@ -1,4 +1,6 @@
 use std::collections::HashSet;
+use std::sync::Mutex;
+use std::time::Duration;
 
 use bevy::diagnostic::{
     EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin, SystemInformationDiagnosticsPlugin,
@@ -17,7 +19,8 @@ use marching_cubes::conversions::{
     chunk_coord_to_world_pos, world_pos_to_chunk_coord, world_pos_to_voxel_index,
 };
 use marching_cubes::data_loader::chunk_loader::{
-    ChunkDataFile, ChunkIndexMap, setup_chunk_loading, update_chunk_file_data,
+    ChunkDataFile, ChunkIndexMap, SpentInDealloc, SpentInFinish, setup_chunk_loading,
+    update_chunk_file_data,
 };
 use marching_cubes::marching_cubes::march_cubes;
 use marching_cubes::player::player::{
@@ -25,9 +28,10 @@ use marching_cubes::player::player::{
     detect_chunk_border_crossing, initial_grab_cursor, player_movement, spawn_player,
     toggle_camera,
 };
-use marching_cubes::terrain::chunk_generator::GenerateChunkEvent;
+use marching_cubes::terrain::chunk_generator::{GenerateChunkEvent, LoadChunksEvent};
 use marching_cubes::terrain::chunk_thread::{
-    MyMapGenTasks, catch_chunk_generation_request, spawn_generated_chunks,
+    LoadChunkTasks, MyMapGenTasks, catch_chunk_generation_request, catch_load_generation_request,
+    finish_chunk_loading, spawn_generated_chunks,
 };
 use marching_cubes::terrain::terrain::{
     ChunkMap, ChunkTag, HALF_CHUNK, setup_map, spawn_initial_chunks,
@@ -46,6 +50,21 @@ fn main() {
             generation_tasks: Vec::new(),
             chunks_being_generated: HashSet::new(),
         })
+        .insert_resource(LoadChunkTasks {
+            generation_tasks: Vec::new(),
+            chunks_being_loaded: HashSet::new(),
+        })
+        .insert_resource(SpentInDealloc {
+            duration: Mutex::new(Duration::ZERO),
+            call_count: Mutex::new(0),
+            last_duration: Mutex::new(Duration::ZERO),
+        })
+        .insert_resource(SpentInFinish {
+            duration: Mutex::new(Duration::ZERO),
+            call_count: Mutex::new(0),
+            last_duration: Mutex::new(Duration::ZERO),
+        })
+        .add_event::<LoadChunksEvent>()
         .add_event::<GenerateChunkEvent>()
         .add_plugins((
             DefaultPlugins
@@ -89,6 +108,8 @@ fn main() {
                 catch_chunk_generation_request,
                 spawn_generated_chunks,
                 detect_chunk_border_crossing,
+                catch_load_generation_request,
+                finish_chunk_loading,
             ),
         )
         .run();
@@ -174,12 +195,14 @@ fn handle_digging_input(
                             }
                             *mesh_handle = Mesh3d(meshes.add(new_mesh));
                         }
+                        let chunk_index_map = chunk_index_map.0.lock().unwrap();
                         update_chunk_file_data(
-                            &chunk_index_map.0,
+                            &chunk_index_map,
                             chunk_coord,
                             &chunk,
                             &mut chunk_data_file.0,
                         );
+                        drop(chunk_index_map);
                     }
                 }
             }
