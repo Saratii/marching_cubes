@@ -18,15 +18,14 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use crate::{
     conversions::{chunk_coord_to_world_pos, world_pos_to_chunk_coord},
     data_loader::chunk_loader::{
-        ChunkDataFile, ChunkIndexFile, ChunkIndexMap, create_chunk_file_data, load_chunk_data,
+        create_chunk_file_data, load_chunk_data, ChunkDataFile, ChunkIndexFile, ChunkIndexMap
     },
     marching_cubes::march_cubes,
     player::player::PlayerTag,
     terrain::{
         chunk_generator::{GenerateChunkEvent, LoadChunksEvent},
         terrain::{
-            CHUNK_CREATION_RADIUS_SQUARED, ChunkMap, NoiseFunction, StandardTerrainMaterialHandle,
-            TerrainChunk, spawn_chunk,
+            spawn_chunk, ChunkMap, NoiseFunction, StandardTerrainMaterialHandle, TerrainChunk, CHUNK_CREATION_RADIUS_SQUARED, CUBES_PER_CHUNK_DIM, SDF_VALUES_PER_CHUNK_DIM
         },
     },
 };
@@ -108,7 +107,11 @@ pub fn catch_load_generation_request(
                     let chunk_index_map = chunk_index_map.lock().unwrap();
                     let terrain_chunk = load_chunk_data(&chunk_data_file, &chunk_index_map, coord);
                     drop(chunk_index_map);
-                    let mesh = march_cubes(&terrain_chunk.densities);
+                    let mesh = march_cubes(
+                        &terrain_chunk.densities,
+                        CUBES_PER_CHUNK_DIM,
+                        SDF_VALUES_PER_CHUNK_DIM,
+                    );
                     let transform = Transform::from_translation(chunk_coord_to_world_pos(coord));
                     let collider = if mesh.count_vertices() > 0 {
                         Collider::from_bevy_mesh(
@@ -137,7 +140,11 @@ pub fn generate_chunk_data(
     Option<Collider>,
 ) {
     let terrain_chunk = TerrainChunk::new(*coord, noise_gen);
-    let mesh = march_cubes(&terrain_chunk.densities);
+    let mesh = march_cubes(
+        &terrain_chunk.densities,
+        CUBES_PER_CHUNK_DIM,
+        SDF_VALUES_PER_CHUNK_DIM,
+    );
     let transform = Transform::from_translation(chunk_coord_to_world_pos(coord));
     let collider = if mesh.count_vertices() > 0 {
         Collider::from_bevy_mesh(

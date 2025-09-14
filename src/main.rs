@@ -34,7 +34,8 @@ use marching_cubes::terrain::chunk_thread::{
     finish_chunk_loading, spawn_generated_chunks,
 };
 use marching_cubes::terrain::terrain::{
-    ChunkMap, ChunkTag, HALF_CHUNK, setup_map, spawn_initial_chunks,
+    CUBES_PER_CHUNK_DIM, ChunkMap, ChunkTag, HALF_CHUNK, SDF_VALUES_PER_CHUNK_DIM, setup_map,
+    spawn_initial_chunks,
 };
 use rayon::ThreadPoolBuilder;
 
@@ -141,9 +142,9 @@ fn handle_digging_input(
     mut chunk_data_file: ResMut<ChunkDataFile>,
     chunk_index_map: Res<ChunkIndexMap>,
 ) {
-    const DIG_STRENGTH: f32 = 0.2;
+    const DIG_STRENGTH: f32 = 0.1;
     const DIG_TIMER: f32 = 0.02; // seconds
-    const DIG_RADIUS: f32 = 0.2; // world space
+    const DIG_RADIUS: f32 = 0.3; // world space
     let should_dig = if mouse_input.pressed(MouseButton::Left) {
         *dig_timer += time.delta_secs();
         if *dig_timer >= DIG_TIMER {
@@ -169,7 +170,11 @@ fn handle_digging_input(
                 for chunk_coord in modified_chunks {
                     if let Some((entity, chunk)) = chunk_map.0.get(&chunk_coord) {
                         if let Ok((_, mut mesh_handle)) = chunk_mesh_query.get_mut(*entity) {
-                            let new_mesh = march_cubes(&chunk.densities);
+                            let new_mesh = march_cubes(
+                                &chunk.densities,
+                                CUBES_PER_CHUNK_DIM,
+                                SDF_VALUES_PER_CHUNK_DIM,
+                            );
                             if let Some(_) = new_mesh.compute_aabb() {
                                 let min = Vec3::new(-HALF_CHUNK, -HALF_CHUNK, -HALF_CHUNK);
                                 let max = Vec3::new(HALF_CHUNK, HALF_CHUNK, HALF_CHUNK);
