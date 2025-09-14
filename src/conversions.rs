@@ -34,3 +34,7 @@ pub fn world_pos_to_voxel_index(
     let voxel_z = (relative_pos.z / VOXEL_SIZE).floor() as u32;
     (voxel_x, voxel_y, voxel_z)
 }
+
+pub fn flatten_index(x: u32, y: u32, z: u32, dimension_size: usize) -> u32 {
+    z * dimension_size as u32 * dimension_size as u32 + y * dimension_size as u32 + x
+}

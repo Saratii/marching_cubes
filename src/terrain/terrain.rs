@@ -9,7 +9,7 @@ use fastnoise2::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    conversions::{chunk_coord_to_world_pos, world_pos_to_chunk_coord},
+    conversions::{chunk_coord_to_world_pos, flatten_index, world_pos_to_chunk_coord},
     data_loader::chunk_loader::{
         ChunkDataFile, ChunkIndexFile, ChunkIndexMap, create_chunk_file_data, load_chunk_data,
     },
@@ -18,12 +18,12 @@ use crate::{
     terrain::chunk_generator::generate_densities,
 };
 
-pub const VOXELS_PER_CHUNK_DIM: usize = 32; // Number of voxel sample points
+pub const SDF_VALUES_PER_CHUNK_DIM: usize = 32; // Number of voxel sample points
 pub const VOXEL_SIZE: f32 = 0.1; // Size of each voxel in meters
-pub const CUBES_PER_CHUNK_DIM: usize = VOXELS_PER_CHUNK_DIM - 1; // 63 cubes
+pub const CUBES_PER_CHUNK_DIM: usize = SDF_VALUES_PER_CHUNK_DIM - 1; // 63 cubes
 pub const CHUNK_SIZE: f32 = CUBES_PER_CHUNK_DIM as f32 * VOXEL_SIZE; // 7.875 meters
 pub const VOXELS_PER_CHUNK: usize =
-    VOXELS_PER_CHUNK_DIM * VOXELS_PER_CHUNK_DIM * VOXELS_PER_CHUNK_DIM;
+    SDF_VALUES_PER_CHUNK_DIM * SDF_VALUES_PER_CHUNK_DIM * SDF_VALUES_PER_CHUNK_DIM;
 pub const HALF_CHUNK: f32 = CHUNK_SIZE / 2.0;
 pub const CHUNK_CREATION_RADIUS: f32 = 50.0; //in world units
 pub const CHUNK_CREATION_RADIUS_SQUARED: f32 = CHUNK_CREATION_RADIUS * CHUNK_CREATION_RADIUS;
@@ -56,23 +56,17 @@ impl TerrainChunk {
     }
 
     pub fn set_density(&mut self, x: u32, y: u32, z: u32, density: VoxelData) {
-        let index = self.get_voxel_index(x, y, z);
+        let index = flatten_index(x, y, z, SDF_VALUES_PER_CHUNK_DIM);
         self.densities[index as usize] = density;
     }
 
-    fn get_voxel_index(&self, x: u32, y: u32, z: u32) -> u32 {
-        z * VOXELS_PER_CHUNK_DIM as u32 * VOXELS_PER_CHUNK_DIM as u32
-            + y * VOXELS_PER_CHUNK_DIM as u32
-            + x
-    }
-
     pub fn get_density(&self, x: u32, y: u32, z: u32) -> &VoxelData {
-        let index = self.get_voxel_index(x, y, z);
+        let index = flatten_index(x, y, z, SDF_VALUES_PER_CHUNK_DIM);
         &self.densities[index as usize]
     }
 
     pub fn get_mut_density(&mut self, x: u32, y: u32, z: u32) -> &mut VoxelData {
-        let index = self.get_voxel_index(x, y, z);
+        let index = flatten_index(x, y, z, SDF_VALUES_PER_CHUNK_DIM);
         &mut self.densities[index as usize]
     }
 
@@ -129,9 +123,9 @@ impl ChunkMap {
     ) -> bool {
         let mut chunk_modified = false;
         if let Some((_, chunk)) = self.0.get_mut(&chunk_coord) {
-            for z in 0..VOXELS_PER_CHUNK_DIM {
-                for y in 0..VOXELS_PER_CHUNK_DIM {
-                    for x in 0..VOXELS_PER_CHUNK_DIM {
+            for z in 0..SDF_VALUES_PER_CHUNK_DIM {
+                for y in 0..SDF_VALUES_PER_CHUNK_DIM {
+                    for x in 0..SDF_VALUES_PER_CHUNK_DIM {
                         let world_x = chunk_center.x - HALF_CHUNK + x as f32 * VOXEL_SIZE;
                         let world_y = chunk_center.y - HALF_CHUNK + y as f32 * VOXEL_SIZE;
                         let world_z = chunk_center.z - HALF_CHUNK + z as f32 * VOXEL_SIZE;
@@ -230,7 +224,11 @@ pub fn spawn_initial_chunks(
                         chunk
                     };
                     drop(locked_index_map);
-                    let mesh = march_cubes(&terrain_chunk.densities);
+                    let mesh = march_cubes(
+                        &terrain_chunk.densities,
+                        CUBES_PER_CHUNK_DIM,
+                        SDF_VALUES_PER_CHUNK_DIM,
+                    );
                     let transform =
                         Transform::from_translation(chunk_coord_to_world_pos(&chunk_coord));
                     let collider = if mesh.count_vertices() > 0 {
