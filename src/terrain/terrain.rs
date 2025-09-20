@@ -150,27 +150,6 @@ impl ChunkMap {
     }
 }
 
-pub fn spawn_chunk(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    standard_terrain_material_handle: Handle<StandardMaterial>,
-    mesh: Mesh,
-    transform: Transform,
-    collider: Option<Collider>,
-) -> Entity {
-    let bundle = (
-        Mesh3d(meshes.add(mesh)),
-        MeshMaterial3d(standard_terrain_material_handle),
-        ChunkTag,
-        transform,
-    );
-    let entity = match collider {
-        Some(collider) => commands.spawn((bundle, collider)).id(),
-        None => commands.spawn(bundle).id(),
-    };
-    entity
-}
-
 pub fn setup_map(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>) {
     let fbm =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
@@ -231,22 +210,24 @@ pub fn spawn_initial_chunks(
                     );
                     let transform =
                         Transform::from_translation(chunk_coord_to_world_pos(&chunk_coord));
-                    let collider = if mesh.count_vertices() > 0 {
-                        Collider::from_bevy_mesh(
+                    let entity: Entity = if mesh.count_vertices() > 0 {
+                        let collider = Collider::from_bevy_mesh(
                             &mesh,
                             &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
                         )
+                        .unwrap();
+                        commands
+                            .spawn((
+                                Mesh3d(meshes.add(mesh)),
+                                MeshMaterial3d(standard_material.0.clone()),
+                                ChunkTag,
+                                transform,
+                                collider,
+                            ))
+                            .id()
                     } else {
-                        None
+                        commands.spawn((ChunkTag, transform)).id()
                     };
-                    let entity = spawn_chunk(
-                        &mut commands,
-                        &mut meshes,
-                        standard_material.0.clone(),
-                        mesh,
-                        transform,
-                        collider,
-                    );
                     chunk_map.0.insert(chunk_coord, (entity, terrain_chunk));
                 }
             }
