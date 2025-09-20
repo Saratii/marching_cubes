@@ -31,7 +31,7 @@ use marching_cubes::player::player::{
 use marching_cubes::terrain::chunk_generator::{GenerateChunkEvent, LoadChunksEvent};
 use marching_cubes::terrain::chunk_thread::{
     LoadChunkTasks, MyMapGenTasks, catch_chunk_generation_request, catch_load_generation_request,
-    finish_chunk_loading, spawn_generated_chunks,
+    finish_chunk_loading, flush_staged_chunks, spawn_generated_chunks,
 };
 use marching_cubes::terrain::terrain::{
     CUBES_PER_CHUNK_DIM, ChunkMap, ChunkTag, HALF_CHUNK, SDF_VALUES_PER_CHUNK_DIM, setup_map,
@@ -52,7 +52,7 @@ fn main() {
             chunks_being_generated: HashSet::new(),
         })
         .insert_resource(LoadChunkTasks {
-            generation_tasks: Vec::new(),
+            loading_tasks: Vec::new(),
             chunks_being_loaded: HashSet::new(),
         })
         .insert_resource(SpentInDealloc {
@@ -113,6 +113,7 @@ fn main() {
                 finish_chunk_loading,
             ),
         )
+        .add_systems(PostUpdate, flush_staged_chunks)
         .run();
 }
 

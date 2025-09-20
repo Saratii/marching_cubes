@@ -1,4 +1,5 @@
 use crate::conversions::chunk_coord_to_world_pos;
+use crate::terrain::chunk_thread::StagedChunksLoaded;
 use crate::terrain::terrain::{CHUNK_CREATION_RADIUS_SQUARED, TerrainChunk, VoxelData};
 use bevy::prelude::*;
 use std::collections::HashMap;
@@ -128,7 +129,6 @@ pub fn load_chunk_index_map(mut index_file: &File) -> HashMap<(i16, i16, i16), u
             buffer[6], buffer[7], buffer[8], buffer[9], buffer[10], buffer[11], buffer[12],
             buffer[13],
         ]);
-
         index_map.insert((x, y, z), offset);
     }
     println!("loaded {:?} chunk indexes from file", index_map.len());
@@ -153,6 +153,7 @@ pub fn setup_chunk_loading(mut commands: Commands) {
         &index_file,
     )))));
     commands.insert_resource(ChunkIndexFile(index_file));
+    commands.insert_resource(StagedChunksLoaded(HashMap::new()));
 }
 
 pub fn deallocate_chunks(

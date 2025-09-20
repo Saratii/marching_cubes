@@ -15,7 +15,7 @@ use crate::{
     data_loader::chunk_loader::{ChunkIndexMap, SpentInDealloc, deallocate_chunks},
     terrain::{
         chunk_generator::{GenerateChunkEvent, LoadChunksEvent},
-        chunk_thread::{LoadChunkTasks, MyMapGenTasks},
+        chunk_thread::{LoadChunkTasks, MyMapGenTasks, StagedChunksLoaded},
         terrain::{
             CHUNK_CREATION_RADIUS, CHUNK_CREATION_RADIUS_SQUARED, CHUNK_SIZE, ChunkMap,
             TerrainChunk,
@@ -304,6 +304,7 @@ pub fn detect_chunk_border_crossing(
     mut chunk_load_event_writer: EventWriter<LoadChunksEvent>,
     mut load_chunk_tasks: ResMut<LoadChunkTasks>,
     dealloc_timer: ResMut<SpentInDealloc>,
+    staging: Res<StagedChunksLoaded>,
 ) {
     const GRACE_RADIUS: f32 = 10.0;
     let current_chunk = world_pos_to_chunk_coord(&player_transform.translation);
@@ -335,6 +336,7 @@ pub fn detect_chunk_border_crossing(
             &mut load_chunk_tasks,
             &chunk_index_map.0,
             &current_chunk,
+            &staging.0,
         );
         let start_time = std::time::Instant::now();
         deallocate_chunks(current_chunk, &mut chunk_map.0, &mut commands);
@@ -354,6 +356,7 @@ fn update_chunks(
     load_chunk_tasks: &mut LoadChunkTasks,
     chunk_index_map: &Arc<Mutex<HashMap<(i16, i16, i16), u64>>>,
     player_chunk: &(i16, i16, i16),
+    staging_chunks: &HashMap<(i16, i16, i16), (Entity, TerrainChunk)>,
 ) {
     let mut chunks_coords_to_generate = Vec::new();
     let mut chunk_coords_to_load = Vec::new();
@@ -383,6 +386,7 @@ fn update_chunks(
                     if !chunk_map.contains_key(&chunk_coord)
                         && !map_gen_tasks.chunks_being_generated.contains(&chunk_coord)
                         && !load_chunk_tasks.chunks_being_loaded.contains(&chunk_coord)
+                        && !staging_chunks.contains_key(&chunk_coord)
                     {
                         let chunk_index_map = chunk_index_map.lock().unwrap();
                         if chunk_index_map.contains_key(&chunk_coord) {

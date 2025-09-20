@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, process::exit};
 
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
@@ -252,4 +252,50 @@ pub fn spawn_initial_chunks(
             }
         }
     }
+}
+
+//writes data to disk for a large amount of chunks without saving to memory
+// 900GB written in 8 minutes HEHE
+pub fn generate_large_map_utility(
+    chunk_index_map: Res<ChunkIndexMap>,
+    fbm: Res<NoiseFunction>,
+    mut index_file: ResMut<ChunkIndexFile>,
+    mut chunk_data_file: ResMut<ChunkDataFile>,
+) {
+    const CREATION_RADIUS: f32 = 100.0;
+    const CREATION_RADIUS_SQUARED: f32 = CREATION_RADIUS * CREATION_RADIUS;
+    let player_chunk = world_pos_to_chunk_coord(&PLAYER_SPAWN);
+    let min_chunk = (
+        player_chunk.0 - CREATION_RADIUS as i16,
+        player_chunk.1 - CREATION_RADIUS as i16,
+        player_chunk.2 - CREATION_RADIUS as i16,
+    );
+    let max_chunk = (
+        player_chunk.0 + CREATION_RADIUS as i16,
+        player_chunk.1 + CREATION_RADIUS as i16,
+        player_chunk.2 + CREATION_RADIUS as i16,
+    );
+    for chunk_x in min_chunk.0..=max_chunk.0 {
+        for chunk_z in min_chunk.2..=max_chunk.2 {
+            for chunk_y in min_chunk.1..=max_chunk.1 {
+                let chunk_coord = (chunk_x, chunk_y, chunk_z);
+                let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
+                if chunk_world_pos.distance_squared(PLAYER_SPAWN) < CREATION_RADIUS_SQUARED {
+                    let mut locked_index_map = chunk_index_map.0.lock().unwrap();
+                    if !locked_index_map.contains_key(&chunk_coord) {
+                        let chunk = TerrainChunk::new(chunk_coord, &fbm.0);
+                        create_chunk_file_data(
+                            &chunk,
+                            chunk_coord,
+                            &mut locked_index_map,
+                            &mut chunk_data_file.0,
+                            &mut index_file.0,
+                        );
+                    };
+                    drop(locked_index_map);
+                }
+            }
+        }
+    }
+    exit(0);
 }
