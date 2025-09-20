@@ -121,6 +121,8 @@ where
     <B as DynamicBundle>::Effect: NoBundleEffect,
 {
     fn apply(self, world: &mut World) {
+        #[cfg(feature = "timers")]
+        let s = std::time::Instant::now();
         // Split into coords/chunks and bundles while keeping everything in one pass
         let mut coords_chunks = Vec::with_capacity(self.bundles.len());
         let bundles: Vec<B> = self
@@ -134,9 +136,16 @@ where
         // Batch spawn bundles
         let entities: Vec<Entity> = world.spawn_batch(bundles).collect();
         let mut staged = world.get_resource_mut::<StagedChunksLoaded>().unwrap();
+        //preallocated hashsmap
+        staged.0.reserve(entities.len());
         // Pair entities with coords/chunks without separate zipping of pre-existing vecs
         for ((coord, chunk), entity) in coords_chunks.into_iter().zip(entities) {
             staged.0.insert(coord, (entity, chunk));
+        }
+        #[cfg(feature = "timers")]
+        {
+            let duration = s.elapsed();
+            println!("spent {:?} in ChunkLoadCommand", duration);
         }
     }
 }
@@ -363,6 +372,7 @@ fn spawn_chunks_from_source_task(
         ),
     )>,
 ) {
+    #[cfg(feature = "timers")]
     let start = std::time::Instant::now();
     let current_player_chunk = world_pos_to_chunk_coord(player_translation);
     let player_chunk_world_pos = chunk_coord_to_world_pos(&current_player_chunk);
@@ -408,7 +418,10 @@ fn spawn_chunks_from_source_task(
                 .then(|| (coord, chunk, (ChunkTag, transform)))
         })
         .collect();
-    let duration = start.elapsed();
-    println!("finished loading chunks in {:?}", duration);
+    #[cfg(feature = "timers")]
+    {
+        let duration = start.elapsed();
+        println!("finished loading chunks in {:?}", duration);
+    }
     (final_bundles_without_collider, final_bundles_with_collider)
 }
