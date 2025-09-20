@@ -161,6 +161,7 @@ pub fn deallocate_chunks(
     chunk_map: &mut HashMap<(i16, i16, i16), (Entity, TerrainChunk)>,
     commands: &mut Commands,
 ) {
+    let s = std::time::Instant::now();
     let player_chunk_world_pos = chunk_coord_to_world_pos(&player_chunk);
     chunk_map.retain(|chunk_coord, (entity, _chunk)| {
         let world_pos = chunk_coord_to_world_pos(chunk_coord);
@@ -171,6 +172,8 @@ pub fn deallocate_chunks(
             true
         }
     });
+    let duration = s.elapsed();
+    println!("spent {:?} in deallocate_chunks", duration);
 }
 
 #[derive(Resource)]
