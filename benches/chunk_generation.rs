@@ -7,7 +7,10 @@ use marching_cubes::{
     data_loader::chunk_loader::{
         create_chunk_file_data, load_chunk_data, load_chunk_index_map, update_chunk_file_data,
     },
-    terrain::{chunk_generator::generate_densities, terrain::TerrainChunk},
+    terrain::{
+        chunk_generator::generate_densities,
+        terrain::{CHUNK_CREATION_RADIUS_SQUARED, TerrainChunk},
+    },
 };
 use std::collections::HashMap;
 use std::fs::OpenOptions;
@@ -101,11 +104,70 @@ fn benchmark_create_chunk_file_data(c: &mut Criterion) {
     });
 }
 
+fn bench_iterate_exterior(c: &mut Criterion) {
+    const CHUNK_CREATION_RADIUS: f32 = 100.0;
+    const CHUNK_SIZE: f32 = 3.1;
+    c.bench_function("iterate_exterior", |b| {
+        b.iter(|| {
+            let max_voxel = (CHUNK_CREATION_RADIUS / CHUNK_SIZE as f32).ceil() as i32;
+            let mut count = 0;
+            for x in -max_voxel..=max_voxel {
+                let dx = x as f32 * CHUNK_SIZE as f32;
+                for y in -max_voxel..=max_voxel {
+                    let dy = y as f32 * CHUNK_SIZE as f32;
+                    let r_sq_xy = CHUNK_CREATION_RADIUS_SQUARED - dx * dx - dy * dy;
+                    if r_sq_xy < 0.0 {
+                        continue;
+                    }
+                    let max_z = (r_sq_xy.sqrt() / CHUNK_SIZE as f32).floor() as i32;
+                    for z in -max_z..=max_z {
+                        if is_exterior_chunk(x, y, z, CHUNK_CREATION_RADIUS_SQUARED, CHUNK_SIZE) {
+                            count += 1;
+                        }
+                    }
+                }
+            }
+            println!("Exterior chunk count: {}", count);
+        })
+    });
+}
+
 criterion_group!(
     benches,
     benchmark_generate_densities,
     benchmark_load_chunk_data,
     benchmark_update_chunk_data,
-    benchmark_create_chunk_file_data
+    benchmark_create_chunk_file_data,
+    bench_iterate_exterior,
 );
 criterion_main!(benches);
+
+// Returns true if the chunk at (x, y, z) is on the exterior of the sphere
+fn is_exterior_chunk(x: i32, y: i32, z: i32, radius_sq: f32, chunk_size: f32) -> bool {
+    let dx = x as f32 * chunk_size as f32;
+    let dy = y as f32 * chunk_size as f32;
+    let dz = z as f32 * chunk_size as f32;
+    let dist_sq = dx * dx + dy * dy + dz * dz;
+    if dist_sq > radius_sq {
+        return false;
+    }
+    for &nx in &[x - 1, x + 1] {
+        let ndx = nx as f32 * chunk_size as f32;
+        if ndx * ndx + dy * dy + dz * dz > radius_sq {
+            return true;
+        }
+    }
+    for &ny in &[y - 1, y + 1] {
+        let ndy = ny as f32 * chunk_size as f32;
+        if dx * dx + ndy * ndy + dz * dz > radius_sq {
+            return true;
+        }
+    }
+    for &nz in &[z - 1, z + 1] {
+        let ndz = nz as f32 * chunk_size as f32;
+        if dx * dx + dy * dy + ndz * ndz > radius_sq {
+            return true;
+        }
+    }
+    false
+}

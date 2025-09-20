@@ -1,14 +1,23 @@
-use std::{collections::HashSet, fs::OpenOptions, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    fs::OpenOptions,
+    sync::Arc,
+};
 
 use bevy::{
-    asset::Assets,
+    asset::{Assets, Handle},
     ecs::{
+        bundle::{Bundle, DynamicBundle, NoBundleEffect},
+        entity::Entity,
         event::EventReader,
         query::With,
         resource::Resource,
-        system::{Commands, Res, ResMut, Single},
+        system::{Command, Commands, Res, ResMut, Single},
+        world::{Mut, World},
     },
-    render::mesh::Mesh,
+    math::Vec3,
+    pbr::{MeshMaterial3d, StandardMaterial},
+    render::mesh::{Mesh, Mesh3d},
     tasks::{AsyncComputeTaskPool, Task, block_on},
     transform::components::Transform,
 };
@@ -18,14 +27,15 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use crate::{
     conversions::{chunk_coord_to_world_pos, world_pos_to_chunk_coord},
     data_loader::chunk_loader::{
-        create_chunk_file_data, load_chunk_data, ChunkDataFile, ChunkIndexFile, ChunkIndexMap
+        ChunkDataFile, ChunkIndexFile, ChunkIndexMap, create_chunk_file_data, load_chunk_data,
     },
     marching_cubes::march_cubes,
     player::player::PlayerTag,
     terrain::{
         chunk_generator::{GenerateChunkEvent, LoadChunksEvent},
         terrain::{
-            spawn_chunk, ChunkMap, NoiseFunction, StandardTerrainMaterialHandle, TerrainChunk, CHUNK_CREATION_RADIUS_SQUARED, CUBES_PER_CHUNK_DIM, SDF_VALUES_PER_CHUNK_DIM
+            CHUNK_CREATION_RADIUS_SQUARED, CUBES_PER_CHUNK_DIM, ChunkMap, ChunkTag, NoiseFunction,
+            SDF_VALUES_PER_CHUNK_DIM, StandardTerrainMaterialHandle, TerrainChunk,
         },
     },
 };
@@ -36,33 +46,100 @@ const MAX_CHUNKS_PER_TASK: usize = 10000000;
 #[derive(Resource)]
 pub struct MyMapGenTasks {
     pub generation_tasks: Vec<
-        Task<
-            Vec<(
-                (i16, i16, i16),
-                TerrainChunk,
-                Mesh,
-                Transform,
-                Option<Collider>,
-            )>,
-        >,
+        Task<(
+            Vec<((i16, i16, i16), TerrainChunk, Mesh, Transform, Collider)>,
+            Vec<((i16, i16, i16), TerrainChunk, Mesh, Transform)>,
+        )>,
     >,
     pub chunks_being_generated: HashSet<(i16, i16, i16)>,
 }
 
 #[derive(Resource)]
 pub struct LoadChunkTasks {
-    pub generation_tasks: Vec<
-        Task<
-            Vec<(
-                (i16, i16, i16),
-                TerrainChunk,
-                Mesh,
-                Transform,
-                Option<Collider>,
-            )>,
-        >,
+    pub loading_tasks: Vec<
+        Task<(
+            Vec<((i16, i16, i16), TerrainChunk, Mesh, Transform, Collider)>,
+            Vec<((i16, i16, i16), TerrainChunk, Mesh, Transform)>,
+        )>,
     >,
     pub chunks_being_loaded: HashSet<(i16, i16, i16)>,
+}
+
+#[derive(Resource)]
+pub struct StagedChunksLoaded(pub HashMap<(i16, i16, i16), (Entity, TerrainChunk)>);
+
+struct ChunkSpawnCommand<B> {
+    pub bundles: Vec<B>,
+    pub chunk_datas: Vec<TerrainChunk>,
+    pub chunk_coords: Vec<(i16, i16, i16)>,
+}
+
+impl<B> Command for ChunkSpawnCommand<B>
+where
+    B: Bundle,
+    <B as DynamicBundle>::Effect: NoBundleEffect,
+{
+    fn apply(self, world: &mut World) {
+        let entities: Vec<Entity> = world.spawn_batch(self.bundles).collect();
+        world.resource_scope(|world, mut chunk_map: Mut<ChunkMap>| {
+            world.resource_scope(|world, mut chunk_data_file: Mut<ChunkDataFile>| {
+                world.resource_scope(|world, chunk_index_map: Mut<ChunkIndexMap>| {
+                    let mut index_file = world.get_resource_mut::<ChunkIndexFile>().unwrap();
+                    for ((coord, chunk_data), entity) in self
+                        .chunk_coords
+                        .into_iter()
+                        .zip(self.chunk_datas.into_iter())
+                        .zip(entities.into_iter())
+                    {
+                        let mut locked_index_map = chunk_index_map.0.lock().unwrap();
+                        create_chunk_file_data(
+                            &chunk_data,
+                            coord,
+                            &mut locked_index_map,
+                            &mut chunk_data_file.0,
+                            &mut index_file.0,
+                        );
+                        drop(locked_index_map);
+                        chunk_map.0.insert(coord, (entity, chunk_data));
+                    }
+                });
+            });
+        });
+    }
+}
+
+struct ChunkLoadCommand<B> {
+    pub bundles: Vec<B>,
+    pub chunk_datas: Vec<TerrainChunk>,
+    pub chunk_coords: Vec<(i16, i16, i16)>,
+}
+
+impl<B> Command for ChunkLoadCommand<B>
+where
+    B: Bundle,
+    <B as DynamicBundle>::Effect: NoBundleEffect,
+{
+    fn apply(self, world: &mut World) {
+        let entities: Vec<Entity> = world.spawn_batch(self.bundles).collect();
+        let mut staged = world.get_resource_mut::<StagedChunksLoaded>().unwrap();
+        for ((coord, chunk_data), entity) in self
+            .chunk_coords
+            .into_iter()
+            .zip(self.chunk_datas.into_iter())
+            .zip(entities.into_iter())
+        {
+            staged.0.insert(coord, (entity, chunk_data));
+        }
+    }
+}
+
+pub fn flush_staged_chunks(
+    mut staged: ResMut<StagedChunksLoaded>,
+    mut chunk_map: ResMut<ChunkMap>,
+) {
+    for (coord, (entity, chunk)) in staged.0.drain() {
+        chunk_map.0.insert(coord, (entity, chunk));
+    }
 }
 
 pub fn catch_chunk_generation_request(
@@ -77,10 +154,23 @@ pub fn catch_chunk_generation_request(
             let chunk_coords = chunk_batch.to_vec();
             let noise_gen_clone = noise_gen.clone();
             let task = task_pool.spawn(async move {
-                chunk_coords
+                let results = chunk_coords
                     .par_iter()
                     .map(|coord| generate_chunk_data(coord, &noise_gen_clone))
-                    .collect::<Vec<_>>()
+                    .collect::<Vec<_>>();
+                let mut with_collider = Vec::new();
+                let mut without_collider = Vec::new();
+                for (coord, chunk, mesh, transform, collider_opt) in results {
+                    match collider_opt {
+                        Some(collider) => {
+                            with_collider.push((coord, chunk, mesh, transform, collider));
+                        }
+                        None => {
+                            without_collider.push((coord, chunk, mesh, transform));
+                        }
+                    }
+                }
+                (with_collider, without_collider)
             });
             my_tasks.generation_tasks.push(task);
         }
@@ -101,7 +191,7 @@ pub fn catch_load_generation_request(
         let chunk_index_map = Arc::clone(&chunk_index_map.0);
         let chunk_coords = event.chunk_coords.clone();
         let task = task_pool.spawn(async move {
-            chunk_coords
+            let results = chunk_coords
                 .iter()
                 .map(|coord| {
                     let chunk_index_map = chunk_index_map.lock().unwrap();
@@ -123,9 +213,22 @@ pub fn catch_load_generation_request(
                     };
                     (*coord, terrain_chunk, mesh, transform, collider)
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            let mut with_collider = Vec::new();
+            let mut without_collider = Vec::new();
+            for (coord, chunk, mesh, transform, collider_opt) in results {
+                match collider_opt {
+                    Some(collider) => {
+                        with_collider.push((coord, chunk, mesh, transform, collider));
+                    }
+                    None => {
+                        without_collider.push((coord, chunk, mesh, transform));
+                    }
+                }
+            }
+            (with_collider, without_collider)
         });
-        my_tasks.generation_tasks.push(task);
+        my_tasks.loading_tasks.push(task);
     }
 }
 
@@ -157,57 +260,44 @@ pub fn generate_chunk_data(
     (*coord, terrain_chunk, mesh, transform, collider)
 }
 
-fn should_chunk_exist(chunk_coord: (i16, i16, i16), player_chunk: &(i16, i16, i16)) -> bool {
-    let player_chunk_world_pos = chunk_coord_to_world_pos(player_chunk);
-    let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
-    chunk_world_pos.distance_squared(player_chunk_world_pos) <= CHUNK_CREATION_RADIUS_SQUARED
-}
-
 pub fn spawn_generated_chunks(
     mut my_tasks: ResMut<MyMapGenTasks>,
-    mut chunk_map: ResMut<ChunkMap>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    chunk_index_map: Res<ChunkIndexMap>,
-    mut chunk_data_file: ResMut<ChunkDataFile>,
-    mut index_file: ResMut<ChunkIndexFile>,
     material_handle: Res<StandardTerrainMaterialHandle>,
     player_transform: Single<&Transform, With<PlayerTag>>,
 ) {
     let mut chunk_coords_to_be_removed = Vec::new();
     my_tasks.generation_tasks.retain_mut(|task| {
         if task.is_finished() {
-            let chunk_data = block_on(task);
-            let num_chunks = chunk_data.len();
-            let start_index = chunk_coords_to_be_removed.len();
-            chunk_coords_to_be_removed
-                .resize(chunk_coords_to_be_removed.len() + num_chunks, (0, 0, 0));
-            let current_player_chunk = world_pos_to_chunk_coord(&player_transform.translation);
-            for (i, (chunk_coord, terrain_chunk, mesh, transform, collider)) in
-                chunk_data.into_iter().enumerate()
-            {
-                if should_chunk_exist(chunk_coord, &current_player_chunk) {
-                    let mut locked_index_map = chunk_index_map.0.lock().unwrap();
-                    create_chunk_file_data(
-                        &terrain_chunk,
-                        chunk_coord,
-                        &mut locked_index_map,
-                        &mut chunk_data_file.0,
-                        &mut index_file.0,
-                    );
-                    drop(locked_index_map);
-                    let entity = spawn_chunk(
-                        &mut commands,
-                        &mut meshes,
-                        material_handle.0.clone(),
-                        mesh,
-                        transform,
-                        collider,
-                    );
-                    chunk_map.0.insert(chunk_coord, (entity, terrain_chunk));
-                }
-                chunk_coords_to_be_removed[start_index + i] = chunk_coord;
-            }
+            let (bundle_data_with_collider, bundle_data_without_collider) = block_on(task);
+            let (
+                final_bundles_without_collider,
+                chunk_data_without_collider,
+                coords_without_collider,
+                final_bundles_with_collider,
+                chunk_data_with_collider,
+                coords_with_collider,
+            ) = spawn_chunks_from_source_task(
+                bundle_data_with_collider,
+                bundle_data_without_collider,
+                &player_transform.translation,
+                &mut chunk_coords_to_be_removed,
+                &mut meshes,
+                &material_handle.0,
+            );
+            let chunk_spawner = ChunkSpawnCommand {
+                bundles: final_bundles_without_collider,
+                chunk_datas: chunk_data_without_collider,
+                chunk_coords: coords_without_collider,
+            };
+            let chunk_spawner_with_collider = ChunkSpawnCommand {
+                bundles: final_bundles_with_collider,
+                chunk_datas: chunk_data_with_collider,
+                chunk_coords: coords_with_collider,
+            };
+            commands.queue(chunk_spawner);
+            commands.queue(chunk_spawner_with_collider);
             return false;
         }
         true
@@ -219,37 +309,42 @@ pub fn spawn_generated_chunks(
 
 pub fn finish_chunk_loading(
     mut my_tasks: ResMut<LoadChunkTasks>,
-    mut chunk_map: ResMut<ChunkMap>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     material_handle: Res<StandardTerrainMaterialHandle>,
     player_transform: Single<&Transform, With<PlayerTag>>,
 ) {
     let mut chunk_coords_to_be_removed = Vec::new();
-    my_tasks.generation_tasks.retain_mut(|task| {
-        let current_player_chunk = world_pos_to_chunk_coord(&player_transform.translation);
+    my_tasks.loading_tasks.retain_mut(|task| {
         if task.is_finished() {
-            let chunk_data = block_on(task);
-            let num_chunks = chunk_data.len();
-            let start_index = chunk_coords_to_be_removed.len();
-            chunk_coords_to_be_removed
-                .resize(chunk_coords_to_be_removed.len() + num_chunks, (0, 0, 0));
-            for (i, (chunk_coord, terrain_chunk, mesh, transform, collider)) in
-                chunk_data.into_iter().enumerate()
-            {
-                if should_chunk_exist(chunk_coord, &current_player_chunk) {
-                    let entity = spawn_chunk(
-                        &mut commands,
-                        &mut meshes,
-                        material_handle.0.clone(),
-                        mesh,
-                        transform,
-                        collider,
-                    );
-                    chunk_map.0.insert(chunk_coord, (entity, terrain_chunk));
-                }
-                chunk_coords_to_be_removed[start_index + i] = chunk_coord;
-            }
+            let (bundle_data_with_collider, bundle_data_without_collider) = block_on(task);
+            let (
+                final_bundles_without_collider,
+                chunk_data_without_collider,
+                coords_without_collider,
+                final_bundles_with_collider,
+                chunk_data_with_collider,
+                coords_with_collider,
+            ) = spawn_chunks_from_source_task(
+                bundle_data_with_collider,
+                bundle_data_without_collider,
+                &player_transform.translation,
+                &mut chunk_coords_to_be_removed,
+                &mut meshes,
+                &material_handle.0,
+            );
+            let chunk_spawner = ChunkLoadCommand {
+                bundles: final_bundles_without_collider,
+                chunk_datas: chunk_data_without_collider,
+                chunk_coords: coords_without_collider,
+            };
+            let chunk_spawner_with_collider = ChunkLoadCommand {
+                bundles: final_bundles_with_collider,
+                chunk_datas: chunk_data_with_collider,
+                chunk_coords: coords_with_collider,
+            };
+            commands.queue(chunk_spawner);
+            commands.queue(chunk_spawner_with_collider);
             return false;
         }
         true
@@ -257,4 +352,95 @@ pub fn finish_chunk_loading(
     for coord in chunk_coords_to_be_removed {
         my_tasks.chunks_being_loaded.remove(&coord);
     }
+}
+
+fn spawn_chunks_from_source_task(
+    mut bundle_data_with_collider: Vec<((i16, i16, i16), TerrainChunk, Mesh, Transform, Collider)>,
+    mut bundle_data_without_collider: Vec<((i16, i16, i16), TerrainChunk, Mesh, Transform)>,
+    player_translation: &Vec3,
+    chunk_coords_to_be_removed: &mut Vec<(i16, i16, i16)>,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    material_handle: &Handle<StandardMaterial>,
+) -> (
+    Vec<(
+        Mesh3d,
+        ChunkTag,
+        Transform,
+        MeshMaterial3d<StandardMaterial>,
+    )>,
+    Vec<TerrainChunk>,
+    Vec<(i16, i16, i16)>,
+    Vec<(
+        Mesh3d,
+        ChunkTag,
+        Transform,
+        MeshMaterial3d<StandardMaterial>,
+        Collider,
+    )>,
+    Vec<TerrainChunk>,
+    Vec<(i16, i16, i16)>,
+) {
+    let start = std::time::Instant::now();
+    let current_player_chunk = world_pos_to_chunk_coord(player_translation);
+    let player_chunk_world_pos = chunk_coord_to_world_pos(&current_player_chunk);
+    bundle_data_with_collider.retain(|(chunk_coord, _chunkj, _mesh, transform, _collider)| {
+        chunk_coords_to_be_removed.push(*chunk_coord);
+        transform
+            .translation
+            .distance_squared(player_chunk_world_pos)
+            <= CHUNK_CREATION_RADIUS_SQUARED
+    });
+    bundle_data_without_collider.retain(|(chunk_coord, _chunk, _mesh, transform)| {
+        chunk_coords_to_be_removed.push(*chunk_coord);
+        transform
+            .translation
+            .distance_squared(player_chunk_world_pos)
+            <= CHUNK_CREATION_RADIUS_SQUARED
+    });
+    let mut coords_with_collider = Vec::new();
+    let mut bundles_with_collider = Vec::new();
+    let mut chunk_data_with_collider = Vec::new();
+    for (coords, chunk, mesh, transform, collider) in bundle_data_with_collider.into_iter() {
+        coords_with_collider.push(coords);
+        bundles_with_collider.push((mesh, transform, collider));
+        chunk_data_with_collider.push(chunk);
+    }
+    let mut coords_without_collider = Vec::new();
+    let mut bundles_without_collider = Vec::new();
+    let mut chunk_data_without_collider = Vec::new();
+    for (coords, chunk, mesh, transform) in bundle_data_without_collider.into_iter() {
+        coords_without_collider.push(coords);
+        bundles_without_collider.push((mesh, transform));
+        chunk_data_without_collider.push(chunk);
+    }
+    let mut final_bundles_without_collider = Vec::new();
+    for (mesh, transform) in bundles_without_collider {
+        final_bundles_without_collider.push((
+            Mesh3d(meshes.add(mesh)),
+            ChunkTag,
+            transform,
+            MeshMaterial3d(material_handle.clone()),
+        ));
+    }
+    let mut final_bundles_with_collider = Vec::new();
+    for (mesh, transform, collider) in bundles_with_collider {
+        final_bundles_with_collider.push((
+            Mesh3d(meshes.add(mesh)),
+            ChunkTag,
+            transform,
+            MeshMaterial3d(material_handle.clone()),
+            collider,
+        ));
+    }
+
+    let duration = start.elapsed();
+    println!("finished loading chunks in {:?}", duration);
+    (
+        final_bundles_without_collider,
+        chunk_data_without_collider,
+        coords_without_collider,
+        final_bundles_with_collider,
+        chunk_data_with_collider,
+        coords_with_collider,
+    )
 }
