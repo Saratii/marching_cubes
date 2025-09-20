@@ -125,8 +125,8 @@ where
         for ((coord, chunk_data), entity) in self
             .chunk_coords
             .into_iter()
-            .zip(self.chunk_datas.into_iter())
-            .zip(entities.into_iter())
+            .zip(self.chunk_datas)
+            .zip(entities)
         {
             staged.0.insert(coord, (entity, chunk_data));
         }
@@ -383,56 +383,52 @@ fn spawn_chunks_from_source_task(
     let start = std::time::Instant::now();
     let current_player_chunk = world_pos_to_chunk_coord(player_translation);
     let player_chunk_world_pos = chunk_coord_to_world_pos(&current_player_chunk);
-    bundle_data_with_collider.retain(|(chunk_coord, _chunkj, _mesh, transform, _collider)| {
-        chunk_coords_to_be_removed.push(*chunk_coord);
+    chunk_coords_to_be_removed.extend(bundle_data_with_collider.iter().map(|(coord, ..)| *coord));
+    chunk_coords_to_be_removed.extend(
+        bundle_data_without_collider
+            .iter()
+            .map(|(coord, ..)| *coord),
+    );
+    bundle_data_with_collider.retain(|(_chunk_coord, _chunkj, _mesh, transform, _collider)| {
         transform
             .translation
             .distance_squared(player_chunk_world_pos)
             <= CHUNK_CREATION_RADIUS_SQUARED
     });
-    bundle_data_without_collider.retain(|(chunk_coord, _chunk, _mesh, transform)| {
-        chunk_coords_to_be_removed.push(*chunk_coord);
+    bundle_data_without_collider.retain(|(_chunk_coord, _chunk, _mesh, transform)| {
         transform
             .translation
             .distance_squared(player_chunk_world_pos)
             <= CHUNK_CREATION_RADIUS_SQUARED
     });
-    let mut coords_with_collider = Vec::new();
-    let mut bundles_with_collider = Vec::new();
-    let mut chunk_data_with_collider = Vec::new();
+    let mut coords_with_collider = Vec::with_capacity(bundle_data_with_collider.len());
+    let mut chunk_data_with_collider = Vec::with_capacity(bundle_data_with_collider.len());
+    let mut coords_without_collider = Vec::with_capacity(bundle_data_without_collider.len());
+    let mut chunk_data_without_collider = Vec::with_capacity(bundle_data_without_collider.len());
+    let mut final_bundles_with_collider = Vec::with_capacity(bundle_data_with_collider.len());
+    let material = MeshMaterial3d(material_handle.clone());
     for (coords, chunk, mesh, transform, collider) in bundle_data_with_collider.into_iter() {
         coords_with_collider.push(coords);
-        bundles_with_collider.push((mesh, transform, collider));
         chunk_data_with_collider.push(chunk);
-    }
-    let mut coords_without_collider = Vec::new();
-    let mut bundles_without_collider = Vec::new();
-    let mut chunk_data_without_collider = Vec::new();
-    for (coords, chunk, mesh, transform) in bundle_data_without_collider.into_iter() {
-        coords_without_collider.push(coords);
-        bundles_without_collider.push((mesh, transform));
-        chunk_data_without_collider.push(chunk);
-    }
-    let mut final_bundles_without_collider = Vec::new();
-    for (mesh, transform) in bundles_without_collider {
-        final_bundles_without_collider.push((
-            Mesh3d(meshes.add(mesh)),
-            ChunkTag,
-            transform,
-            MeshMaterial3d(material_handle.clone()),
-        ));
-    }
-    let mut final_bundles_with_collider = Vec::new();
-    for (mesh, transform, collider) in bundles_with_collider {
         final_bundles_with_collider.push((
             Mesh3d(meshes.add(mesh)),
             ChunkTag,
             transform,
-            MeshMaterial3d(material_handle.clone()),
+            material.clone(),
             collider,
         ));
     }
-
+    let mut final_bundles_without_collider = Vec::with_capacity(bundle_data_without_collider.len());
+    for (coords, chunk, mesh, transform) in bundle_data_without_collider.into_iter() {
+        coords_without_collider.push(coords);
+        chunk_data_without_collider.push(chunk);
+        final_bundles_without_collider.push((
+            Mesh3d(meshes.add(mesh)),
+            ChunkTag,
+            transform,
+            material.clone(),
+        ));
+    }
     let duration = start.elapsed();
     println!("finished loading chunks in {:?}", duration);
     (
