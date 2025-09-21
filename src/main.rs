@@ -1,6 +1,4 @@
 use std::collections::HashSet;
-use std::sync::Mutex;
-use std::time::Duration;
 
 use bevy::diagnostic::{
     EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin, SystemInformationDiagnosticsPlugin,
@@ -19,19 +17,18 @@ use marching_cubes::conversions::{
     chunk_coord_to_world_pos, world_pos_to_chunk_coord, world_pos_to_voxel_index,
 };
 use marching_cubes::data_loader::chunk_loader::{
-    ChunkDataFile, ChunkIndexMap, SpentInDealloc, SpentInFinish, setup_chunk_loading,
-    update_chunk_file_data,
+    ChunkDataFile, ChunkIndexMap, setup_chunk_loading, try_deallocate, update_chunk_file_data,
 };
 use marching_cubes::marching_cubes::march_cubes;
 use marching_cubes::player::player::{
-    CameraController, KeyBindings, camera_look, camera_zoom, cursor_grab,
+    CameraController, KeyBindings, MainCameraTag, camera_look, camera_zoom, cursor_grab,
     detect_chunk_border_crossing, initial_grab_cursor, player_movement, spawn_player,
     toggle_camera,
 };
 use marching_cubes::terrain::chunk_generator::{GenerateChunkEvent, LoadChunksEvent};
 use marching_cubes::terrain::chunk_thread::{
     LoadChunkTasks, MyMapGenTasks, catch_chunk_generation_request, catch_load_generation_request,
-    finish_chunk_loading, flush_staged_chunks, spawn_generated_chunks,
+    finish_chunk_loading, l2_chunk_load, spawn_generated_chunks,
 };
 use marching_cubes::terrain::terrain::{
     CUBES_PER_CHUNK_DIM, ChunkMap, ChunkTag, HALF_CHUNK, SDF_VALUES_PER_CHUNK_DIM, setup_map,
@@ -54,16 +51,6 @@ fn main() {
         .insert_resource(LoadChunkTasks {
             loading_tasks: Vec::new(),
             chunks_being_loaded: HashSet::new(),
-        })
-        .insert_resource(SpentInDealloc {
-            duration: Mutex::new(Duration::ZERO),
-            call_count: Mutex::new(0),
-            last_duration: Mutex::new(Duration::ZERO),
-        })
-        .insert_resource(SpentInFinish {
-            duration: Mutex::new(Duration::ZERO),
-            call_count: Mutex::new(0),
-            last_duration: Mutex::new(Duration::ZERO),
         })
         .add_event::<LoadChunksEvent>()
         .add_event::<GenerateChunkEvent>()
@@ -103,17 +90,18 @@ fn main() {
                 handle_digging_input,
                 toggle_camera,
                 camera_zoom,
-                camera_look,
                 cursor_grab,
-                player_movement,
-                catch_chunk_generation_request,
-                spawn_generated_chunks,
-                detect_chunk_border_crossing,
-                catch_load_generation_request,
-                finish_chunk_loading,
+                camera_look,
+                player_movement.after(camera_look),
+                l2_chunk_load.after(player_movement),
+                catch_chunk_generation_request.after(player_movement),
+                spawn_generated_chunks.after(catch_chunk_generation_request),
+                detect_chunk_border_crossing.after(spawn_generated_chunks),
+                catch_load_generation_request.after(detect_chunk_border_crossing),
+                finish_chunk_loading.after(catch_load_generation_request),
             ),
         )
-        .add_systems(PostUpdate, flush_staged_chunks)
+        .add_systems(PostUpdate, (try_deallocate,))
         .run();
 }
 
@@ -134,7 +122,7 @@ fn handle_digging_input(
     mouse_input: Res<ButtonInput<MouseButton>>,
     mut chunk_mesh_query: Query<(Entity, &mut Mesh3d), With<ChunkTag>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<Camera>>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<MainCameraTag>>,
     window: Single<&Window>,
     mut chunk_map: ResMut<ChunkMap>,
     mut commands: Commands,
@@ -288,4 +276,16 @@ fn screen_to_world_ray(
         distance_traveled += step_size;
     }
     None
+}
+
+pub fn check_for_ghost_entities(
+    query: Query<&Transform, With<ChunkTag>>,
+    chunk_map: Res<ChunkMap>,
+) {
+    for transform in query.iter() {
+        let chunk_coord = world_pos_to_chunk_coord(&transform.translation);
+        if !chunk_map.0.contains_key(&chunk_coord) {
+            println!("Ghost entity detected at chunk coord: {:?}", chunk_coord);
+        }
+    }
 }

@@ -6,18 +6,21 @@ use std::{
 use bevy::{
     input::mouse::{MouseMotion, MouseWheel},
     prelude::*,
+    render::{
+        camera::Viewport,
+        primitives::{Frustum},
+    },
     window::{CursorGrabMode, PrimaryWindow},
 };
 use bevy_rapier3d::prelude::*;
 
 use crate::{
     conversions::{chunk_coord_to_world_pos, world_pos_to_chunk_coord},
-    data_loader::chunk_loader::{ChunkIndexMap, SpentInDealloc, deallocate_chunks},
+    data_loader::chunk_loader::ChunkIndexMap,
     terrain::{
         chunk_generator::{GenerateChunkEvent, LoadChunksEvent},
-        chunk_thread::{LoadChunkTasks, MyMapGenTasks, StagedChunksLoaded},
-        terrain::{
-            CHUNK_CREATION_RADIUS, CHUNK_CREATION_RADIUS_SQUARED, CHUNK_SIZE, ChunkMap,
+        chunk_thread::{LoadChunkTasks, MyMapGenTasks},
+        terrain::{ChunkMap, L1_RADIUS, L1_RADIUS_SQUARED,
             TerrainChunk,
         },
     },
@@ -29,7 +32,7 @@ const CAMERA_3RD_PERSON_OFFSET: Vec3 = Vec3 {
     z: 10.0,
 };
 const PLAYER_SPEED: f32 = 15.0;
-pub const PLAYER_SPAWN: Vec3 = Vec3::new(0., 20., 0.);
+pub const PLAYER_SPAWN: Vec3 = Vec3::new(0., 10., 0.);
 const PLAYER_CUBOID_SIZE: Vec3 = Vec3::new(0.5, 1.5, 0.5);
 const CAMERA_FIRST_PERSON_OFFSET: Vec3 = Vec3::new(0., 0.75 * PLAYER_CUBOID_SIZE.y, 0.);
 const MIN_ZOOM_DISTANCE: f32 = 4.0;
@@ -38,11 +41,19 @@ const ZOOM_SPEED: f32 = 5.0;
 const MOUSE_SENSITIVITY: f32 = 0.002;
 const MIN_PITCH: f32 = -1.5;
 const MAX_PITCH: f32 = 1.5;
-const GRAVITY: f32 = -9.81 * 2.0;
+const GRAVITY: f32 = -9.81;
 const JUMP_IMPULSE: f32 = 7.0;
 
 #[derive(Component)]
 pub struct PlayerTag;
+
+#[derive(Component)]
+pub struct VerticalVelocity {
+    pub y: f32,
+}
+
+#[derive(Component)]
+pub struct MainCameraTag;
 
 #[derive(Resource)]
 pub struct CameraController {
@@ -65,9 +76,27 @@ impl Default for CameraController {
     }
 }
 
-#[derive(Component)]
-pub struct VerticalVelocity {
-    pub y: f32,
+#[derive(Resource)]
+pub struct KeyBindings {
+    pub move_forward: KeyCode,
+    pub move_backward: KeyCode,
+    pub move_left: KeyCode,
+    pub move_right: KeyCode,
+    pub jump: KeyCode,
+    pub toggle_grab_cursor: KeyCode,
+}
+
+impl Default for KeyBindings {
+    fn default() -> Self {
+        Self {
+            move_forward: KeyCode::KeyW,
+            move_backward: KeyCode::KeyS,
+            move_left: KeyCode::KeyA,
+            move_right: KeyCode::KeyD,
+            jump: KeyCode::Space,
+            toggle_grab_cursor: KeyCode::Escape,
+        }
+    }
 }
 
 pub fn spawn_player(
@@ -76,6 +105,8 @@ pub fn spawn_player(
     mut materials: ResMut<Assets<StandardMaterial>>,
     camera_controller: Res<CameraController>,
 ) {
+    const MINIMAP_SIZE: u32 = 200;
+    const BORDER_WIDTH: u32 = 3;
     let player_mesh = Cuboid::new(
         PLAYER_CUBOID_SIZE.x,
         PLAYER_CUBOID_SIZE.y,
@@ -114,12 +145,41 @@ pub fn spawn_player(
                 rotation: initial_rotation,
                 scale: Vec3::ONE,
             },
+            Camera { ..default() },
+            IsDefaultUiCamera,
+            MainCameraTag,
+        ))
+        .with_child((
+            Camera3d { ..default() },
+            Transform::from_translation(Vec3::new(0., 150., 0.))
+                .looking_at(Vec3::new(0., 0., 0.), Vec3::Y),
+            Camera {
+                order: 1,
+                viewport: Some(Viewport {
+                    physical_position: UVec2::new(5, 5),
+                    physical_size: UVec2::new(MINIMAP_SIZE, MINIMAP_SIZE),
+                    ..default()
+                }),
+                ..default()
+            },
         ));
+    commands
+        .spawn(Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(5.0),
+            top: Val::Px(5.0),
+            width: Val::Px((MINIMAP_SIZE + BORDER_WIDTH * 2) as f32),
+            height: Val::Px((MINIMAP_SIZE + BORDER_WIDTH * 2) as f32),
+            border: UiRect::all(Val::Px(BORDER_WIDTH as f32)),
+            ..default()
+        })
+        .insert(BorderColor(Color::BLACK))
+        .insert(BackgroundColor(Color::srgba(0.2, 0.2, 0.2, 0.5)));
 }
 
 pub fn toggle_camera(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut camera_transform: Single<&mut Transform, With<Camera3d>>,
+    mut camera_transform: Single<&mut Transform, With<MainCameraTag>>,
     mut camera_controller: ResMut<CameraController>,
 ) {
     if keyboard.just_pressed(KeyCode::KeyC) {
@@ -136,7 +196,7 @@ pub fn toggle_camera(
 
 pub fn camera_zoom(
     mut scroll_events: EventReader<MouseWheel>,
-    mut camera_transform: Single<&mut Transform, With<Camera3d>>,
+    mut camera_transform: Single<&mut Transform, With<MainCameraTag>>,
     mut camera_controller: ResMut<CameraController>,
 ) {
     if camera_controller.is_first_person || !camera_controller.is_cursor_grabbed {
@@ -156,18 +216,26 @@ pub fn camera_zoom(
 
 pub fn camera_look(
     mut mouse_motion: EventReader<MouseMotion>,
-    mut camera_transform: Single<&mut Transform, With<Camera3d>>,
+    mut camera_transform: Single<(&mut Transform, &Frustum), With<MainCameraTag>>,
     mut camera_controller: ResMut<CameraController>,
 ) {
     if camera_controller.is_cursor_grabbed {
+        let mut angles_changed = false;
         for event in mouse_motion.read() {
+            let old_yaw = camera_controller.yaw;
+            let old_pitch = camera_controller.pitch;
             camera_controller.yaw -= event.delta.x * MOUSE_SENSITIVITY;
             camera_controller.pitch -= event.delta.y * MOUSE_SENSITIVITY;
             camera_controller.pitch = camera_controller.pitch.clamp(MIN_PITCH, MAX_PITCH);
+            if camera_controller.yaw != old_yaw || camera_controller.pitch != old_pitch {
+                angles_changed = true;
+            }
+        }
+        if angles_changed {
             if camera_controller.is_first_person {
-                update_first_person_camera(&mut camera_transform, &camera_controller);
+                update_first_person_camera(&mut camera_transform.0, &camera_controller);
             } else {
-                update_camera_position(&mut camera_transform, &camera_controller);
+                update_camera_position(&mut camera_transform.0, &camera_controller);
             }
         }
     }
@@ -222,29 +290,6 @@ pub fn cursor_grab(
     }
 }
 
-#[derive(Resource)]
-pub struct KeyBindings {
-    pub move_forward: KeyCode,
-    pub move_backward: KeyCode,
-    pub move_left: KeyCode,
-    pub move_right: KeyCode,
-    pub jump: KeyCode,
-    pub toggle_grab_cursor: KeyCode,
-}
-
-impl Default for KeyBindings {
-    fn default() -> Self {
-        Self {
-            move_forward: KeyCode::KeyW,
-            move_backward: KeyCode::KeyS,
-            move_left: KeyCode::KeyA,
-            move_right: KeyCode::KeyD,
-            jump: KeyCode::Space,
-            toggle_grab_cursor: KeyCode::Escape,
-        }
-    }
-}
-
 pub fn player_movement(
     time: Res<Time>,
     mut player_query: Query<
@@ -263,21 +308,24 @@ pub fn player_movement(
         let is_grounded = controller_output.map_or(false, |output| output.grounded);
         let mut movement_vec = Vec3::ZERO;
         let yaw_rotation = Quat::from_rotation_y(camera_controller.yaw);
-        let pitch_rotation = Quat::from_rotation_x(camera_controller.pitch);
-        let camera_rotation = yaw_rotation * pitch_rotation;
-        let forward = camera_rotation * Vec3::NEG_Z;
-        let right = camera_rotation * Vec3::X;
+        let forward = yaw_rotation * Vec3::NEG_Z;
+        let right = yaw_rotation * Vec3::X;
+        let mut horizontal_movement = Vec3::ZERO;
         if keyboard.pressed(key_bindings.move_forward) {
-            movement_vec += forward * PLAYER_SPEED;
+            horizontal_movement += forward;
         }
         if keyboard.pressed(key_bindings.move_backward) {
-            movement_vec -= forward * PLAYER_SPEED;
+            horizontal_movement -= forward;
         }
         if keyboard.pressed(key_bindings.move_left) {
-            movement_vec -= right * PLAYER_SPEED;
+            horizontal_movement -= right;
         }
         if keyboard.pressed(key_bindings.move_right) {
-            movement_vec += right * PLAYER_SPEED;
+            horizontal_movement += right;
+        }
+        if horizontal_movement.length() > 0.0 {
+            horizontal_movement = horizontal_movement.normalize();
+            movement_vec += horizontal_movement * PLAYER_SPEED;
         }
         if keyboard.just_pressed(key_bindings.jump) && is_grounded {
             vertical_velocity.y = JUMP_IMPULSE;
@@ -296,19 +344,15 @@ pub fn detect_chunk_border_crossing(
     player_transform: Single<&Transform, (With<PlayerTag>, Changed<Transform>)>,
     mut last_chunk: Local<Option<(i16, i16, i16)>>,
     mut chunk_map: ResMut<ChunkMap>,
-    mut commands: Commands,
     mut chunk_generation_events: EventWriter<GenerateChunkEvent>,
     mut map_gen_tasks: ResMut<MyMapGenTasks>,
     chunk_index_map: Res<ChunkIndexMap>,
     mut last_position_of_load: Local<Option<Vec3>>,
     mut chunk_load_event_writer: EventWriter<LoadChunksEvent>,
     mut load_chunk_tasks: ResMut<LoadChunkTasks>,
-    dealloc_timer: ResMut<SpentInDealloc>,
-    staging: Res<StagedChunksLoaded>,
 ) {
     const GRACE_RADIUS: f32 = 10.0;
     let current_chunk = world_pos_to_chunk_coord(&player_transform.translation);
-
     if last_chunk.is_none() {
         *last_chunk = Some(current_chunk);
         return;
@@ -327,7 +371,7 @@ pub fn detect_chunk_border_crossing(
         } else {
             *last_position_of_load = Some(player_transform.translation);
         }
-        update_chunks(
+        l1_chunk_load(
             &mut chunk_map.0,
             &player_transform.translation,
             &mut chunk_generation_events,
@@ -336,18 +380,12 @@ pub fn detect_chunk_border_crossing(
             &mut load_chunk_tasks,
             &chunk_index_map.0,
             &current_chunk,
-            &staging.0,
         );
-        let start_time = std::time::Instant::now();
-        deallocate_chunks(current_chunk, &mut chunk_map.0, &mut commands);
-        let duration = start_time.elapsed();
-        *dealloc_timer.duration.lock().unwrap() += duration;
-        *dealloc_timer.call_count.lock().unwrap() += 1;
-        *dealloc_timer.last_duration.lock().unwrap() = duration;
     }
 }
 
-fn update_chunks(
+//load all chunks within L1 radius, triggered by moving to a new chunk
+fn l1_chunk_load(
     chunk_map: &mut HashMap<(i16, i16, i16), (Entity, TerrainChunk)>,
     player_translation: &Vec3,
     chunk_generation_events: &mut EventWriter<GenerateChunkEvent>,
@@ -355,38 +393,24 @@ fn update_chunks(
     map_gen_tasks: &mut MyMapGenTasks,
     load_chunk_tasks: &mut LoadChunkTasks,
     chunk_index_map: &Arc<Mutex<HashMap<(i16, i16, i16), u64>>>,
-    player_chunk: &(i16, i16, i16),
-    staging_chunks: &HashMap<(i16, i16, i16), (Entity, TerrainChunk)>,
+    origin_chunk: &(i16, i16, i16),
 ) {
     let mut chunks_coords_to_generate = Vec::new();
     let mut chunk_coords_to_load = Vec::new();
-    let min_chunk = (
-        player_chunk.0 - CHUNK_CREATION_RADIUS as i16,
-        player_chunk.1 - CHUNK_CREATION_RADIUS as i16,
-        player_chunk.2 - CHUNK_CREATION_RADIUS as i16,
-    );
-    let max_chunk = (
-        player_chunk.0 + CHUNK_CREATION_RADIUS as i16,
-        player_chunk.1 + CHUNK_CREATION_RADIUS as i16,
-        player_chunk.2 + CHUNK_CREATION_RADIUS as i16,
-    );
+    let origin_chunk_world_pos = chunk_coord_to_world_pos(origin_chunk);
+    let min_world_pos = origin_chunk_world_pos - Vec3::splat(L1_RADIUS);
+    let max_world_pos = origin_chunk_world_pos + Vec3::splat(L1_RADIUS);
+    let min_chunk = world_pos_to_chunk_coord(&min_world_pos);
+    let max_chunk = world_pos_to_chunk_coord(&max_world_pos);
     for chunk_x in min_chunk.0..=max_chunk.0 {
         for chunk_z in min_chunk.2..=max_chunk.2 {
-            let dx = (chunk_x as f32 * CHUNK_SIZE) - player_translation.x;
-            let dz = (chunk_z as f32 * CHUNK_SIZE) - player_translation.z;
-            if dx * dx + dz * dz > CHUNK_CREATION_RADIUS_SQUARED {
-                continue; // skip third dimension of chunk loop if too far in xz plane
-            }
             for chunk_y in min_chunk.1..=max_chunk.1 {
                 let chunk_coord = (chunk_x, chunk_y, chunk_z);
                 let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
-                if chunk_world_pos.distance_squared(*player_translation)
-                    < CHUNK_CREATION_RADIUS_SQUARED
-                {
+                if chunk_world_pos.distance_squared(*player_translation) <= L1_RADIUS_SQUARED {
                     if !chunk_map.contains_key(&chunk_coord)
                         && !map_gen_tasks.chunks_being_generated.contains(&chunk_coord)
                         && !load_chunk_tasks.chunks_being_loaded.contains(&chunk_coord)
-                        && !staging_chunks.contains_key(&chunk_coord)
                     {
                         let chunk_index_map = chunk_index_map.lock().unwrap();
                         if chunk_index_map.contains_key(&chunk_coord) {
