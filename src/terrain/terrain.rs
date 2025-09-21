@@ -25,8 +25,10 @@ pub const CHUNK_SIZE: f32 = CUBES_PER_CHUNK_DIM as f32 * VOXEL_SIZE; // 7.875 me
 pub const VOXELS_PER_CHUNK: usize =
     SDF_VALUES_PER_CHUNK_DIM * SDF_VALUES_PER_CHUNK_DIM * SDF_VALUES_PER_CHUNK_DIM;
 pub const HALF_CHUNK: f32 = CHUNK_SIZE / 2.0;
-pub const CHUNK_CREATION_RADIUS: f32 = 50.0; //in world units
-pub const CHUNK_CREATION_RADIUS_SQUARED: f32 = CHUNK_CREATION_RADIUS * CHUNK_CREATION_RADIUS;
+pub const L1_RADIUS: f32 = 30.0; //in world units. Distance where everything is loaded at all times and physically simulated.
+pub const L1_RADIUS_SQUARED: f32 = L1_RADIUS * L1_RADIUS;
+pub const L2_RADIUS: f32 = 90.0; //in world units. Distance where chunks are loaded but not physically simulated.
+pub const L2_RADIUS_SQUARED: f32 = L2_RADIUS * L2_RADIUS;
 
 #[derive(Component)]
 pub struct ChunkTag;
@@ -173,21 +175,21 @@ pub fn spawn_initial_chunks(
 ) {
     let player_chunk = world_pos_to_chunk_coord(&PLAYER_SPAWN);
     let min_chunk = (
-        player_chunk.0 - CHUNK_CREATION_RADIUS as i16,
-        player_chunk.1 - CHUNK_CREATION_RADIUS as i16,
-        player_chunk.2 - CHUNK_CREATION_RADIUS as i16,
+        player_chunk.0 - L1_RADIUS as i16,
+        player_chunk.1 - L1_RADIUS as i16,
+        player_chunk.2 - L1_RADIUS as i16,
     );
     let max_chunk = (
-        player_chunk.0 + CHUNK_CREATION_RADIUS as i16,
-        player_chunk.1 + CHUNK_CREATION_RADIUS as i16,
-        player_chunk.2 + CHUNK_CREATION_RADIUS as i16,
+        player_chunk.0 + L1_RADIUS as i16,
+        player_chunk.1 + L1_RADIUS as i16,
+        player_chunk.2 + L1_RADIUS as i16,
     );
     for chunk_x in min_chunk.0..=max_chunk.0 {
         for chunk_z in min_chunk.2..=max_chunk.2 {
             for chunk_y in min_chunk.1..=max_chunk.1 {
                 let chunk_coord = (chunk_x, chunk_y, chunk_z);
                 let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
-                if chunk_world_pos.distance_squared(PLAYER_SPAWN) < CHUNK_CREATION_RADIUS_SQUARED {
+                if chunk_world_pos.distance_squared(PLAYER_SPAWN) <= L1_RADIUS_SQUARED {
                     let mut locked_index_map = chunk_index_map.0.lock().unwrap();
                     let terrain_chunk = if locked_index_map.contains_key(&chunk_coord) {
                         load_chunk_data(&chunk_data_file.0, &mut locked_index_map, &chunk_coord)

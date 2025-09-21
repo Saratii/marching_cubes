@@ -1,12 +1,15 @@
 use crate::conversions::chunk_coord_to_world_pos;
-use crate::terrain::chunk_thread::StagedChunksLoaded;
-use crate::terrain::terrain::{CHUNK_CREATION_RADIUS_SQUARED, TerrainChunk, VoxelData};
+use crate::player::player::{MainCameraTag, PlayerTag};
+use crate::terrain::terrain::{
+    CHUNK_SIZE, ChunkMap, L1_RADIUS_SQUARED, L2_RADIUS_SQUARED, TerrainChunk, VoxelData,
+};
+use bevy::math::Affine3A;
 use bevy::prelude::*;
+use bevy::render::primitives::{Aabb, Frustum};
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 #[derive(Resource)]
 pub struct ChunkIndexFile(pub File);
@@ -153,24 +156,34 @@ pub fn setup_chunk_loading(mut commands: Commands) {
         &index_file,
     )))));
     commands.insert_resource(ChunkIndexFile(index_file));
-    commands.insert_resource(StagedChunksLoaded(HashMap::new()));
 }
 
-pub fn deallocate_chunks(
-    player_chunk: (i16, i16, i16),
-    chunk_map: &mut HashMap<(i16, i16, i16), (Entity, TerrainChunk)>,
-    commands: &mut Commands,
+//this could be optimized by not calling it every frame
+//loop through every loaded chunk and validate it against L1 and L2
+pub fn try_deallocate(
+    mut chunk_map: ResMut<ChunkMap>,
+    mut commands: Commands,
+    frustum: Single<&Frustum, With<MainCameraTag>>,
+    player_position: Single<&Transform, With<PlayerTag>>,
 ) {
     #[cfg(feature = "timers")]
     let s = std::time::Instant::now();
-    let player_chunk_world_pos = chunk_coord_to_world_pos(&player_chunk);
-    chunk_map.retain(|chunk_coord, (entity, _chunk)| {
+    let mut aabb = Aabb {
+        center: Vec3::ZERO.into(),
+        half_extents: Vec3::splat(CHUNK_SIZE).into(),
+    };
+    chunk_map.0.retain(|chunk_coord, (entity, _chunk)| {
         let world_pos = chunk_coord_to_world_pos(chunk_coord);
-        if world_pos.distance_squared(player_chunk_world_pos) > CHUNK_CREATION_RADIUS_SQUARED {
+        aabb.center = world_pos.into();
+        let distance_squared = world_pos.distance_squared(player_position.translation);
+        if distance_squared <= L1_RADIUS_SQUARED
+            || frustum.intersects_obb(&aabb, &Affine3A::IDENTITY, true, true)
+                && distance_squared < L2_RADIUS_SQUARED
+        {
+            true
+        } else {
             commands.entity(*entity).despawn();
             false
-        } else {
-            true
         }
     });
     #[cfg(feature = "timers")]
@@ -178,18 +191,4 @@ pub fn deallocate_chunks(
         let duration = s.elapsed();
         println!("spent {:?} in deallocate_chunks", duration);
     }
-}
-
-#[derive(Resource)]
-pub struct SpentInDealloc {
-    pub duration: Mutex<Duration>,
-    pub call_count: Mutex<u32>,
-    pub last_duration: Mutex<Duration>,
-}
-
-#[derive(Resource)]
-pub struct SpentInFinish {
-    pub duration: Mutex<Duration>,
-    pub call_count: Mutex<u32>,
-    pub last_duration: Mutex<Duration>,
 }
