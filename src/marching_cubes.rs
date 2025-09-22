@@ -38,6 +38,7 @@ struct VertexCache {
     edge_to_vertex: HashMap<EdgeId, u32>,
     vertices: Vec<Vec3>,
     colors: Vec<[f32; 4]>,
+    uvs: Vec<[f32; 2]>,
 }
 
 impl VertexCache {
@@ -46,6 +47,7 @@ impl VertexCache {
             edge_to_vertex: HashMap::new(),
             vertices: Vec::new(),
             colors: Vec::new(),
+            uvs: Vec::new(),
         }
     }
     fn get_or_create_vertex(&mut self, edge_id: EdgeId, position: Vec3, color: [f32; 4]) -> u32 {
@@ -53,8 +55,10 @@ impl VertexCache {
             vertex_index
         } else {
             let vertex_index = self.vertices.len() as u32;
+            let uv = generate_uv_coordinates(position);
             self.vertices.push(position);
             self.colors.push(color);
+            self.uvs.push(uv);
             self.edge_to_vertex.insert(edge_id, vertex_index);
             vertex_index
         }
@@ -489,6 +493,7 @@ fn build_mesh_from_cache_and_indices(
     if vertex_cache.vertices.is_empty() {
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, Vec::<[f32; 3]>::new());
         mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, Vec::<[f32; 3]>::new());
+        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, Vec::<[f32; 2]>::new());
         mesh.insert_indices(Indices::U32(Vec::new()));
     } else {
         let positions: Vec<[f32; 3]> = vertex_cache
@@ -496,16 +501,23 @@ fn build_mesh_from_cache_and_indices(
             .iter()
             .map(|v| [v.x, v.y, v.z])
             .collect();
+
         let normals: Vec<[f32; 3]> = vertex_cache
             .vertices
             .iter()
             .map(|v| calculate_vertex_normal(*v, densities, sdf_values_per_chunk_dim).into())
             .collect();
-        let colors: Vec<[f32; 4]> = vertex_cache.colors;
+
+        let uvs: Vec<[f32; 2]> = vertex_cache.uvs;
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
         mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
         mesh.insert_indices(Indices::U32(indices));
     }
     mesh
+}
+
+fn generate_uv_coordinates(position: Vec3) -> [f32; 2] {
+    let scale = 0.1;
+    [(position.x * scale) % 1.0, (position.z * scale) % 1.0]
 }
