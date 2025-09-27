@@ -31,41 +31,25 @@ pub struct ChunkIndexMap(pub Arc<Mutex<HashMap<(i16, i16, i16), u64>>>);
 
 fn serialize_chunk_data(chunk: &TerrainChunk) -> Vec<u8> {
     let mut buffer = Vec::with_capacity(CHUNK_SERIALIZED_SIZE);
-    for voxel in chunk.densities.iter() {
+    for voxel in chunk.sdfs.iter() {
         buffer.extend_from_slice(&voxel.sdf.to_le_bytes());
     }
-    for voxel in chunk.densities.iter() {
+    for voxel in chunk.sdfs.iter() {
         buffer.push(voxel.material);
     }
     buffer
 }
 
-fn deserialize_chunk_data(data: &[u8]) -> TerrainChunk {
-    let mut offset = 0;
-    let mut sdf_values = Vec::with_capacity(VOXELS_PER_CHUNK);
-    for _ in 0..VOXELS_PER_CHUNK {
-        let sdf = f32::from_le_bytes([
-            data[offset],
-            data[offset + 1],
-            data[offset + 2],
-            data[offset + 3],
-        ]);
-        sdf_values.push(sdf);
-        offset += 4;
+pub fn deserialize_chunk_data(data: &[u8]) -> TerrainChunk {
+    let mut sdfs = Vec::with_capacity(VOXELS_PER_CHUNK);
+    let (sdf_bytes, material_bytes) = data.split_at(VOXELS_PER_CHUNK * 4);
+    for (sdf_bytes, &material) in sdf_bytes.chunks_exact(4).zip(material_bytes) {
+        let sdf = f32::from_le_bytes(sdf_bytes.try_into().unwrap());
+        sdfs.push(VoxelData { sdf, material });
     }
-    let mut material_values = Vec::with_capacity(VOXELS_PER_CHUNK);
-    for _ in 0..VOXELS_PER_CHUNK {
-        material_values.push(data[offset]);
-        offset += 1;
+    TerrainChunk {
+        sdfs: sdfs.into_boxed_slice(),
     }
-    let densities: Box<[VoxelData]> = sdf_values
-        .into_iter()
-        .zip(material_values.into_iter())
-        .map(|(sdf, material)| VoxelData { sdf, material })
-        .collect::<Vec<_>>()
-        .into_boxed_slice();
-    let chunk = TerrainChunk { densities };
-    chunk
 }
 
 pub fn create_chunk_file_data(

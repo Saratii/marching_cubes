@@ -201,7 +201,7 @@ pub fn catch_load_generation_request(
                     let terrain_chunk = load_chunk_data(&chunk_data_file, &chunk_index_map, coord);
                     drop(chunk_index_map);
                     let mesh = march_cubes(
-                        &terrain_chunk.densities,
+                        &terrain_chunk.sdfs,
                         CUBES_PER_CHUNK_DIM,
                         SDF_VALUES_PER_CHUNK_DIM,
                     );
@@ -247,7 +247,7 @@ pub fn generate_chunk_data(
 ) {
     let terrain_chunk = TerrainChunk::new(*coord, noise_gen);
     let mesh = march_cubes(
-        &terrain_chunk.densities,
+        &terrain_chunk.sdfs,
         CUBES_PER_CHUNK_DIM,
         SDF_VALUES_PER_CHUNK_DIM,
     );

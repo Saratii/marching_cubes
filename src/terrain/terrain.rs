@@ -47,29 +47,29 @@ pub struct VoxelData {
 
 #[derive(Component, Serialize, Deserialize)]
 pub struct TerrainChunk {
-    pub densities: Box<[VoxelData]>,
+    pub sdfs: Box<[VoxelData]>,
 }
 
 impl TerrainChunk {
     pub fn new(chunk_coord: (i16, i16, i16), fbm: &GeneratorWrapper<SafeNode>) -> Self {
         Self {
-            densities: generate_densities(&chunk_coord, fbm),
+            sdfs: generate_densities(&chunk_coord, fbm),
         }
     }
 
     pub fn set_density(&mut self, x: u32, y: u32, z: u32, density: VoxelData) {
         let index = flatten_index(x, y, z, SDF_VALUES_PER_CHUNK_DIM);
-        self.densities[index as usize] = density;
+        self.sdfs[index as usize] = density;
     }
 
     pub fn get_density(&self, x: u32, y: u32, z: u32) -> &VoxelData {
         let index = flatten_index(x, y, z, SDF_VALUES_PER_CHUNK_DIM);
-        &self.densities[index as usize]
+        &self.sdfs[index as usize]
     }
 
     pub fn get_mut_density(&mut self, x: u32, y: u32, z: u32) -> &mut VoxelData {
         let index = flatten_index(x, y, z, SDF_VALUES_PER_CHUNK_DIM);
-        &mut self.densities[index as usize]
+        &mut self.sdfs[index as usize]
     }
 
     pub fn is_solid(&self, x: u32, y: u32, z: u32) -> bool {
@@ -206,7 +206,7 @@ pub fn spawn_initial_chunks(
                     };
                     drop(locked_index_map);
                     let mesh = march_cubes(
-                        &terrain_chunk.densities,
+                        &terrain_chunk.sdfs,
                         CUBES_PER_CHUNK_DIM,
                         SDF_VALUES_PER_CHUNK_DIM,
                     );

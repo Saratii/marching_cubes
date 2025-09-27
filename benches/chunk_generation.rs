@@ -5,11 +5,12 @@ use fastnoise2::{
 };
 use marching_cubes::{
     data_loader::chunk_loader::{
-        create_chunk_file_data, load_chunk_data, load_chunk_index_map, update_chunk_file_data,
+        create_chunk_file_data, deserialize_chunk_data, load_chunk_data, load_chunk_index_map,
+        update_chunk_file_data,
     },
     terrain::{
         chunk_generator::generate_densities,
-        terrain::{L1_RADIUS_SQUARED, TerrainChunk},
+        terrain::{L1_RADIUS_SQUARED, TerrainChunk, VOXELS_PER_CHUNK},
     },
 };
 use std::collections::HashMap;
@@ -76,7 +77,7 @@ fn benchmark_create_chunk_file_data(c: &mut Criterion) {
     let noise_function =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
     let chunk = generate_densities(&(0, 0, 0), &noise_function);
-    let terrain_chunk = TerrainChunk { densities: chunk };
+    let terrain_chunk = TerrainChunk { sdfs: chunk };
     let chunk_coord = (1000, 1000, 1000);
     let mut index_map = HashMap::new();
     let data_file = OpenOptions::new()
@@ -132,6 +133,22 @@ fn bench_iterate_exterior(c: &mut Criterion) {
     });
 }
 
+fn benchmark_deserialize_chunk_data(c: &mut Criterion) {
+    let buffer_size = VOXELS_PER_CHUNK * (4 + 1);
+    let mut data = vec![0u8; buffer_size];
+    for i in 0..VOXELS_PER_CHUNK {
+        let sdf_bytes = (i as f32).to_le_bytes();
+        data[i * 4..i * 4 + 4].copy_from_slice(&sdf_bytes);
+        data[VOXELS_PER_CHUNK * 4 + i] = (i % 256) as u8;
+    }
+    c.bench_function("deserialize_chunk_data", |b| {
+        b.iter(|| {
+            let chunk = deserialize_chunk_data(black_box(&data));
+            black_box(chunk);
+        })
+    });
+}
+
 criterion_group!(
     benches,
     benchmark_generate_densities,
@@ -139,6 +156,7 @@ criterion_group!(
     benchmark_update_chunk_data,
     benchmark_create_chunk_file_data,
     bench_iterate_exterior,
+    benchmark_deserialize_chunk_data,
 );
 criterion_main!(benches);
 
@@ -171,3 +189,5 @@ fn is_exterior_chunk(x: i32, y: i32, z: i32, radius_sq: f32, chunk_size: f32) ->
     }
     false
 }
+
+//cargo bench --bench chunk_generation -- deserialize_chunk_data
