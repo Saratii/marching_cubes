@@ -12,6 +12,9 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex};
 
+const BYTES_PER_VOXEL: usize = std::mem::size_of::<f32>() + std::mem::size_of::<u8>();
+const CHUNK_SERIALIZED_SIZE: usize = VOXELS_PER_CHUNK * BYTES_PER_VOXEL;
+
 #[derive(Resource)]
 pub struct ChunkIndexFile(pub File);
 
@@ -27,7 +30,7 @@ pub struct ChunkIndexMap(pub Arc<Mutex<HashMap<(i16, i16, i16), u64>>>);
 // - Material values: num_voxels * u8 (1 byte each)
 
 fn serialize_chunk_data(chunk: &TerrainChunk) -> Vec<u8> {
-    let mut buffer = Vec::with_capacity(256);
+    let mut buffer = Vec::with_capacity(CHUNK_SERIALIZED_SIZE);
     for voxel in chunk.densities.iter() {
         buffer.extend_from_slice(&voxel.sdf.to_le_bytes());
     }
