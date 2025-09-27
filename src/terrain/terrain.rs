@@ -171,7 +171,7 @@ pub fn spawn_initial_chunks(
     standard_material: Res<StandardTerrainMaterialHandle>,
     fbm: Res<NoiseFunction>,
     mut index_file: ResMut<ChunkIndexFile>,
-    mut chunk_data_file: ResMut<ChunkDataFile>,
+    chunk_data_file: Res<ChunkDataFile>,
 ) {
     let player_chunk = world_pos_to_chunk_coord(&PLAYER_SPAWN);
     let min_chunk = (
@@ -191,19 +191,21 @@ pub fn spawn_initial_chunks(
                 let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
                 if chunk_world_pos.distance_squared(PLAYER_SPAWN) <= L1_RADIUS_SQUARED {
                     let mut locked_index_map = chunk_index_map.0.lock().unwrap();
+                    let mut data_file = chunk_data_file.0.lock().unwrap();
                     let terrain_chunk = if locked_index_map.contains_key(&chunk_coord) {
-                        load_chunk_data(&chunk_data_file.0, &mut locked_index_map, &chunk_coord)
+                        load_chunk_data(&mut data_file, &mut locked_index_map, &chunk_coord)
                     } else {
                         let chunk = TerrainChunk::new(chunk_coord, &fbm.0);
                         create_chunk_file_data(
                             &chunk,
                             chunk_coord,
                             &mut locked_index_map,
-                            &mut chunk_data_file.0,
+                            &mut data_file,
                             &mut index_file.0,
                         );
                         chunk
                     };
+                    drop(data_file);
                     drop(locked_index_map);
                     let mesh = march_cubes(
                         &terrain_chunk.sdfs,
@@ -243,7 +245,7 @@ pub fn generate_large_map_utility(
     chunk_index_map: Res<ChunkIndexMap>,
     fbm: Res<NoiseFunction>,
     mut index_file: ResMut<ChunkIndexFile>,
-    mut chunk_data_file: ResMut<ChunkDataFile>,
+    chunk_data_file: Res<ChunkDataFile>,
 ) {
     const CREATION_RADIUS: f32 = 100.0;
     const CREATION_RADIUS_SQUARED: f32 = CREATION_RADIUS * CREATION_RADIUS;
@@ -267,13 +269,15 @@ pub fn generate_large_map_utility(
                     let mut locked_index_map = chunk_index_map.0.lock().unwrap();
                     if !locked_index_map.contains_key(&chunk_coord) {
                         let chunk = TerrainChunk::new(chunk_coord, &fbm.0);
+                        let mut data_file = chunk_data_file.0.lock().unwrap();
                         create_chunk_file_data(
                             &chunk,
                             chunk_coord,
                             &mut locked_index_map,
-                            &mut chunk_data_file.0,
+                            &mut data_file,
                             &mut index_file.0,
                         );
+                        drop(data_file);
                     };
                     drop(locked_index_map);
                 }

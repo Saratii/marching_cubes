@@ -127,7 +127,7 @@ fn handle_digging_input(
     mut commands: Commands,
     mut dig_timer: Local<f32>,
     time: Res<Time>,
-    mut chunk_data_file: ResMut<ChunkDataFile>,
+    chunk_data_file: Res<ChunkDataFile>,
     chunk_index_map: Res<ChunkIndexMap>,
     material_handle: Res<StandardTerrainMaterialHandle>,
 ) {
@@ -158,11 +158,8 @@ fn handle_digging_input(
                 }
                 for chunk_coord in modified_chunks {
                     if let Some((entity, chunk)) = chunk_map.0.get(&chunk_coord) {
-                        let new_mesh = march_cubes(
-                            &chunk.sdfs,
-                            CUBES_PER_CHUNK_DIM,
-                            SDF_VALUES_PER_CHUNK_DIM,
-                        );
+                        let new_mesh =
+                            march_cubes(&chunk.sdfs, CUBES_PER_CHUNK_DIM, SDF_VALUES_PER_CHUNK_DIM);
                         if let Ok((_, mesh_handle_opt)) = chunk_mesh_query.get_mut(*entity) {
                             if let Some(mut mesh_handle) = mesh_handle_opt {
                                 *mesh_handle = Mesh3d(meshes.add(new_mesh.clone()));
@@ -194,13 +191,15 @@ fn handle_digging_input(
                         };
                         commands.entity(*entity).insert(expanded_aabb);
                         let chunk_index_map = chunk_index_map.0.lock().unwrap();
+                        let mut data_file = chunk_data_file.0.lock().unwrap();
                         update_chunk_file_data(
                             &chunk_index_map,
                             chunk_coord,
                             &chunk,
-                            &mut chunk_data_file.0,
+                            &mut data_file,
                         );
                         drop(chunk_index_map);
+                        drop(data_file);
                     }
                 }
             }
