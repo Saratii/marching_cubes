@@ -1,7 +1,8 @@
 use crate::conversions::chunk_coord_to_world_pos;
 use crate::player::player::{MainCameraTag, PlayerTag};
 use crate::terrain::terrain::{
-    CHUNK_SIZE, ChunkMap, L1_RADIUS_SQUARED, L2_RADIUS_SQUARED, TerrainChunk, VoxelData,
+    CHUNK_SIZE, ChunkMap, L1_RADIUS_SQUARED, L2_RADIUS_SQUARED, TerrainChunk, VOXELS_PER_CHUNK,
+    VoxelData,
 };
 use bevy::math::Affine3A;
 use bevy::prelude::*;
@@ -27,7 +28,6 @@ pub struct ChunkIndexMap(pub Arc<Mutex<HashMap<(i16, i16, i16), u64>>>);
 
 fn serialize_chunk_data(chunk: &TerrainChunk) -> Vec<u8> {
     let mut buffer = Vec::with_capacity(256);
-    buffer.extend_from_slice(&(chunk.densities.len() as u32).to_le_bytes());
     for voxel in chunk.densities.iter() {
         buffer.extend_from_slice(&voxel.sdf.to_le_bytes());
     }
@@ -39,15 +39,8 @@ fn serialize_chunk_data(chunk: &TerrainChunk) -> Vec<u8> {
 
 fn deserialize_chunk_data(data: &[u8]) -> TerrainChunk {
     let mut offset = 0;
-    let num_voxels = u32::from_le_bytes([
-        data[offset],
-        data[offset + 1],
-        data[offset + 2],
-        data[offset + 3],
-    ]) as usize;
-    offset += 4;
-    let mut sdf_values = Vec::with_capacity(num_voxels);
-    for _ in 0..num_voxels {
+    let mut sdf_values = Vec::with_capacity(VOXELS_PER_CHUNK);
+    for _ in 0..VOXELS_PER_CHUNK {
         let sdf = f32::from_le_bytes([
             data[offset],
             data[offset + 1],
@@ -57,8 +50,8 @@ fn deserialize_chunk_data(data: &[u8]) -> TerrainChunk {
         sdf_values.push(sdf);
         offset += 4;
     }
-    let mut material_values = Vec::with_capacity(num_voxels);
-    for _ in 0..num_voxels {
+    let mut material_values = Vec::with_capacity(VOXELS_PER_CHUNK);
+    for _ in 0..VOXELS_PER_CHUNK {
         material_values.push(data[offset]);
         offset += 1;
     }
@@ -110,10 +103,7 @@ pub fn load_chunk_data(
 ) -> TerrainChunk {
     let byte_offset = *index_map.get(chunk_coord).unwrap();
     { data_file }.seek(SeekFrom::Start(byte_offset)).unwrap();
-    let mut header = [0u8; 4];
-    { data_file }.read_exact(&mut header).unwrap();
-    let num_voxels = u32::from_le_bytes([header[0], header[1], header[2], header[3]]) as usize;
-    let total_size = 4 + (num_voxels * 4) + num_voxels; // header + sdfs + materials
+    let total_size = 4 + (VOXELS_PER_CHUNK * 4) + VOXELS_PER_CHUNK; // header + sdfs + materials
     { data_file }.seek(SeekFrom::Start(byte_offset)).unwrap();
     let mut buffer = vec![0u8; total_size];
     { data_file }.read_exact(&mut buffer).unwrap();
