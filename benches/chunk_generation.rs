@@ -35,13 +35,12 @@ fn benchmark_load_chunk_data(c: &mut Criterion) {
         .open("data/chunk_data.txt")
         .unwrap();
     let index_map = load_chunk_index_map(&index_file);
-    let first_chunk_coord = *index_map.keys().next().unwrap();
     c.bench_function("load_chunk_data_single_chunk", |b| {
         b.iter(|| {
             let chunk = load_chunk_data(
                 black_box(&mut data_file),
                 black_box(&index_map),
-                black_box(&first_chunk_coord),
+                black_box(&(0, -5, 0)),
             );
             black_box(chunk);
         })

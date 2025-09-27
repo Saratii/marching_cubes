@@ -86,18 +86,20 @@ where
             .collect();
         let entities: Vec<Entity> = world.spawn_batch(bundles).collect();
         world.resource_scope(|world, mut chunk_map: Mut<ChunkMap>| {
-            world.resource_scope(|world, mut chunk_data_file: Mut<ChunkDataFile>| {
+            world.resource_scope(|world, chunk_data_file: Mut<ChunkDataFile>| {
                 world.resource_scope(|world, chunk_index_map: Mut<ChunkIndexMap>| {
                     let mut index_file = world.get_resource_mut::<ChunkIndexFile>().unwrap();
                     for ((coord, chunk_data), entity) in coords_chunks.into_iter().zip(entities) {
                         let mut locked_index_map = chunk_index_map.0.lock().unwrap();
+                        let mut data_file = chunk_data_file.0.lock().unwrap();
                         create_chunk_file_data(
                             &chunk_data,
                             coord,
                             &mut locked_index_map,
-                            &mut chunk_data_file.0,
+                            &mut data_file,
                             &mut index_file.0,
                         );
+                        drop(data_file);
                         drop(locked_index_map);
                         chunk_map.0.insert(coord, (entity, chunk_data));
                     }
@@ -187,7 +189,7 @@ pub fn catch_load_generation_request(
 ) {
     let task_pool = AsyncComputeTaskPool::get();
     for event in chunk_load_events.read() {
-        let chunk_data_file = OpenOptions::new()
+        let mut chunk_data_file = OpenOptions::new()
             .read(true)
             .open("data/chunk_data.txt")
             .unwrap();
@@ -198,7 +200,7 @@ pub fn catch_load_generation_request(
                 .iter()
                 .map(|coord| {
                     let chunk_index_map = chunk_index_map.lock().unwrap();
-                    let terrain_chunk = load_chunk_data(&chunk_data_file, &chunk_index_map, coord);
+                    let terrain_chunk = load_chunk_data(&mut chunk_data_file, &chunk_index_map, coord);
                     drop(chunk_index_map);
                     let mesh = march_cubes(
                         &terrain_chunk.sdfs,

@@ -19,7 +19,7 @@ const CHUNK_SERIALIZED_SIZE: usize = VOXELS_PER_CHUNK * BYTES_PER_VOXEL;
 pub struct ChunkIndexFile(pub File);
 
 #[derive(Resource)]
-pub struct ChunkDataFile(pub Arc<File>);
+pub struct ChunkDataFile(pub Arc<Mutex<File>>);
 
 #[derive(Resource)]
 pub struct ChunkIndexMap(pub Arc<Mutex<HashMap<(i16, i16, i16), u64>>>);
@@ -84,16 +84,15 @@ pub fn update_chunk_file_data(
 }
 
 pub fn load_chunk_data(
-    data_file: &File,
+    data_file: &mut File,
     index_map: &HashMap<(i16, i16, i16), u64>,
     chunk_coord: &(i16, i16, i16),
 ) -> TerrainChunk {
     let byte_offset = *index_map.get(chunk_coord).unwrap();
-    { data_file }.seek(SeekFrom::Start(byte_offset)).unwrap();
-    let total_size = 4 + (VOXELS_PER_CHUNK * 4) + VOXELS_PER_CHUNK; // header + sdfs + materials
-    { data_file }.seek(SeekFrom::Start(byte_offset)).unwrap();
+    let total_size = VOXELS_PER_CHUNK * 4 + VOXELS_PER_CHUNK; //sdfs + materials
+    data_file.seek(SeekFrom::Start(byte_offset)).unwrap();
     let mut buffer = vec![0u8; total_size];
-    { data_file }.read_exact(&mut buffer).unwrap();
+    data_file.read_exact(&mut buffer).unwrap();
     deserialize_chunk_data(&buffer)
 }
 
@@ -128,7 +127,7 @@ pub fn setup_chunk_loading(mut commands: Commands) {
         .create(true)
         .open("data/chunk_data.txt")
         .unwrap();
-    commands.insert_resource(ChunkDataFile(Arc::new(data_file)));
+    commands.insert_resource(ChunkDataFile(Arc::new(Mutex::new(data_file))));
     commands.insert_resource(ChunkIndexMap(Arc::new(Mutex::new(load_chunk_index_map(
         &index_file,
     )))));
