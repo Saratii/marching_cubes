@@ -159,7 +159,7 @@ fn handle_digging_input(
                 for chunk_coord in modified_chunks {
                     if let Some((entity, chunk)) = chunk_map.0.get(&chunk_coord) {
                         let new_mesh = march_cubes(
-                            &chunk.densities,
+                            &chunk.sdfs,
                             CUBES_PER_CHUNK_DIM,
                             SDF_VALUES_PER_CHUNK_DIM,
                         );
