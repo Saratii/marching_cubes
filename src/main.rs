@@ -6,7 +6,6 @@ use bevy::diagnostic::{
 use bevy::pbr::PbrPlugin;
 use bevy::prelude::*;
 use bevy::render::diagnostic::RenderDiagnosticsPlugin;
-use bevy::render::mesh::MeshAabb;
 use bevy::render::primitives::Aabb;
 use bevy::window::PresentMode;
 use bevy_rapier3d::plugin::{NoUserData, RapierPhysicsPlugin};
@@ -31,8 +30,8 @@ use marching_cubes::terrain::chunk_thread::{
     finish_chunk_loading, l2_chunk_load, spawn_generated_chunks,
 };
 use marching_cubes::terrain::terrain::{
-    CUBES_PER_CHUNK_DIM, ChunkMap, ChunkTag, HALF_CHUNK, SDF_VALUES_PER_CHUNK_DIM, setup_map,
-    spawn_initial_chunks,
+    CUBES_PER_CHUNK_DIM, ChunkMap, ChunkTag, HALF_CHUNK, SDF_VALUES_PER_CHUNK_DIM,
+    StandardTerrainMaterialHandle, setup_map, spawn_initial_chunks,
 };
 use rayon::ThreadPoolBuilder;
 
@@ -120,7 +119,7 @@ fn setup(mut commands: Commands) {
 
 fn handle_digging_input(
     mouse_input: Res<ButtonInput<MouseButton>>,
-    mut chunk_mesh_query: Query<(Entity, &mut Mesh3d), With<ChunkTag>>,
+    mut chunk_mesh_query: Query<(Entity, Option<&mut Mesh3d>), With<ChunkTag>>,
     mut meshes: ResMut<Assets<Mesh>>,
     camera_query: Query<(&Camera, &GlobalTransform), With<MainCameraTag>>,
     window: Single<&Window>,
@@ -130,6 +129,7 @@ fn handle_digging_input(
     time: Res<Time>,
     mut chunk_data_file: ResMut<ChunkDataFile>,
     chunk_index_map: Res<ChunkIndexMap>,
+    material_handle: Res<StandardTerrainMaterialHandle>,
 ) {
     const DIG_STRENGTH: f32 = 0.1;
     const DIG_TIMER: f32 = 0.02; // seconds
@@ -158,37 +158,41 @@ fn handle_digging_input(
                 }
                 for chunk_coord in modified_chunks {
                     if let Some((entity, chunk)) = chunk_map.0.get(&chunk_coord) {
-                        if let Ok((_, mut mesh_handle)) = chunk_mesh_query.get_mut(*entity) {
-                            let new_mesh = march_cubes(
-                                &chunk.densities,
-                                CUBES_PER_CHUNK_DIM,
-                                SDF_VALUES_PER_CHUNK_DIM,
-                            );
-                            if let Some(_) = new_mesh.compute_aabb() {
-                                let min = Vec3::new(-HALF_CHUNK, -HALF_CHUNK, -HALF_CHUNK);
-                                let max = Vec3::new(HALF_CHUNK, HALF_CHUNK, HALF_CHUNK);
-                                let center = (min + max) / 2.0;
-                                let half_extents = (max - min) / 2.0;
-                                let expanded_aabb = Aabb {
-                                    center: center.into(),
-                                    half_extents: half_extents.into(),
-                                };
-                                commands.entity(*entity).insert(expanded_aabb);
-                                commands.entity(*entity).remove::<Collider>();
+                        let new_mesh = march_cubes(
+                            &chunk.densities,
+                            CUBES_PER_CHUNK_DIM,
+                            SDF_VALUES_PER_CHUNK_DIM,
+                        );
+                        if let Ok((_, mesh_handle_opt)) = chunk_mesh_query.get_mut(*entity) {
+                            if let Some(mut mesh_handle) = mesh_handle_opt {
+                                *mesh_handle = Mesh3d(meshes.add(new_mesh.clone()));
+                            } else {
                                 if new_mesh.count_vertices() > 0 {
-                                    commands.entity(*entity).insert(
-                                            Collider::from_bevy_mesh(
-                                                &new_mesh,
-                                                &ComputedColliderShape::TriMesh(
-                                                    TriMeshFlags::default(),
-                                                ),
-                                            )
-                                            .unwrap(),
-                                        );
+                                    commands.entity(*entity).insert((
+                                        Mesh3d(meshes.add(new_mesh.clone())),
+                                        MeshMaterial3d(material_handle.0.clone()),
+                                    ));
                                 }
                             }
-                            *mesh_handle = Mesh3d(meshes.add(new_mesh));
                         }
+                        commands.entity(*entity).remove::<Collider>();
+                        if new_mesh.count_vertices() > 0 {
+                            if let Some(collider) = Collider::from_bevy_mesh(
+                                &new_mesh,
+                                &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
+                            ) {
+                                commands.entity(*entity).insert(collider);
+                            }
+                        }
+                        let min = Vec3::new(-HALF_CHUNK, -HALF_CHUNK, -HALF_CHUNK);
+                        let max = Vec3::new(HALF_CHUNK, HALF_CHUNK, HALF_CHUNK);
+                        let center = (min + max) / 2.0;
+                        let half_extents = (max - min) / 2.0;
+                        let expanded_aabb = Aabb {
+                            center: center.into(),
+                            half_extents: half_extents.into(),
+                        };
+                        commands.entity(*entity).insert(expanded_aabb);
                         let chunk_index_map = chunk_index_map.0.lock().unwrap();
                         update_chunk_file_data(
                             &chunk_index_map,
@@ -276,16 +280,4 @@ fn screen_to_world_ray(
         distance_traveled += step_size;
     }
     None
-}
-
-pub fn check_for_ghost_entities(
-    query: Query<&Transform, With<ChunkTag>>,
-    chunk_map: Res<ChunkMap>,
-) {
-    for transform in query.iter() {
-        let chunk_coord = world_pos_to_chunk_coord(&transform.translation);
-        if !chunk_map.0.contains_key(&chunk_coord) {
-            println!("Ghost entity detected at chunk coord: {:?}", chunk_coord);
-        }
-    }
 }
