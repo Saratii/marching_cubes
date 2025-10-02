@@ -428,8 +428,7 @@ fn spawn_chunks_from_source_task(
                 .translation
                 .distance_squared(*player_translation);
             (distance_squared <= L1_RADIUS_SQUARED
-                || distance_squared <= L2_RADIUS_SQUARED
-                    && frustum.intersects_obb(&aabb, &Affine3A::IDENTITY, true, true))
+                || distance_squared <= L2_RADIUS_SQUARED && frustum.intersects_obb_identity(&aabb))
             .then(|| {
                 (
                     coord,
@@ -453,8 +452,7 @@ fn spawn_chunks_from_source_task(
                 .translation
                 .distance_squared(*player_translation);
             (distance_squared <= L1_RADIUS_SQUARED
-                || distance_squared <= L2_RADIUS_SQUARED
-                    && frustum.intersects_obb(&aabb, &Affine3A::IDENTITY, true, true))
+                || distance_squared <= L2_RADIUS_SQUARED && frustum.intersects_obb_identity(&aabb))
             .then(|| (coord, chunk, (ChunkTag, chunk_transform)))
         })
         .collect();
@@ -498,9 +496,7 @@ pub fn l2_chunk_load(
                 let distance_squared =
                     chunk_world_pos.distance_squared(player_transform.translation);
                 aabb.center = chunk_world_pos.into();
-                if distance_squared <= L2_RADIUS_SQUARED
-                    && frustum.intersects_obb(&aabb, &Affine3A::IDENTITY, true, true)
-                {
+                if distance_squared <= L2_RADIUS_SQUARED && frustum.intersects_obb_identity(&aabb) {
                     if !chunk_map.0.contains_key(&chunk_coord)
                         && !map_gen_tasks.chunks_being_generated.contains(&chunk_coord)
                         && !load_chunk_tasks.chunks_being_loaded.contains(&chunk_coord)

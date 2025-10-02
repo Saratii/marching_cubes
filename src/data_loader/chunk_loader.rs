@@ -156,7 +156,7 @@ pub fn try_deallocate(
         }
         if distance_squared <= L2_RADIUS_SQUARED {
             aabb.center = chunk_world_pos.into();
-            if frustum.intersects_obb(&aabb, &Affine3A::IDENTITY, true, true) {
+            if frustum.intersects_obb_identity(&aabb) {
                 return true;
             }
         }
