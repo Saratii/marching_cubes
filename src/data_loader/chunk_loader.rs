@@ -1,8 +1,8 @@
 use crate::conversions::chunk_coord_to_world_pos;
 use crate::player::player::{MainCameraTag, PlayerTag};
 use crate::terrain::terrain::{
-    ChunkMap, HALF_CHUNK, L1_RADIUS_SQUARED, L2_RADIUS_SQUARED, TerrainChunk, VOXELS_PER_CHUNK,
-    VoxelData,
+    ChunkMap, HALF_CHUNK, TerrainChunk, VOXELS_PER_CHUNK, VoxelData, Z1_RADIUS_SQUARED,
+    Z2_RADIUS_SQUARED,
 };
 use bevy::prelude::*;
 use bevy::render::primitives::{Aabb, Frustum};
@@ -141,7 +141,7 @@ pub fn setup_chunk_loading(mut commands: Commands) {
 }
 
 //this could be optimized by not calling it every frame
-//loop through every loaded chunk and validate it against L1 and L2
+//loop through every loaded chunk and validate it against Z1 and Z2
 pub fn try_deallocate(
     mut chunk_map: ResMut<ChunkMap>,
     mut commands: Commands,
@@ -157,11 +157,11 @@ pub fn try_deallocate(
     chunk_map.0.retain(|chunk_coord, (entity, _chunk)| {
         let chunk_world_pos = chunk_coord_to_world_pos(chunk_coord);
         let distance_squared = chunk_world_pos.distance_squared(player_position.translation);
-        if distance_squared <= L1_RADIUS_SQUARED {
+        if distance_squared <= Z1_RADIUS_SQUARED {
             if chunk_coord.1 == 0 && chunk_coord.0.abs() > 2 && chunk_coord.2.abs() > 2 {}
             return true;
         }
-        if distance_squared <= L2_RADIUS_SQUARED {
+        if distance_squared <= Z2_RADIUS_SQUARED {
             aabb.center = chunk_world_pos.into();
             if frustum.intersects_obb_identity(&aabb) {
                 return true;

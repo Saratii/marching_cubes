@@ -12,7 +12,7 @@ use crate::{
     terrain::{
         chunk_generator::{GenerateChunkEvent, LoadChunksEvent},
         chunk_thread::{LoadChunkTasks, MyMapGenTasks},
-        terrain::{ChunkMap, L1_RADIUS, L1_RADIUS_SQUARED},
+        terrain::{ChunkMap, Z1_RADIUS, Z1_RADIUS_SQUARED},
     },
 };
 
@@ -330,7 +330,7 @@ pub fn player_movement(
     }
 }
 
-pub fn l1_chunk_load(
+pub fn z1_chunk_load(
     player_transform: Single<&Transform, (With<PlayerTag>, Changed<Transform>)>,
     chunk_map: ResMut<ChunkMap>,
     mut chunk_generation_events: EventWriter<GenerateChunkEvent>,
@@ -343,8 +343,8 @@ pub fn l1_chunk_load(
     let s = std::time::Instant::now();
     let mut chunks_coords_to_generate = Vec::new();
     let mut chunk_coords_to_load = Vec::new();
-    let min_world_pos = &player_transform.translation - Vec3::splat(L1_RADIUS);
-    let max_world_pos = &player_transform.translation + Vec3::splat(L1_RADIUS);
+    let min_world_pos = &player_transform.translation - Vec3::splat(Z1_RADIUS);
+    let max_world_pos = &player_transform.translation + Vec3::splat(Z1_RADIUS);
     let min_chunk = world_pos_to_chunk_coord(&min_world_pos);
     let max_chunk = world_pos_to_chunk_coord(&max_world_pos);
     for chunk_x in min_chunk.0..=max_chunk.0 {
@@ -353,7 +353,7 @@ pub fn l1_chunk_load(
                 let chunk_coord = (chunk_x, chunk_y, chunk_z);
                 let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
                 if chunk_world_pos.distance_squared(player_transform.translation)
-                    <= L1_RADIUS_SQUARED
+                    <= Z1_RADIUS_SQUARED
                 {
                     if !chunk_map.0.contains_key(&chunk_coord)
                         && !map_gen_tasks.chunks_being_generated.contains(&chunk_coord)
@@ -386,6 +386,8 @@ pub fn l1_chunk_load(
     #[cfg(feature = "timers")]
     {
         let duration = s.elapsed();
-        println!("{:<40} {:?}", "l1_chunk_load", duration);
+        if duration > std::time::Duration::from_micros(200) {
+            println!("{:<40} {:?}", "z1_chunk_load", duration);
+        }
     }
 }
