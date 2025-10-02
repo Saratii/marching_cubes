@@ -11,7 +11,7 @@ use bevy::{
         system::{Command, Commands, Res, ResMut, Single},
         world::{Mut, World},
     },
-    math::{Affine3A, Vec3},
+    math::{Affine3A, Vec3, Vec3A},
     pbr::{MeshMaterial3d, StandardMaterial},
     render::{
         mesh::{Mesh, Mesh3d},
@@ -33,7 +33,7 @@ use crate::{
     terrain::{
         chunk_generator::{GenerateChunkEvent, LoadChunksEvent},
         terrain::{
-            CHUNK_SIZE, CUBES_PER_CHUNK_DIM, ChunkMap, ChunkTag, L1_RADIUS_SQUARED, L2_RADIUS,
+            CUBES_PER_CHUNK_DIM, ChunkMap, ChunkTag, HALF_CHUNK, L1_RADIUS_SQUARED, L2_RADIUS,
             L2_RADIUS_SQUARED, NoiseFunction, SDF_VALUES_PER_CHUNK_DIM,
             StandardTerrainMaterialHandle, TerrainChunk,
         },
@@ -75,6 +75,8 @@ where
     <B as DynamicBundle>::Effect: NoBundleEffect,
 {
     fn apply(self, world: &mut World) {
+        #[cfg(feature = "timers")]
+        let s = std::time::Instant::now();
         let mut coords_chunks = Vec::with_capacity(self.bundles.len());
         let bundles: Vec<B> = self
             .bundles
@@ -106,6 +108,13 @@ where
                 });
             });
         });
+        #[cfg(feature = "timers")]
+        {
+            let duration = s.elapsed();
+            if duration > std::time::Duration::from_micros(100) {
+                println!("{:<40} {:?}", "ChunkSpawnCommand.apply", duration);
+            }
+        }
     }
 }
 
@@ -138,26 +147,35 @@ where
         chunk_map.0.reserve(entities.len());
         // Pair entities with coords/chunks without separate zipping of pre-existing vecs
         for ((coord, chunk), entity) in coords_chunks.into_iter().zip(entities) {
-            let a = chunk_map.0.insert(coord, (entity, chunk));
-
-            assert!(a.is_none(), "Inserted chunk at occupied coord");
+            chunk_map.0.insert(coord, (entity, chunk));
         }
         #[cfg(feature = "timers")]
         {
             let duration = s.elapsed();
-            println!("spent {:?} in ChunkLoadCommand", duration);
+            if duration > std::time::Duration::from_micros(100) {
+                println!("{:<40} {:?}", "ChunkLoadCommand.apply", duration);
+            }
         }
     }
 }
 
+//async
 pub fn catch_chunk_generation_request(
     mut chunk_generation_events: EventReader<GenerateChunkEvent>,
     fbm: Res<NoiseFunction>,
     mut my_tasks: ResMut<MyMapGenTasks>,
 ) {
+    #[cfg(feature = "timers")]
+    let s: std::time::Instant = std::time::Instant::now();
+    #[cfg(feature = "timers")]
+    let mut caught_event = false;
     let noise_gen = fbm.0.clone();
     let task_pool = AsyncComputeTaskPool::get();
     for event in chunk_generation_events.read() {
+        #[cfg(feature = "timers")]
+        {
+            caught_event = true;
+        }
         for chunk_batch in event.chunk_coords.chunks(MAX_CHUNKS_PER_TASK) {
             let chunk_coords = chunk_batch.to_vec();
             let noise_gen_clone = noise_gen.clone();
@@ -180,14 +198,24 @@ pub fn catch_chunk_generation_request(
             my_tasks.generation_tasks.push(task);
         }
     }
+    #[cfg(feature = "timers")]
+    {
+        let duration = s.elapsed();
+        if duration > std::time::Duration::from_micros(100) && caught_event {
+            println!("{:<40} {:?}", "catch_chunk_generation_request", duration);
+        }
+    }
 }
 
+//async
 pub fn catch_load_generation_request(
     mut chunk_load_events: EventReader<LoadChunksEvent>,
     mut my_tasks: ResMut<LoadChunkTasks>,
     chunk_index_map: Res<ChunkIndexMap>,
 ) {
     let task_pool = AsyncComputeTaskPool::get();
+    #[cfg(feature = "timers")]
+    let s = std::time::Instant::now();
     for event in chunk_load_events.read() {
         let mut chunk_data_file = OpenOptions::new()
             .read(true)
@@ -200,7 +228,8 @@ pub fn catch_load_generation_request(
                 .iter()
                 .map(|coord| {
                     let chunk_index_map = chunk_index_map.lock().unwrap();
-                    let terrain_chunk = load_chunk_data(&mut chunk_data_file, &chunk_index_map, coord);
+                    let terrain_chunk =
+                        load_chunk_data(&mut chunk_data_file, &chunk_index_map, coord);
                     drop(chunk_index_map);
                     let mesh = march_cubes(
                         &terrain_chunk.sdfs,
@@ -234,6 +263,13 @@ pub fn catch_load_generation_request(
             (with_collider, without_collider)
         });
         my_tasks.loading_tasks.push(task);
+    }
+    #[cfg(feature = "timers")]
+    {
+        let duration = s.elapsed();
+        if duration > std::time::Duration::from_micros(100) {
+            println!("{:<40} {:?}", "catch_load_generation_request", duration);
+        }
     }
 }
 
@@ -346,6 +382,7 @@ pub fn finish_chunk_loading(
     }
 }
 
+//sync
 fn spawn_chunks_from_source_task(
     bundle_data_with_collider: Vec<((i16, i16, i16), TerrainChunk, Mesh, Transform, Collider)>,
     bundle_data_without_collider: Vec<((i16, i16, i16), TerrainChunk, Transform)>,
@@ -370,9 +407,6 @@ fn spawn_chunks_from_source_task(
 ) {
     #[cfg(feature = "timers")]
     let start = std::time::Instant::now();
-    let current_player_chunk = world_pos_to_chunk_coord(player_translation);
-    let player_chunk_world_pos = chunk_coord_to_world_pos(&current_player_chunk);
-    //reserve space
     chunk_coords_to_be_removed
         .reserve(bundle_data_with_collider.len() + bundle_data_without_collider.len());
     chunk_coords_to_be_removed.extend(bundle_data_with_collider.iter().map(|(coord, ..)| *coord));
@@ -382,55 +416,60 @@ fn spawn_chunks_from_source_task(
             .map(|(coord, ..)| *coord),
     );
     let mut aabb = Aabb {
-        center: Vec3::ZERO.into(),
-        half_extents: Vec3::splat(CHUNK_SIZE).into(),
+        center: Vec3A::ZERO,
+        half_extents: Vec3A::splat(HALF_CHUNK),
     };
     let material = MeshMaterial3d(material_handle.clone());
     let final_bundles_with_collider: Vec<_> = bundle_data_with_collider
         .into_iter()
-        .filter_map(|(coord, chunk, mesh, transform, collider)| {
-            aabb.center = transform.translation.into();
-            let distance_squared = transform
+        .filter_map(|(coord, chunk, mesh, chunk_transform, collider)| {
+            aabb.center = chunk_transform.translation.into();
+            let distance_squared = chunk_transform
                 .translation
-                .distance_squared(player_chunk_world_pos);
+                .distance_squared(*player_translation);
             (distance_squared <= L1_RADIUS_SQUARED
-                || frustum.intersects_obb(&aabb, &Affine3A::IDENTITY, true, true)
-                    && distance_squared <= L2_RADIUS_SQUARED)
-                .then(|| {
+                || distance_squared <= L2_RADIUS_SQUARED
+                    && frustum.intersects_obb(&aabb, &Affine3A::IDENTITY, true, true))
+            .then(|| {
+                (
+                    coord,
+                    chunk,
                     (
-                        coord,
-                        chunk,
-                        (
-                            Mesh3d(meshes.add(mesh)),
-                            ChunkTag,
-                            transform,
-                            material.clone(),
-                            collider,
-                        ),
-                    )
-                })
+                        Mesh3d(meshes.add(mesh)),
+                        ChunkTag,
+                        chunk_transform,
+                        material.clone(),
+                        collider,
+                    ),
+                )
+            })
         })
         .collect();
     let final_bundles_without_collider: Vec<_> = bundle_data_without_collider
         .into_iter()
-        .filter_map(|(coord, chunk, transform)| {
-            (transform
+        .filter_map(|(coord, chunk, chunk_transform)| {
+            aabb.center = chunk_transform.translation.into();
+            let distance_squared = chunk_transform
                 .translation
-                .distance_squared(player_chunk_world_pos)
-                <= L1_RADIUS_SQUARED)
-                .then(|| (coord, chunk, (ChunkTag, transform)))
+                .distance_squared(*player_translation);
+            (distance_squared <= L1_RADIUS_SQUARED
+                || distance_squared <= L2_RADIUS_SQUARED
+                    && frustum.intersects_obb(&aabb, &Affine3A::IDENTITY, true, true))
+            .then(|| (coord, chunk, (ChunkTag, chunk_transform)))
         })
         .collect();
+
     #[cfg(feature = "timers")]
     {
         let duration = start.elapsed();
-        println!("finished loading chunks in {:?}", duration);
+        if duration > std::time::Duration::from_micros(100) {
+            println!("{:<40} {:?}", "spawn_chunks_from_source_task", duration);
+        }
     }
     (final_bundles_without_collider, final_bundles_with_collider)
 }
 
 //load chunks within L2 range that are also in the frustum. Triggered by changing frustum angle.
-
 pub fn l2_chunk_load(
     chunk_map: Res<ChunkMap>,
     player_transform: Single<&mut Transform, (With<PlayerTag>, Without<MainCameraTag>)>,
@@ -443,24 +482,23 @@ pub fn l2_chunk_load(
 ) {
     let mut chunks_coords_to_generate = Vec::new();
     let mut chunk_coords_to_load = Vec::new();
-    let origin_chunk = world_pos_to_chunk_coord(&player_transform.translation);
-    let origin_chunk_world_pos = chunk_coord_to_world_pos(&origin_chunk);
-    let min_world_pos = origin_chunk_world_pos - Vec3::splat(L2_RADIUS);
-    let max_world_pos = origin_chunk_world_pos + Vec3::splat(L2_RADIUS);
+    let min_world_pos = player_transform.translation - Vec3::splat(L2_RADIUS);
+    let max_world_pos = player_transform.translation + Vec3::splat(L2_RADIUS);
     let min_chunk = world_pos_to_chunk_coord(&min_world_pos);
     let max_chunk = world_pos_to_chunk_coord(&max_world_pos);
     let mut aabb = Aabb {
-        center: Vec3::ZERO.into(),
-        half_extents: Vec3::splat(CHUNK_SIZE).into(),
+        center: Vec3A::ZERO,
+        half_extents: Vec3A::splat(HALF_CHUNK),
     };
     for chunk_x in min_chunk.0..=max_chunk.0 {
         for chunk_z in min_chunk.2..=max_chunk.2 {
             for chunk_y in min_chunk.1..=max_chunk.1 {
                 let chunk_coord = (chunk_x, chunk_y, chunk_z);
                 let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
-                let distance_squared = chunk_world_pos.distance_squared(origin_chunk_world_pos);
+                let distance_squared =
+                    chunk_world_pos.distance_squared(player_transform.translation);
                 aabb.center = chunk_world_pos.into();
-                if distance_squared < L2_RADIUS_SQUARED
+                if distance_squared <= L2_RADIUS_SQUARED
                     && frustum.intersects_obb(&aabb, &Affine3A::IDENTITY, true, true)
                 {
                     if !chunk_map.0.contains_key(&chunk_coord)
