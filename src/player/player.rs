@@ -354,7 +354,6 @@ pub fn detect_chunk_border_crossing(
     }
     if current_chunk != last_chunk.unwrap() {
         *last_chunk = Some(current_chunk);
-
         if last_position_of_load.is_none() {
             *last_position_of_load = Some(player_transform.translation);
         } else if player_transform

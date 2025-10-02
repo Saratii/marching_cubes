@@ -15,10 +15,13 @@ const BYTES_PER_VOXEL: usize = std::mem::size_of::<f32>() + std::mem::size_of::<
 const CHUNK_SERIALIZED_SIZE: usize = VOXELS_PER_CHUNK * BYTES_PER_VOXEL;
 
 #[derive(Resource)]
-pub struct ChunkIndexFile(pub File);
+pub struct ChunkIndexFile(pub Arc<Mutex<File>>);
 
 #[derive(Resource)]
-pub struct ChunkDataFile(pub Arc<Mutex<File>>);
+pub struct ChunkDataFileRead(pub Arc<Mutex<File>>);
+
+#[derive(Resource)]
+pub struct ChunkDataFileReadWrite(pub Arc<Mutex<File>>);
 
 #[derive(Resource)]
 pub struct ChunkIndexMap(pub Arc<Mutex<HashMap<(i16, i16, i16), u64>>>);
@@ -125,11 +128,16 @@ pub fn setup_chunk_loading(mut commands: Commands) {
         .create(true)
         .open("data/chunk_data.txt")
         .unwrap();
-    commands.insert_resource(ChunkDataFile(Arc::new(Mutex::new(data_file))));
+    let data_file_read = OpenOptions::new()
+        .read(true)
+        .open("data/chunk_data.txt")
+        .unwrap();
+    commands.insert_resource(ChunkDataFileReadWrite(Arc::new(Mutex::new(data_file))));
+    commands.insert_resource(ChunkDataFileRead(Arc::new(Mutex::new(data_file_read))));
     commands.insert_resource(ChunkIndexMap(Arc::new(Mutex::new(load_chunk_index_map(
         &index_file,
     )))));
-    commands.insert_resource(ChunkIndexFile(index_file));
+    commands.insert_resource(ChunkIndexFile(Arc::new(Mutex::new(index_file))));
 }
 
 //this could be optimized by not calling it every frame
@@ -165,7 +173,7 @@ pub fn try_deallocate(
     #[cfg(feature = "timers")]
     {
         let duration = s.elapsed();
-        if duration > std::time::Duration::from_micros(120) {
+        if duration > std::time::Duration::from_micros(160) {
             println!("{:<40} {:?}", "try_deallocate", duration);
         }
     }

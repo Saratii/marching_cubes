@@ -17,7 +17,8 @@ use marching_cubes::conversions::{
     chunk_coord_to_world_pos, world_pos_to_chunk_coord, world_pos_to_voxel_index,
 };
 use marching_cubes::data_loader::chunk_loader::{
-    ChunkDataFile, ChunkIndexMap, setup_chunk_loading, try_deallocate, update_chunk_file_data,
+    ChunkDataFileReadWrite, ChunkIndexMap, setup_chunk_loading, try_deallocate,
+    update_chunk_file_data,
 };
 use marching_cubes::marching_cubes::march_cubes;
 use marching_cubes::player::player::{
@@ -127,7 +128,7 @@ fn handle_digging_input(
     mut commands: Commands,
     mut dig_timer: Local<f32>,
     time: Res<Time>,
-    chunk_data_file: Res<ChunkDataFile>,
+    chunk_data_file: Res<ChunkDataFileReadWrite>,
     chunk_index_map: Res<ChunkIndexMap>,
     material_handle: Res<StandardTerrainMaterialHandle>,
     mut solid_chunk_query: Query<(&mut Collider, &mut Mesh3d), With<ChunkTag>>,

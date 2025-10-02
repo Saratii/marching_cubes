@@ -1,4 +1,4 @@
-use std::{collections::HashMap, process::exit};
+use std::{collections::HashMap, process::exit, sync::Arc};
 
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     conversions::{chunk_coord_to_world_pos, flatten_index, world_pos_to_chunk_coord},
     data_loader::chunk_loader::{
-        ChunkDataFile, ChunkIndexFile, ChunkIndexMap, create_chunk_file_data, load_chunk_data,
+        ChunkDataFileReadWrite, ChunkIndexFile, ChunkIndexMap, create_chunk_file_data,
+        load_chunk_data,
     },
     marching_cubes::march_cubes,
     player::player::PLAYER_SPAWN,
@@ -34,7 +35,7 @@ pub const L2_RADIUS_SQUARED: f32 = L2_RADIUS * L2_RADIUS;
 pub struct ChunkTag;
 
 #[derive(Resource)]
-pub struct NoiseFunction(pub GeneratorWrapper<SafeNode>);
+pub struct NoiseFunction(pub Arc<GeneratorWrapper<SafeNode>>);
 
 #[derive(Resource)]
 pub struct StandardTerrainMaterialHandle(pub Handle<StandardMaterial>);
@@ -157,7 +158,7 @@ pub fn setup_map(mut commands: Commands, mut materials: ResMut<Assets<StandardMa
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
     let standard_terrain_material_handle = materials.add(StandardMaterial { ..default() });
     commands.insert_resource(ChunkMap::new());
-    commands.insert_resource(NoiseFunction(fbm));
+    commands.insert_resource(NoiseFunction(Arc::new(fbm)));
     commands.insert_resource(StandardTerrainMaterialHandle(
         standard_terrain_material_handle,
     ));
@@ -170,8 +171,8 @@ pub fn spawn_initial_chunks(
     mut meshes: ResMut<Assets<Mesh>>,
     standard_material: Res<StandardTerrainMaterialHandle>,
     fbm: Res<NoiseFunction>,
-    mut index_file: ResMut<ChunkIndexFile>,
-    chunk_data_file: Res<ChunkDataFile>,
+    index_file: ResMut<ChunkIndexFile>,
+    chunk_data_file: Res<ChunkDataFileReadWrite>,
 ) {
     let player_chunk = world_pos_to_chunk_coord(&PLAYER_SPAWN);
     let min_chunk = (
@@ -192,6 +193,7 @@ pub fn spawn_initial_chunks(
                 if chunk_world_pos.distance_squared(PLAYER_SPAWN) <= L1_RADIUS_SQUARED {
                     let mut locked_index_map = chunk_index_map.0.lock().unwrap();
                     let mut data_file = chunk_data_file.0.lock().unwrap();
+                    let mut index_file = index_file.0.lock().unwrap();
                     let terrain_chunk = if locked_index_map.contains_key(&chunk_coord) {
                         load_chunk_data(&mut data_file, &mut locked_index_map, &chunk_coord)
                     } else {
@@ -201,12 +203,13 @@ pub fn spawn_initial_chunks(
                             chunk_coord,
                             &mut locked_index_map,
                             &mut data_file,
-                            &mut index_file.0,
+                            &mut index_file,
                         );
                         chunk
                     };
                     drop(data_file);
                     drop(locked_index_map);
+                    drop(index_file);
                     let mesh = march_cubes(
                         &terrain_chunk.sdfs,
                         CUBES_PER_CHUNK_DIM,
@@ -244,8 +247,8 @@ pub fn spawn_initial_chunks(
 pub fn generate_large_map_utility(
     chunk_index_map: Res<ChunkIndexMap>,
     fbm: Res<NoiseFunction>,
-    mut index_file: ResMut<ChunkIndexFile>,
-    chunk_data_file: Res<ChunkDataFile>,
+    index_file: ResMut<ChunkIndexFile>,
+    chunk_data_file: Res<ChunkDataFileReadWrite>,
 ) {
     const CREATION_RADIUS: f32 = 100.0;
     const CREATION_RADIUS_SQUARED: f32 = CREATION_RADIUS * CREATION_RADIUS;
@@ -270,14 +273,16 @@ pub fn generate_large_map_utility(
                     if !locked_index_map.contains_key(&chunk_coord) {
                         let chunk = TerrainChunk::new(chunk_coord, &fbm.0);
                         let mut data_file = chunk_data_file.0.lock().unwrap();
+                        let mut index_file = index_file.0.lock().unwrap();
                         create_chunk_file_data(
                             &chunk,
                             chunk_coord,
                             &mut locked_index_map,
                             &mut data_file,
-                            &mut index_file.0,
+                            &mut index_file,
                         );
                         drop(data_file);
+                        drop(index_file);
                     };
                     drop(locked_index_map);
                 }
