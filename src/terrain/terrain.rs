@@ -25,7 +25,7 @@ pub const CHUNK_SIZE: f32 = CUBES_PER_CHUNK_DIM as f32 * VOXEL_SIZE; // 7.875 me
 pub const VOXELS_PER_CHUNK: usize =
     SDF_VALUES_PER_CHUNK_DIM * SDF_VALUES_PER_CHUNK_DIM * SDF_VALUES_PER_CHUNK_DIM;
 pub const HALF_CHUNK: f32 = CHUNK_SIZE / 2.0;
-pub const L1_RADIUS: f32 = 30.0; //in world units. Distance where everything is loaded at all times and physically simulated.
+pub const L1_RADIUS: f32 = 20.0; //in world units. Distance where everything is loaded at all times and physically simulated.
 pub const L1_RADIUS_SQUARED: f32 = L1_RADIUS * L1_RADIUS;
 pub const L2_RADIUS: f32 = 90.0; //in world units. Distance where chunks are loaded but not physically simulated.
 pub const L2_RADIUS_SQUARED: f32 = L2_RADIUS * L2_RADIUS;

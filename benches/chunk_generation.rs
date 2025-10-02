@@ -127,7 +127,7 @@ fn bench_iterate_exterior(c: &mut Criterion) {
                     }
                 }
             }
-            println!("Exterior chunk count: {}", count);
+            println!("Exterior chunks: {}", count);
         })
     });
 }

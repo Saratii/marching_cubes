@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::process::exit;
 
 use bevy::diagnostic::{
     EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin, SystemInformationDiagnosticsPlugin,
@@ -93,14 +94,15 @@ fn main() {
                 camera_look,
                 player_movement.after(camera_look),
                 l2_chunk_load.after(player_movement),
-                catch_chunk_generation_request.after(player_movement),
+                catch_chunk_generation_request.after(l2_chunk_load),
                 spawn_generated_chunks.after(catch_chunk_generation_request),
                 detect_chunk_border_crossing.after(spawn_generated_chunks),
                 catch_load_generation_request.after(detect_chunk_border_crossing),
                 finish_chunk_loading.after(catch_load_generation_request),
+                try_deallocate.after(finish_chunk_loading),
             ),
         )
-        .add_systems(PostUpdate, (try_deallocate,))
+        .add_systems(PostUpdate, dangle_check)
         .run();
 }
 
@@ -119,8 +121,6 @@ fn setup(mut commands: Commands) {
 
 fn handle_digging_input(
     mouse_input: Res<ButtonInput<MouseButton>>,
-    mut chunk_mesh_query: Query<(Entity, Option<&mut Mesh3d>), With<ChunkTag>>,
-    mut meshes: ResMut<Assets<Mesh>>,
     camera_query: Query<(&Camera, &GlobalTransform), With<MainCameraTag>>,
     window: Single<&Window>,
     mut chunk_map: ResMut<ChunkMap>,
@@ -130,6 +130,8 @@ fn handle_digging_input(
     chunk_data_file: Res<ChunkDataFile>,
     chunk_index_map: Res<ChunkIndexMap>,
     material_handle: Res<StandardTerrainMaterialHandle>,
+    mut solid_chunk_query: Query<(&mut Collider, &mut Mesh3d), With<ChunkTag>>,
+    mut mesh_handles: ResMut<Assets<Mesh>>,
 ) {
     const DIG_STRENGTH: f32 = 0.1;
     const DIG_TIMER: f32 = 0.02; // seconds
@@ -157,50 +159,42 @@ fn handle_digging_input(
                     return;
                 }
                 for chunk_coord in modified_chunks {
-                    if let Some((entity, chunk)) = chunk_map.0.get(&chunk_coord) {
-                        let new_mesh =
-                            march_cubes(&chunk.sdfs, CUBES_PER_CHUNK_DIM, SDF_VALUES_PER_CHUNK_DIM);
-                        if let Ok((_, mesh_handle_opt)) = chunk_mesh_query.get_mut(*entity) {
-                            if let Some(mut mesh_handle) = mesh_handle_opt {
-                                *mesh_handle = Mesh3d(meshes.add(new_mesh.clone()));
-                            } else {
-                                if new_mesh.count_vertices() > 0 {
-                                    commands.entity(*entity).insert((
-                                        Mesh3d(meshes.add(new_mesh.clone())),
-                                        MeshMaterial3d(material_handle.0.clone()),
-                                    ));
-                                }
+                    let (entity, chunk) = chunk_map.0.get(&chunk_coord).unwrap();
+                    let new_mesh =
+                        march_cubes(&chunk.sdfs, CUBES_PER_CHUNK_DIM, SDF_VALUES_PER_CHUNK_DIM);
+                    let vertex_count = new_mesh.count_vertices();
+                    if vertex_count > 0 {
+                        let collider = Collider::from_bevy_mesh(
+                            &new_mesh,
+                            &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
+                        )
+                        .unwrap();
+                        match solid_chunk_query.get_mut(*entity) {
+                            //chunk geometry already existed
+                            Ok((mut collider_component, mut mesh_handle)) => {
+                                *collider_component = collider;
+                                mesh_handles.remove(&mesh_handle.0);
+                                *mesh_handle = Mesh3d(mesh_handles.add(new_mesh));
+                            }
+                            //chunk geometry didn't exist before (was air)
+                            Err(_) => {
+                                commands.entity(*entity).insert((
+                                    collider,
+                                    Mesh3d(mesh_handles.add(new_mesh)),
+                                    MeshMaterial3d(material_handle.0.clone()),
+                                    Aabb {
+                                        center: chunk_coord_to_world_pos(&chunk_coord).into(),
+                                        half_extents: Vec3A::splat(HALF_CHUNK),
+                                    },
+                                ));
                             }
                         }
-                        commands.entity(*entity).remove::<Collider>();
-                        if new_mesh.count_vertices() > 0 {
-                            if let Some(collider) = Collider::from_bevy_mesh(
-                                &new_mesh,
-                                &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
-                            ) {
-                                commands.entity(*entity).insert(collider);
-                            }
-                        }
-                        let min = Vec3::new(-HALF_CHUNK, -HALF_CHUNK, -HALF_CHUNK);
-                        let max = Vec3::new(HALF_CHUNK, HALF_CHUNK, HALF_CHUNK);
-                        let center = (min + max) / 2.0;
-                        let half_extents = (max - min) / 2.0;
-                        let expanded_aabb = Aabb {
-                            center: center.into(),
-                            half_extents: half_extents.into(),
-                        };
-                        commands.entity(*entity).insert(expanded_aabb);
-                        let chunk_index_map = chunk_index_map.0.lock().unwrap();
-                        let mut data_file = chunk_data_file.0.lock().unwrap();
-                        update_chunk_file_data(
-                            &chunk_index_map,
-                            chunk_coord,
-                            &chunk,
-                            &mut data_file,
-                        );
-                        drop(chunk_index_map);
-                        drop(data_file);
                     }
+                    let chunk_index_map = chunk_index_map.0.lock().unwrap();
+                    let mut data_file = chunk_data_file.0.lock().unwrap();
+                    update_chunk_file_data(&chunk_index_map, chunk_coord, &chunk, &mut data_file);
+                    drop(chunk_index_map);
+                    drop(data_file);
                 }
             }
         }
@@ -279,4 +273,20 @@ fn screen_to_world_ray(
         distance_traveled += step_size;
     }
     None
+}
+
+pub fn dangle_check(query: Query<&Transform, With<ChunkTag>>, chunk_map: Res<ChunkMap>) {
+    for (i, (entity, _)) in chunk_map.0.iter() {
+        if query.get(*entity).is_err() {
+            println!("dangle detected at chunk coord {:?}", i);
+        }
+    }
+    for transform in query.iter() {
+        let pos = transform.translation;
+        let chunk_coord = world_pos_to_chunk_coord(&pos);
+        if !chunk_map.0.contains_key(&chunk_coord) {
+            println!("missing from map {:?}", chunk_coord);
+            exit(1);
+        }
+    }
 }

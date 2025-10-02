@@ -6,10 +6,7 @@ use std::{
 use bevy::{
     input::mouse::{MouseMotion, MouseWheel},
     prelude::*,
-    render::{
-        camera::Viewport,
-        primitives::{Frustum},
-    },
+    render::{camera::Viewport, primitives::Frustum},
     window::{CursorGrabMode, PrimaryWindow},
 };
 use bevy_rapier3d::prelude::*;
@@ -20,9 +17,7 @@ use crate::{
     terrain::{
         chunk_generator::{GenerateChunkEvent, LoadChunksEvent},
         chunk_thread::{LoadChunkTasks, MyMapGenTasks},
-        terrain::{ChunkMap, L1_RADIUS, L1_RADIUS_SQUARED,
-            TerrainChunk,
-        },
+        terrain::{ChunkMap, L1_RADIUS, L1_RADIUS_SQUARED, TerrainChunk},
     },
 };
 
@@ -385,6 +380,7 @@ pub fn detect_chunk_border_crossing(
 }
 
 //load all chunks within L1 radius, triggered by moving to a new chunk
+//runs sync, triggers async tasks
 fn l1_chunk_load(
     chunk_map: &mut HashMap<(i16, i16, i16), (Entity, TerrainChunk)>,
     player_translation: &Vec3,
@@ -395,6 +391,8 @@ fn l1_chunk_load(
     chunk_index_map: &Arc<Mutex<HashMap<(i16, i16, i16), u64>>>,
     origin_chunk: &(i16, i16, i16),
 ) {
+    #[cfg(feature = "timers")]
+    let s = std::time::Instant::now();
     let mut chunks_coords_to_generate = Vec::new();
     let mut chunk_coords_to_load = Vec::new();
     let origin_chunk_world_pos = chunk_coord_to_world_pos(origin_chunk);
@@ -426,14 +424,19 @@ fn l1_chunk_load(
             }
         }
     }
-    if chunks_coords_to_generate.len() > 0 {
+    if !chunks_coords_to_generate.is_empty() {
         chunk_generation_events.write(GenerateChunkEvent {
             chunk_coords: chunks_coords_to_generate,
         });
     }
-    if chunk_coords_to_load.len() > 0 {
+    if !chunk_coords_to_load.is_empty() {
         chunk_load_event_writer.write(LoadChunksEvent {
             chunk_coords: chunk_coords_to_load,
         });
+    }
+    #[cfg(feature = "timers")]
+    {
+        let duration = s.elapsed();
+        println!("{:<40} {:?}", "l1_chunk_load", duration);
     }
 }

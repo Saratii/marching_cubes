@@ -1,7 +1,7 @@
 use crate::conversions::chunk_coord_to_world_pos;
 use crate::player::player::{MainCameraTag, PlayerTag};
 use crate::terrain::terrain::{
-    CHUNK_SIZE, ChunkMap, L1_RADIUS_SQUARED, L2_RADIUS_SQUARED, TerrainChunk, VOXELS_PER_CHUNK,
+    ChunkMap, HALF_CHUNK, L1_RADIUS_SQUARED, L2_RADIUS_SQUARED, TerrainChunk, VOXELS_PER_CHUNK,
     VoxelData,
 };
 use bevy::math::Affine3A;
@@ -110,7 +110,6 @@ pub fn load_chunk_index_map(mut index_file: &File) -> HashMap<(i16, i16, i16), u
         ]);
         index_map.insert((x, y, z), offset);
     }
-    println!("loaded {:?} chunk indexes from file", index_map.len());
     index_map
 }
 
@@ -145,26 +144,30 @@ pub fn try_deallocate(
     #[cfg(feature = "timers")]
     let s = std::time::Instant::now();
     let mut aabb = Aabb {
-        center: Vec3::ZERO.into(),
-        half_extents: Vec3::splat(CHUNK_SIZE).into(),
+        center: Vec3A::ZERO,
+        half_extents: Vec3A::splat(HALF_CHUNK),
     };
     chunk_map.0.retain(|chunk_coord, (entity, _chunk)| {
-        let world_pos = chunk_coord_to_world_pos(chunk_coord);
-        aabb.center = world_pos.into();
-        let distance_squared = world_pos.distance_squared(player_position.translation);
-        if distance_squared <= L1_RADIUS_SQUARED
-            || frustum.intersects_obb(&aabb, &Affine3A::IDENTITY, true, true)
-                && distance_squared < L2_RADIUS_SQUARED
-        {
-            true
-        } else {
-            commands.entity(*entity).despawn();
-            false
+        let chunk_world_pos = chunk_coord_to_world_pos(chunk_coord);
+        let distance_squared = chunk_world_pos.distance_squared(player_position.translation);
+        if distance_squared <= L1_RADIUS_SQUARED {
+            if chunk_coord.1 == 0 && chunk_coord.0.abs() > 2 && chunk_coord.2.abs() > 2 {}
+            return true;
         }
+        if distance_squared <= L2_RADIUS_SQUARED {
+            aabb.center = chunk_world_pos.into();
+            if frustum.intersects_obb(&aabb, &Affine3A::IDENTITY, true, true) {
+                return true;
+            }
+        }
+        commands.entity(*entity).despawn();
+        false
     });
     #[cfg(feature = "timers")]
     {
         let duration = s.elapsed();
-        println!("spent {:?} in deallocate_chunks", duration);
+        if duration > std::time::Duration::from_micros(120) {
+            println!("{:<40} {:?}", "try_deallocate", duration);
+        }
     }
 }
