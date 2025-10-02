@@ -1,8 +1,3 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
-
 use bevy::{
     input::mouse::{MouseMotion, MouseWheel},
     prelude::*,
@@ -17,7 +12,7 @@ use crate::{
     terrain::{
         chunk_generator::{GenerateChunkEvent, LoadChunksEvent},
         chunk_thread::{LoadChunkTasks, MyMapGenTasks},
-        terrain::{ChunkMap, L1_RADIUS, L1_RADIUS_SQUARED, TerrainChunk},
+        terrain::{ChunkMap, L1_RADIUS, L1_RADIUS_SQUARED},
     },
 };
 
@@ -335,68 +330,21 @@ pub fn player_movement(
     }
 }
 
-pub fn detect_chunk_border_crossing(
+pub fn l1_chunk_load(
     player_transform: Single<&Transform, (With<PlayerTag>, Changed<Transform>)>,
-    mut last_chunk: Local<Option<(i16, i16, i16)>>,
-    mut chunk_map: ResMut<ChunkMap>,
+    chunk_map: ResMut<ChunkMap>,
     mut chunk_generation_events: EventWriter<GenerateChunkEvent>,
     mut map_gen_tasks: ResMut<MyMapGenTasks>,
     chunk_index_map: Res<ChunkIndexMap>,
-    mut last_position_of_load: Local<Option<Vec3>>,
     mut chunk_load_event_writer: EventWriter<LoadChunksEvent>,
     mut load_chunk_tasks: ResMut<LoadChunkTasks>,
-) {
-    const GRACE_RADIUS: f32 = 10.0;
-    let current_chunk = world_pos_to_chunk_coord(&player_transform.translation);
-    if last_chunk.is_none() {
-        *last_chunk = Some(current_chunk);
-        return;
-    }
-    if current_chunk != last_chunk.unwrap() {
-        *last_chunk = Some(current_chunk);
-        if last_position_of_load.is_none() {
-            *last_position_of_load = Some(player_transform.translation);
-        } else if player_transform
-            .translation
-            .distance_squared(last_position_of_load.unwrap())
-            < GRACE_RADIUS * GRACE_RADIUS
-        {
-            return;
-        } else {
-            *last_position_of_load = Some(player_transform.translation);
-        }
-        l1_chunk_load(
-            &mut chunk_map.0,
-            &player_transform.translation,
-            &mut chunk_generation_events,
-            &mut chunk_load_event_writer,
-            &mut map_gen_tasks,
-            &mut load_chunk_tasks,
-            &chunk_index_map.0,
-            &current_chunk,
-        );
-    }
-}
-
-//load all chunks within L1 radius, triggered by moving to a new chunk
-//runs sync, triggers async tasks
-fn l1_chunk_load(
-    chunk_map: &mut HashMap<(i16, i16, i16), (Entity, TerrainChunk)>,
-    player_translation: &Vec3,
-    chunk_generation_events: &mut EventWriter<GenerateChunkEvent>,
-    chunk_load_event_writer: &mut EventWriter<LoadChunksEvent>,
-    map_gen_tasks: &mut MyMapGenTasks,
-    load_chunk_tasks: &mut LoadChunkTasks,
-    chunk_index_map: &Arc<Mutex<HashMap<(i16, i16, i16), u64>>>,
-    origin_chunk: &(i16, i16, i16),
 ) {
     #[cfg(feature = "timers")]
     let s = std::time::Instant::now();
     let mut chunks_coords_to_generate = Vec::new();
     let mut chunk_coords_to_load = Vec::new();
-    let origin_chunk_world_pos = chunk_coord_to_world_pos(origin_chunk);
-    let min_world_pos = origin_chunk_world_pos - Vec3::splat(L1_RADIUS);
-    let max_world_pos = origin_chunk_world_pos + Vec3::splat(L1_RADIUS);
+    let min_world_pos = &player_transform.translation - Vec3::splat(L1_RADIUS);
+    let max_world_pos = &player_transform.translation + Vec3::splat(L1_RADIUS);
     let min_chunk = world_pos_to_chunk_coord(&min_world_pos);
     let max_chunk = world_pos_to_chunk_coord(&max_world_pos);
     for chunk_x in min_chunk.0..=max_chunk.0 {
@@ -404,12 +352,14 @@ fn l1_chunk_load(
             for chunk_y in min_chunk.1..=max_chunk.1 {
                 let chunk_coord = (chunk_x, chunk_y, chunk_z);
                 let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
-                if chunk_world_pos.distance_squared(*player_translation) <= L1_RADIUS_SQUARED {
-                    if !chunk_map.contains_key(&chunk_coord)
+                if chunk_world_pos.distance_squared(player_transform.translation)
+                    <= L1_RADIUS_SQUARED
+                {
+                    if !chunk_map.0.contains_key(&chunk_coord)
                         && !map_gen_tasks.chunks_being_generated.contains(&chunk_coord)
                         && !load_chunk_tasks.chunks_being_loaded.contains(&chunk_coord)
                     {
-                        let chunk_index_map = chunk_index_map.lock().unwrap();
+                        let chunk_index_map = chunk_index_map.0.lock().unwrap();
                         if chunk_index_map.contains_key(&chunk_coord) {
                             chunk_coords_to_load.push(chunk_coord);
                             load_chunk_tasks.chunks_being_loaded.insert(chunk_coord);

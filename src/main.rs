@@ -23,8 +23,7 @@ use marching_cubes::data_loader::chunk_loader::{
 use marching_cubes::marching_cubes::march_cubes;
 use marching_cubes::player::player::{
     CameraController, KeyBindings, MainCameraTag, camera_look, camera_zoom, cursor_grab,
-    detect_chunk_border_crossing, initial_grab_cursor, player_movement, spawn_player,
-    toggle_camera,
+    initial_grab_cursor, l1_chunk_load, player_movement, spawn_player, toggle_camera,
 };
 use marching_cubes::terrain::chunk_generator::{GenerateChunkEvent, LoadChunksEvent};
 use marching_cubes::terrain::chunk_thread::{
@@ -95,12 +94,12 @@ fn main() {
                 camera_look,
                 player_movement,
                 l2_chunk_load,
-                detect_chunk_border_crossing,
+                l1_chunk_load,
                 catch_load_generation_request
-                    .after(detect_chunk_border_crossing)
+                    .after(l1_chunk_load)
                     .after(l2_chunk_load),
                 catch_chunk_generation_request
-                    .after(detect_chunk_border_crossing)
+                    .after(l1_chunk_load)
                     .after(l2_chunk_load),
                 spawn_generated_chunks.after(catch_chunk_generation_request),
                 spawn_loaded_chunks.after(catch_load_generation_request),
