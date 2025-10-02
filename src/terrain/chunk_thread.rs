@@ -482,30 +482,30 @@ pub fn z2_chunk_load(
 ) {
     #[cfg(feature = "timers")]
     let start = std::time::Instant::now();
+    let player_pos = player_transform.translation;
     let mut chunks_coords_to_generate = Vec::new();
     let mut chunk_coords_to_load = Vec::new();
-    let min_world_pos = player_transform.translation - Vec3::splat(Z2_RADIUS);
-    let max_world_pos = player_transform.translation + Vec3::splat(Z2_RADIUS);
+    let min_world_pos = player_pos - Vec3::splat(Z2_RADIUS);
+    let max_world_pos = player_pos + Vec3::splat(Z2_RADIUS);
     let min_chunk = world_pos_to_chunk_coord(&min_world_pos);
     let max_chunk = world_pos_to_chunk_coord(&max_world_pos);
     let mut aabb = Aabb {
         center: Vec3A::ZERO,
         half_extents: Vec3A::splat(HALF_CHUNK),
     };
+    let chunk_index_map = chunk_index_map.0.lock().unwrap();
     for chunk_x in min_chunk.0..=max_chunk.0 {
         for chunk_z in min_chunk.2..=max_chunk.2 {
             for chunk_y in min_chunk.1..=max_chunk.1 {
                 let chunk_coord = (chunk_x, chunk_y, chunk_z);
                 let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
-                let distance_squared =
-                    chunk_world_pos.distance_squared(player_transform.translation);
+                let distance_squared = chunk_world_pos.distance_squared(player_pos);
                 aabb.center = chunk_world_pos.into();
                 if distance_squared <= Z2_RADIUS_SQUARED && frustum.intersects_obb_identity(&aabb) {
                     if !chunk_map.0.contains_key(&chunk_coord)
                         && !map_gen_tasks.chunks_being_generated.contains(&chunk_coord)
                         && !load_chunk_tasks.chunks_being_loaded.contains(&chunk_coord)
                     {
-                        let chunk_index_map = chunk_index_map.0.lock().unwrap();
                         if chunk_index_map.contains_key(&chunk_coord) {
                             chunk_coords_to_load.push(chunk_coord);
                             load_chunk_tasks.chunks_being_loaded.insert(chunk_coord);
@@ -513,18 +513,18 @@ pub fn z2_chunk_load(
                             chunks_coords_to_generate.push(chunk_coord);
                             map_gen_tasks.chunks_being_generated.insert(chunk_coord);
                         }
-                        drop(chunk_index_map);
                     }
                 }
             }
         }
     }
-    if chunks_coords_to_generate.len() > 0 {
+    drop(chunk_index_map);
+    if !chunks_coords_to_generate.is_empty() {
         chunk_generation_events.write(GenerateChunkEvent {
             chunk_coords: chunks_coords_to_generate,
         });
     }
-    if chunk_coords_to_load.len() > 0 {
+    if !chunk_coords_to_load.is_empty() {
         chunk_load_event_writer.write(LoadChunksEvent {
             chunk_coords: chunk_coords_to_load,
         });
