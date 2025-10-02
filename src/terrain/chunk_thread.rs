@@ -305,6 +305,7 @@ pub fn generate_chunk_data(
     (*coord, terrain_chunk, return_mesh, transform, collider)
 }
 
+//after the async generation is done, prepare the chunks for spawning and call them to the queue
 pub fn spawn_generated_chunks(
     mut my_tasks: ResMut<MyMapGenTasks>,
     mut commands: Commands,
@@ -344,7 +345,7 @@ pub fn spawn_generated_chunks(
     }
 }
 
-pub fn finish_chunk_loading(
+pub fn spawn_loaded_chunks(
     mut my_tasks: ResMut<LoadChunkTasks>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -479,6 +480,8 @@ pub fn l2_chunk_load(
     chunk_index_map: Res<ChunkIndexMap>,
     frustum: Single<&Frustum, With<MainCameraTag>>,
 ) {
+    #[cfg(feature = "timers")]
+    let start = std::time::Instant::now();
     let mut chunks_coords_to_generate = Vec::new();
     let mut chunk_coords_to_load = Vec::new();
     let min_world_pos = player_transform.translation - Vec3::splat(L2_RADIUS);
@@ -525,5 +528,12 @@ pub fn l2_chunk_load(
         chunk_load_event_writer.write(LoadChunksEvent {
             chunk_coords: chunk_coords_to_load,
         });
+    }
+    #[cfg(feature = "timers")]
+    {
+        let duration = start.elapsed();
+        if duration > std::time::Duration::from_micros(200) {
+            println!("{:<40} {:?}", "l2_chunk_load", duration);
+        }
     }
 }

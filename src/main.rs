@@ -29,7 +29,7 @@ use marching_cubes::player::player::{
 use marching_cubes::terrain::chunk_generator::{GenerateChunkEvent, LoadChunksEvent};
 use marching_cubes::terrain::chunk_thread::{
     LoadChunkTasks, MyMapGenTasks, catch_chunk_generation_request, catch_load_generation_request,
-    finish_chunk_loading, l2_chunk_load, spawn_generated_chunks,
+    l2_chunk_load, spawn_generated_chunks, spawn_loaded_chunks,
 };
 use marching_cubes::terrain::terrain::{
     CUBES_PER_CHUNK_DIM, ChunkMap, ChunkTag, HALF_CHUNK, SDF_VALUES_PER_CHUNK_DIM,
@@ -93,14 +93,20 @@ fn main() {
                 camera_zoom,
                 cursor_grab,
                 camera_look,
-                player_movement.after(camera_look),
-                l2_chunk_load.after(player_movement),
-                catch_chunk_generation_request.after(l2_chunk_load),
+                player_movement,
+                l2_chunk_load,
+                detect_chunk_border_crossing,
+                catch_load_generation_request
+                    .after(detect_chunk_border_crossing)
+                    .after(l2_chunk_load),
+                catch_chunk_generation_request
+                    .after(detect_chunk_border_crossing)
+                    .after(l2_chunk_load),
                 spawn_generated_chunks.after(catch_chunk_generation_request),
-                detect_chunk_border_crossing.after(spawn_generated_chunks),
-                catch_load_generation_request.after(detect_chunk_border_crossing),
-                finish_chunk_loading.after(catch_load_generation_request),
-                try_deallocate.after(finish_chunk_loading),
+                spawn_loaded_chunks.after(catch_load_generation_request),
+                try_deallocate
+                    .after(spawn_loaded_chunks)
+                    .after(spawn_generated_chunks),
             ),
         )
         .add_systems(PostUpdate, dangle_check)
