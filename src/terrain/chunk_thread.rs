@@ -6,7 +6,7 @@ use bevy::{
         bundle::{Bundle, DynamicBundle, NoBundleEffect},
         entity::Entity,
         event::{EventReader, EventWriter},
-        query::{With, Without},
+        query::{Changed, With, Without},
         resource::Resource,
         system::{Command, Commands, Res, ResMut, Single},
         world::World,
@@ -34,9 +34,9 @@ use crate::{
     terrain::{
         chunk_generator::{GenerateChunkEvent, LoadChunksEvent},
         terrain::{
-            CUBES_PER_CHUNK_DIM, ChunkMap, ChunkTag, HALF_CHUNK, L1_RADIUS_SQUARED, L2_RADIUS,
-            L2_RADIUS_SQUARED, NoiseFunction, SDF_VALUES_PER_CHUNK_DIM,
-            StandardTerrainMaterialHandle, TerrainChunk,
+            CUBES_PER_CHUNK_DIM, ChunkMap, ChunkTag, HALF_CHUNK, NoiseFunction,
+            SDF_VALUES_PER_CHUNK_DIM, StandardTerrainMaterialHandle, TerrainChunk,
+            Z1_RADIUS_SQUARED, Z2_RADIUS, Z2_RADIUS_SQUARED,
         },
     },
 };
@@ -429,8 +429,8 @@ fn spawn_chunks_from_source_task(
             let distance_squared = chunk_transform
                 .translation
                 .distance_squared(*player_translation);
-            (distance_squared <= L1_RADIUS_SQUARED
-                || distance_squared <= L2_RADIUS_SQUARED && frustum.intersects_obb_identity(&aabb))
+            (distance_squared <= Z1_RADIUS_SQUARED
+                || distance_squared <= Z2_RADIUS_SQUARED && frustum.intersects_obb_identity(&aabb))
             .then(|| {
                 (
                     coord,
@@ -453,8 +453,8 @@ fn spawn_chunks_from_source_task(
             let distance_squared = chunk_transform
                 .translation
                 .distance_squared(*player_translation);
-            (distance_squared <= L1_RADIUS_SQUARED
-                || distance_squared <= L2_RADIUS_SQUARED && frustum.intersects_obb_identity(&aabb))
+            (distance_squared <= Z1_RADIUS_SQUARED
+                || distance_squared <= Z2_RADIUS_SQUARED && frustum.intersects_obb_identity(&aabb))
             .then(|| (coord, chunk, (ChunkTag, chunk_transform)))
         })
         .collect();
@@ -469,8 +469,8 @@ fn spawn_chunks_from_source_task(
     (final_bundles_without_collider, final_bundles_with_collider)
 }
 
-//load chunks within L2 range that are also in the frustum. Triggered by changing frustum angle.
-pub fn l2_chunk_load(
+//load chunks within Z2 range that are also in the frustum. Triggered by changing frustum angle.
+pub fn z2_chunk_load(
     chunk_map: Res<ChunkMap>,
     player_transform: Single<&mut Transform, (With<PlayerTag>, Without<MainCameraTag>)>,
     mut chunk_generation_events: EventWriter<GenerateChunkEvent>,
@@ -478,14 +478,14 @@ pub fn l2_chunk_load(
     mut map_gen_tasks: ResMut<MyMapGenTasks>,
     mut load_chunk_tasks: ResMut<LoadChunkTasks>,
     chunk_index_map: Res<ChunkIndexMap>,
-    frustum: Single<&Frustum, With<MainCameraTag>>,
+    frustum: Single<&Frustum, (With<MainCameraTag>, Changed<Frustum>)>,
 ) {
     #[cfg(feature = "timers")]
     let start = std::time::Instant::now();
     let mut chunks_coords_to_generate = Vec::new();
     let mut chunk_coords_to_load = Vec::new();
-    let min_world_pos = player_transform.translation - Vec3::splat(L2_RADIUS);
-    let max_world_pos = player_transform.translation + Vec3::splat(L2_RADIUS);
+    let min_world_pos = player_transform.translation - Vec3::splat(Z2_RADIUS);
+    let max_world_pos = player_transform.translation + Vec3::splat(Z2_RADIUS);
     let min_chunk = world_pos_to_chunk_coord(&min_world_pos);
     let max_chunk = world_pos_to_chunk_coord(&max_world_pos);
     let mut aabb = Aabb {
@@ -500,7 +500,7 @@ pub fn l2_chunk_load(
                 let distance_squared =
                     chunk_world_pos.distance_squared(player_transform.translation);
                 aabb.center = chunk_world_pos.into();
-                if distance_squared <= L2_RADIUS_SQUARED && frustum.intersects_obb_identity(&aabb) {
+                if distance_squared <= Z2_RADIUS_SQUARED && frustum.intersects_obb_identity(&aabb) {
                     if !chunk_map.0.contains_key(&chunk_coord)
                         && !map_gen_tasks.chunks_being_generated.contains(&chunk_coord)
                         && !load_chunk_tasks.chunks_being_loaded.contains(&chunk_coord)
@@ -533,7 +533,7 @@ pub fn l2_chunk_load(
     {
         let duration = start.elapsed();
         if duration > std::time::Duration::from_micros(200) {
-            println!("{:<40} {:?}", "l2_chunk_load", duration);
+            println!("{:<40} {:?}", "z2_chunk_load", duration);
         }
     }
 }

@@ -10,7 +10,7 @@ use marching_cubes::{
     },
     terrain::{
         chunk_generator::generate_densities,
-        terrain::{L1_RADIUS_SQUARED, TerrainChunk, VOXELS_PER_CHUNK},
+        terrain::{Z1_RADIUS_SQUARED, TerrainChunk, VOXELS_PER_CHUNK},
     },
 };
 use std::collections::HashMap;
@@ -115,13 +115,13 @@ fn bench_iterate_exterior(c: &mut Criterion) {
                 let dx = x as f32 * CHUNK_SIZE as f32;
                 for y in -max_voxel..=max_voxel {
                     let dy = y as f32 * CHUNK_SIZE as f32;
-                    let r_sq_xy = L1_RADIUS_SQUARED - dx * dx - dy * dy;
+                    let r_sq_xy = Z1_RADIUS_SQUARED - dx * dx - dy * dy;
                     if r_sq_xy < 0.0 {
                         continue;
                     }
                     let max_z = (r_sq_xy.sqrt() / CHUNK_SIZE as f32).floor() as i32;
                     for z in -max_z..=max_z {
-                        if is_exterior_chunk(x, y, z, L1_RADIUS_SQUARED, CHUNK_SIZE) {
+                        if is_exterior_chunk(x, y, z, Z1_RADIUS_SQUARED, CHUNK_SIZE) {
                             count += 1;
                         }
                     }
