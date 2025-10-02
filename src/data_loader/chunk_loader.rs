@@ -4,7 +4,6 @@ use crate::terrain::terrain::{
     ChunkMap, HALF_CHUNK, L1_RADIUS_SQUARED, L2_RADIUS_SQUARED, TerrainChunk, VOXELS_PER_CHUNK,
     VoxelData,
 };
-use bevy::math::Affine3A;
 use bevy::prelude::*;
 use bevy::render::primitives::{Aabb, Frustum};
 use std::collections::HashMap;

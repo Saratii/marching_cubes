@@ -11,7 +11,7 @@ use bevy::{
         system::{Command, Commands, Res, ResMut, Single},
         world::{Mut, World},
     },
-    math::{Affine3A, Vec3, Vec3A},
+    math::{Vec3, Vec3A},
     pbr::{MeshMaterial3d, StandardMaterial},
     render::{
         mesh::{Mesh, Mesh3d},
