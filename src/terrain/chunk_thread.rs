@@ -35,8 +35,8 @@ use crate::{
         chunk_generator::{GenerateChunkEvent, LoadChunksEvent},
         terrain::{
             CUBES_PER_CHUNK_DIM, ChunkMap, ChunkTag, HALF_CHUNK, NoiseFunction,
-            SDF_VALUES_PER_CHUNK_DIM, StandardTerrainMaterialHandle, TerrainChunk,
-            Z1_RADIUS_SQUARED, Z2_RADIUS, Z2_RADIUS_SQUARED,
+            SDF_VALUES_PER_CHUNK_DIM, StandardTerrainMaterialHandle, TerrainChunk, Z1_RADIUS,
+            Z2_RADIUS, Z2_RADIUS_SQUARED,
         },
     },
 };
@@ -421,15 +421,21 @@ fn spawn_chunks_from_source_task(
         center: Vec3A::ZERO,
         half_extents: Vec3A::splat(HALF_CHUNK),
     };
+    let min_cube = *player_translation - Vec3::splat(Z1_RADIUS);
+    let max_cube = *player_translation + Vec3::splat(Z1_RADIUS);
     let material = MeshMaterial3d(material_handle.clone());
     let final_bundles_with_collider: Vec<_> = bundle_data_with_collider
         .into_iter()
         .filter_map(|(coord, chunk, mesh, chunk_transform, collider)| {
             aabb.center = chunk_transform.translation.into();
+            let pos = chunk_transform.translation;
             let distance_squared = chunk_transform
                 .translation
                 .distance_squared(*player_translation);
-            (distance_squared <= Z1_RADIUS_SQUARED
+            let inside_cube = (pos.x >= min_cube.x && pos.x <= max_cube.x)
+                && (pos.y >= min_cube.y && pos.y <= max_cube.y)
+                && (pos.z >= min_cube.z && pos.z <= max_cube.z);
+            (inside_cube
                 || distance_squared <= Z2_RADIUS_SQUARED && frustum.intersects_obb_identity(&aabb))
             .then(|| {
                 (
@@ -450,10 +456,14 @@ fn spawn_chunks_from_source_task(
         .into_iter()
         .filter_map(|(coord, chunk, chunk_transform)| {
             aabb.center = chunk_transform.translation.into();
+            let pos = chunk_transform.translation;
+            let inside_cube = (pos.x >= min_cube.x && pos.x <= max_cube.x)
+                && (pos.y >= min_cube.y && pos.y <= max_cube.y)
+                && (pos.z >= min_cube.z && pos.z <= max_cube.z);
             let distance_squared = chunk_transform
                 .translation
                 .distance_squared(*player_translation);
-            (distance_squared <= Z1_RADIUS_SQUARED
+            (inside_cube
                 || distance_squared <= Z2_RADIUS_SQUARED && frustum.intersects_obb_identity(&aabb))
             .then(|| (coord, chunk, (ChunkTag, chunk_transform)))
         })

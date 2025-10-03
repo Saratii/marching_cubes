@@ -1,8 +1,7 @@
 use crate::conversions::chunk_coord_to_world_pos;
 use crate::player::player::{MainCameraTag, PlayerTag};
 use crate::terrain::terrain::{
-    ChunkMap, HALF_CHUNK, TerrainChunk, VOXELS_PER_CHUNK, VoxelData, Z1_RADIUS_SQUARED,
-    Z2_RADIUS_SQUARED,
+    ChunkMap, HALF_CHUNK, TerrainChunk, VOXELS_PER_CHUNK, VoxelData, Z1_RADIUS, Z2_RADIUS_SQUARED,
 };
 use bevy::prelude::*;
 use bevy::render::primitives::{Aabb, Frustum};
@@ -154,11 +153,16 @@ pub fn try_deallocate(
         center: Vec3A::ZERO,
         half_extents: Vec3A::splat(HALF_CHUNK),
     };
+    let min_z1_cube = player_position.translation - Vec3::splat(Z1_RADIUS);
+    let max_z1_cube = player_position.translation + Vec3::splat(Z1_RADIUS);
     chunk_map.0.retain(|chunk_coord, (entity, _chunk)| {
         let chunk_world_pos = chunk_coord_to_world_pos(chunk_coord);
         let distance_squared = chunk_world_pos.distance_squared(player_position.translation);
-        if distance_squared <= Z1_RADIUS_SQUARED {
-            if chunk_coord.1 == 0 && chunk_coord.0.abs() > 2 && chunk_coord.2.abs() > 2 {}
+        let inside_cube = (chunk_world_pos.x >= min_z1_cube.x
+            && chunk_world_pos.x <= max_z1_cube.x)
+            && (chunk_world_pos.y >= min_z1_cube.y && chunk_world_pos.y <= max_z1_cube.y)
+            && (chunk_world_pos.z >= min_z1_cube.z && chunk_world_pos.z <= max_z1_cube.z);
+        if inside_cube {
             return true;
         }
         if distance_squared <= Z2_RADIUS_SQUARED {
