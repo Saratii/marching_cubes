@@ -7,12 +7,12 @@ use bevy::{
 use bevy_rapier3d::prelude::*;
 
 use crate::{
-    conversions::{chunk_coord_to_world_pos, world_pos_to_chunk_coord},
+    conversions::world_pos_to_chunk_coord,
     data_loader::chunk_loader::ChunkIndexMap,
     terrain::{
         chunk_generator::{GenerateChunkEvent, LoadChunksEvent},
         chunk_thread::{LoadChunkTasks, MyMapGenTasks},
-        terrain::{ChunkMap, Z1_RADIUS, Z1_RADIUS_SQUARED},
+        terrain::{ChunkMap, Z1_RADIUS},
     },
 };
 
@@ -351,24 +351,19 @@ pub fn z1_chunk_load(
         for chunk_z in min_chunk.2..=max_chunk.2 {
             for chunk_y in min_chunk.1..=max_chunk.1 {
                 let chunk_coord = (chunk_x, chunk_y, chunk_z);
-                let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
-                if chunk_world_pos.distance_squared(player_transform.translation)
-                    <= Z1_RADIUS_SQUARED
+                if !chunk_map.0.contains_key(&chunk_coord)
+                    && !map_gen_tasks.chunks_being_generated.contains(&chunk_coord)
+                    && !load_chunk_tasks.chunks_being_loaded.contains(&chunk_coord)
                 {
-                    if !chunk_map.0.contains_key(&chunk_coord)
-                        && !map_gen_tasks.chunks_being_generated.contains(&chunk_coord)
-                        && !load_chunk_tasks.chunks_being_loaded.contains(&chunk_coord)
-                    {
-                        let chunk_index_map = chunk_index_map.0.lock().unwrap();
-                        if chunk_index_map.contains_key(&chunk_coord) {
-                            chunk_coords_to_load.push(chunk_coord);
-                            load_chunk_tasks.chunks_being_loaded.insert(chunk_coord);
-                        } else {
-                            chunks_coords_to_generate.push(chunk_coord);
-                            map_gen_tasks.chunks_being_generated.insert(chunk_coord);
-                        }
-                        drop(chunk_index_map);
+                    let chunk_index_map = chunk_index_map.0.lock().unwrap();
+                    if chunk_index_map.contains_key(&chunk_coord) {
+                        chunk_coords_to_load.push(chunk_coord);
+                        load_chunk_tasks.chunks_being_loaded.insert(chunk_coord);
+                    } else {
+                        chunks_coords_to_generate.push(chunk_coord);
+                        map_gen_tasks.chunks_being_generated.insert(chunk_coord);
                     }
+                    drop(chunk_index_map);
                 }
             }
         }

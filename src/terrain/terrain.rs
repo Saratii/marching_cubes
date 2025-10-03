@@ -216,54 +216,50 @@ pub fn spawn_initial_chunks(
         for chunk_z in min_chunk.2..=max_chunk.2 {
             for chunk_y in min_chunk.1..=max_chunk.1 {
                 let chunk_coord = (chunk_x, chunk_y, chunk_z);
-                let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
-                if chunk_world_pos.distance_squared(PLAYER_SPAWN) <= Z1_RADIUS_SQUARED {
-                    let mut locked_index_map = chunk_index_map.0.lock().unwrap();
-                    let mut data_file = chunk_data_file.0.lock().unwrap();
-                    let mut index_file = index_file.0.lock().unwrap();
-                    let terrain_chunk = if locked_index_map.contains_key(&chunk_coord) {
-                        load_chunk_data(&mut data_file, &mut locked_index_map, &chunk_coord)
-                    } else {
-                        let chunk = TerrainChunk::new(chunk_coord, &fbm.0);
-                        create_chunk_file_data(
-                            &chunk,
-                            chunk_coord,
-                            &mut locked_index_map,
-                            &mut data_file,
-                            &mut index_file,
-                        );
-                        chunk
-                    };
-                    drop(data_file);
-                    drop(locked_index_map);
-                    drop(index_file);
-                    let mesh = march_cubes(
-                        &terrain_chunk.sdfs,
-                        CUBES_PER_CHUNK_DIM,
-                        SDF_VALUES_PER_CHUNK_DIM,
+                let mut locked_index_map = chunk_index_map.0.lock().unwrap();
+                let mut data_file = chunk_data_file.0.lock().unwrap();
+                let mut index_file = index_file.0.lock().unwrap();
+                let terrain_chunk = if locked_index_map.contains_key(&chunk_coord) {
+                    load_chunk_data(&mut data_file, &mut locked_index_map, &chunk_coord)
+                } else {
+                    let chunk = TerrainChunk::new(chunk_coord, &fbm.0);
+                    create_chunk_file_data(
+                        &chunk,
+                        chunk_coord,
+                        &mut locked_index_map,
+                        &mut data_file,
+                        &mut index_file,
                     );
-                    let transform =
-                        Transform::from_translation(chunk_coord_to_world_pos(&chunk_coord));
-                    let entity: Entity = if mesh.count_vertices() > 0 {
-                        let collider = Collider::from_bevy_mesh(
-                            &mesh,
-                            &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
-                        )
-                        .unwrap();
-                        commands
-                            .spawn((
-                                Mesh3d(meshes.add(mesh)),
-                                MeshMaterial3d(standard_material.0.clone()),
-                                ChunkTag,
-                                transform,
-                                collider,
-                            ))
-                            .id()
-                    } else {
-                        commands.spawn((ChunkTag, transform)).id()
-                    };
-                    chunk_map.0.insert(chunk_coord, (entity, terrain_chunk));
-                }
+                    chunk
+                };
+                drop(data_file);
+                drop(locked_index_map);
+                drop(index_file);
+                let mesh = march_cubes(
+                    &terrain_chunk.sdfs,
+                    CUBES_PER_CHUNK_DIM,
+                    SDF_VALUES_PER_CHUNK_DIM,
+                );
+                let transform = Transform::from_translation(chunk_coord_to_world_pos(&chunk_coord));
+                let entity: Entity = if mesh.count_vertices() > 0 {
+                    let collider = Collider::from_bevy_mesh(
+                        &mesh,
+                        &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
+                    )
+                    .unwrap();
+                    commands
+                        .spawn((
+                            Mesh3d(meshes.add(mesh)),
+                            MeshMaterial3d(standard_material.0.clone()),
+                            ChunkTag,
+                            transform,
+                            collider,
+                        ))
+                        .id()
+                } else {
+                    commands.spawn((ChunkTag, transform)).id()
+                };
+                chunk_map.0.insert(chunk_coord, (entity, terrain_chunk));
             }
         }
     }
