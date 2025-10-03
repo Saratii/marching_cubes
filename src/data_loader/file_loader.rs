@@ -85,10 +85,7 @@ pub fn update_chunk_file_data(
     data_file.write_all(&buffer).unwrap();
 }
 
-pub fn load_chunk_data(
-    data_file: &mut File,
-    byte_offset: u64,
-) -> TerrainChunk {
+pub fn load_chunk_data(data_file: &mut File, byte_offset: u64) -> TerrainChunk {
     let total_size = VOXELS_PER_CHUNK * 4 + VOXELS_PER_CHUNK; //sdfs + materials
     data_file.seek(SeekFrom::Start(byte_offset)).unwrap();
     let mut buffer = vec![0u8; total_size];

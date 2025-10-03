@@ -1,10 +1,16 @@
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     fs::OpenOptions,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
-use bevy::prelude::*;
+use bevy::{
+    prelude::*,
+    render::primitives::{Aabb, Frustum},
+};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use fastnoise2::{
@@ -16,9 +22,13 @@ use crate::{
     conversions::chunk_coord_to_world_pos,
     data_loader::file_loader::{ChunkIndexMap, create_chunk_file_data, load_chunk_data},
     marching_cubes::march_cubes,
-    terrain::terrain::{
-        CUBES_PER_CHUNK_DIM, ChunkClusterMap, ChunkTag, SDF_VALUES_PER_CHUNK_DIM,
-        StandardTerrainMaterialHandle, TerrainChunk,
+    player::player::{MainCameraTag, PlayerTag},
+    terrain::{
+        lod_zones::{in_zone_1, in_zone_2},
+        terrain::{
+            CUBES_PER_CHUNK_DIM, ChunkClusterMap, ChunkTag, HALF_CHUNK, SDF_VALUES_PER_CHUNK_DIM,
+            StandardTerrainMaterialHandle, TerrainChunk,
+        },
     },
 };
 
@@ -29,13 +39,14 @@ pub struct ChunkChannels {
 }
 
 #[derive(Resource)]
-pub struct ChunksBeingLoaded(pub HashSet<(i16, i16, i16)>);
+pub struct ChunksBeingLoaded(pub HashMap<(i16, i16, i16), Arc<AtomicBool>>);
 
 //level 0: full detail, returns TerrainChunk and collider
 //level n: full/(2^n) detail, no persistant data besides mesh
 pub struct ChunkRequest {
     pub position: (i16, i16, i16),
     pub level: u8,
+    pub canceled: Arc<AtomicBool>,
 }
 
 pub struct ChunkResult {
@@ -51,7 +62,7 @@ pub fn setup_loading_thread(mut commands: Commands, index_map: Res<ChunkIndexMap
     let (res_tx, res_rx) = unbounded::<ChunkResult>();
     let index_map_arc: Arc<Mutex<std::collections::HashMap<(i16, i16, i16), u64>>> =
         Arc::clone(&index_map.0);
-    let chunks_being_loaded = HashSet::new();
+    let chunks_being_loaded = HashMap::new();
     std::thread::spawn(move || {
         let mut data_file = OpenOptions::new()
             .read(true)
@@ -67,8 +78,10 @@ pub fn setup_loading_thread(mut commands: Commands, index_map: Res<ChunkIndexMap
             (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build()
         }();
         for req in req_rx.iter() {
+            if req.canceled.load(Ordering::Relaxed) {
+                continue;
+            }
             let chunk_coord = req.position;
-
             let file_offset = {
                 let index_map_lock = index_map_arc.lock().unwrap();
                 index_map_lock.get(&chunk_coord).copied()
@@ -155,4 +168,27 @@ pub fn chunk_reciever(
         }
         chunks_being_loaded.0.remove(&result.chunk_coord);
     }
+}
+
+pub fn validate_loading_queue(
+    mut chunks_being_loaded: ResMut<ChunksBeingLoaded>,
+    player_transform: Single<&Transform, With<PlayerTag>>,
+    frustum: Single<&Frustum, With<MainCameraTag>>,
+) {
+    let player_position = player_transform.translation;
+    let mut aabb = Aabb {
+        center: Vec3A::ZERO,
+        half_extents: Vec3A::splat(HALF_CHUNK),
+    };
+    chunks_being_loaded.0.retain(|chunk_coord, canceled| {
+        let chunk_world_pos = chunk_coord_to_world_pos(chunk_coord);
+        if !in_zone_1(&player_position, &chunk_world_pos) {
+            aabb.center = chunk_world_pos.into();
+            if !in_zone_2(&aabb, &frustum) {
+                canceled.store(true, Ordering::Relaxed);
+                return false;
+            }
+        }
+        true
+    });
 }
