@@ -8,6 +8,7 @@ use bevy::pbr::PbrPlugin;
 use bevy::prelude::*;
 use bevy::render::diagnostic::RenderDiagnosticsPlugin;
 use bevy::render::primitives::Aabb;
+use bevy::render::view::NoFrustumCulling;
 use bevy::window::PresentMode;
 use bevy_rapier3d::plugin::{NoUserData, RapierPhysicsPlugin};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
@@ -23,7 +24,7 @@ use marching_cubes::data_loader::chunk_loader::{
 use marching_cubes::marching_cubes::march_cubes;
 use marching_cubes::player::player::{
     CameraController, KeyBindings, MainCameraTag, camera_look, camera_zoom, cursor_grab,
-    initial_grab_cursor, z1_chunk_load, player_movement, spawn_player, toggle_camera,
+    initial_grab_cursor, player_movement, spawn_player, toggle_camera, z1_chunk_load,
 };
 use marching_cubes::terrain::chunk_generator::{GenerateChunkEvent, LoadChunksEvent};
 use marching_cubes::terrain::chunk_thread::{
@@ -136,7 +137,7 @@ fn handle_digging_input(
     chunk_data_file: Res<ChunkDataFileReadWrite>,
     chunk_index_map: Res<ChunkIndexMap>,
     material_handle: Res<StandardTerrainMaterialHandle>,
-    mut solid_chunk_query: Query<(&mut Collider, &mut Mesh3d), With<ChunkTag>>,
+    mut solid_chunk_query: Query<(&mut Collider, &mut Mesh3d, Entity), With<ChunkTag>>,
     mut mesh_handles: ResMut<Assets<Mesh>>,
 ) {
     const DIG_STRENGTH: f32 = 0.1;
@@ -177,10 +178,11 @@ fn handle_digging_input(
                         .unwrap();
                         match solid_chunk_query.get_mut(*entity) {
                             //chunk geometry already existed
-                            Ok((mut collider_component, mut mesh_handle)) => {
+                            Ok((mut collider_component, mut mesh_handle, entity)) => {
                                 *collider_component = collider;
                                 mesh_handles.remove(&mesh_handle.0);
                                 *mesh_handle = Mesh3d(mesh_handles.add(new_mesh));
+                                commands.entity(entity).insert(NoFrustumCulling); //this is bad
                             }
                             //chunk geometry didn't exist before (was air)
                             Err(_) => {
@@ -192,6 +194,7 @@ fn handle_digging_input(
                                         center: chunk_coord_to_world_pos(&chunk_coord).into(),
                                         half_extents: Vec3A::splat(HALF_CHUNK),
                                     },
+                                    NoFrustumCulling, //this is bad
                                 ));
                             }
                         }
