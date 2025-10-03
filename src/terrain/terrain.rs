@@ -85,12 +85,80 @@ impl TerrainChunk {
     }
 }
 
+//where the key is the lower left corner of the cluster
 #[derive(Resource)]
-pub struct ChunkMap(pub HashMap<(i16, i16, i16), (Entity, TerrainChunk)>);
+pub struct ChunkClusterMap(HashMap<(i16, i16, i16), [Option<(Entity, TerrainChunk)>; 8]>);
 
-impl ChunkMap {
-    fn new() -> Self {
+impl ChunkClusterMap {
+    pub fn new() -> Self {
         Self { 0: HashMap::new() }
+    }
+
+    pub fn insert(&mut self, coord: (i16, i16, i16), entity: Entity, chunk: TerrainChunk) {
+        let cluster_x = coord.0 & !1;
+        let cluster_y = coord.1 & !1;
+        let cluster_z = coord.2 & !1;
+        let cluster_key = (cluster_x, cluster_y, cluster_z);
+        let local_x = (coord.0 & 1) as usize;
+        let local_y = (coord.1 & 1) as usize;
+        let local_z = (coord.2 & 1) as usize;
+        let index = (local_y << 2) | (local_z << 1) | local_x;
+        let cluster = self
+            .0
+            .entry(cluster_key)
+            .or_insert_with(|| std::array::from_fn(|_| None));
+        cluster[index] = Some((entity, chunk));
+    }
+
+    pub fn get(&self, coord: &(i16, i16, i16)) -> &(Entity, TerrainChunk) {
+        let cluster_x = coord.0 & !1;
+        let cluster_y = coord.1 & !1;
+        let cluster_z = coord.2 & !1;
+        let cluster_key = (cluster_x, cluster_y, cluster_z);
+        let local_x = (coord.0 & 1) as usize;
+        let local_y = (coord.1 & 1) as usize;
+        let local_z = (coord.2 & 1) as usize;
+        let index = (local_y << 2) | (local_z << 1) | local_x;
+        &self.0[&cluster_key][index]
+            .as_ref()
+            .expect(&format!("Chunk {:?} does not exist", coord))
+    }
+
+    pub fn contains(&self, coord: &(i16, i16, i16)) -> bool {
+        let cluster_key = (coord.0 & !1, coord.1 & !1, coord.2 & !1);
+        let local_x: usize = (coord.0 & 1) as usize;
+        let local_y = (coord.1 & 1) as usize;
+        let local_z = (coord.2 & 1) as usize;
+        let index = (local_y << 2) | (local_z << 1) | local_x;
+        self.0
+            .get(&cluster_key)
+            .map_or(false, |cluster| cluster[index].is_some())
+    }
+
+    pub fn remove(&mut self, coord: (i16, i16, i16)) {
+        let cluster_key = (coord.0 & !1, coord.1 & !1, coord.2 & !1);
+        let local_x = (coord.0 & 1) as usize;
+        let local_y = (coord.1 & 1) as usize;
+        let local_z = (coord.2 & 1) as usize;
+        let index = (local_y << 2) | (local_z << 1) | local_x;
+        let cluster = self.0.get_mut(&cluster_key).unwrap();
+        cluster[index] = None;
+        if cluster.iter().all(|slot| slot.is_none()) {
+            self.0.remove(&cluster_key);
+        }
+    }
+
+    pub fn iter(
+        &self,
+    ) -> impl Iterator<Item = (&(i16, i16, i16), &[Option<(Entity, TerrainChunk)>; 8])> {
+        self.0.iter()
+    }
+
+    pub fn retain(
+        &mut self,
+        f: impl FnMut(&(i16, i16, i16), &mut [Option<(Entity, TerrainChunk)>; 8]) -> bool,
+    ) {
+        self.0.retain(f)
     }
 
     pub fn dig_sphere(&mut self, center: Vec3, radius: f32, strength: f32) -> Vec<(i16, i16, i16)> {
@@ -103,9 +171,6 @@ impl ChunkMap {
             for chunk_y in min_chunk.1..=max_chunk.1 {
                 for chunk_z in min_chunk.2..=max_chunk.2 {
                     let chunk_coord = (chunk_x, chunk_y, chunk_z);
-                    if !self.0.contains_key(&chunk_coord) {
-                        continue;
-                    }
                     let chunk_center = chunk_coord_to_world_pos(&chunk_coord);
                     let chunk_modified = self.modify_chunk_voxels(
                         chunk_coord,
@@ -132,7 +197,19 @@ impl ChunkMap {
         strength: f32,
     ) -> bool {
         let mut chunk_modified = false;
-        if let Some((_, chunk)) = self.0.get_mut(&chunk_coord) {
+        let cluster_x = chunk_coord.0 & !1;
+        let cluster_y = chunk_coord.1 & !1;
+        let cluster_z = chunk_coord.2 & !1;
+        let cluster_key = (cluster_x, cluster_y, cluster_z);
+        let local_x = (chunk_coord.0 & 1) as usize;
+        let local_y = (chunk_coord.1 & 1) as usize;
+        let local_z = (chunk_coord.2 & 1) as usize;
+        let index = (local_y << 2) | (local_z << 1) | local_x;
+        if let Some((_, chunk)) = self
+            .0
+            .get_mut(&cluster_key)
+            .and_then(|cluster| cluster[index].as_mut())
+        {
             for z in 0..SDF_VALUES_PER_CHUNK_DIM {
                 for y in 0..SDF_VALUES_PER_CHUNK_DIM {
                     for x in 0..SDF_VALUES_PER_CHUNK_DIM {
@@ -146,8 +223,7 @@ impl ChunkMap {
                             let dig_amount = strength * falloff;
                             let current_density =
                                 chunk.get_mut_density(x as u32, y as u32, z as u32);
-                            let density_sum = current_density.sdf;
-                            if density_sum > 0.0 {
+                            if current_density.sdf > 0.0 {
                                 current_density.sdf -= dig_amount;
                                 chunk_modified = true;
                             }
@@ -183,7 +259,7 @@ pub fn setup_map(
         base_color_texture: Some(atlas_texture_handle.clone()),
         ..default()
     });
-    commands.insert_resource(ChunkMap::new());
+    commands.insert_resource(ChunkClusterMap::new());
     commands.insert_resource(NoiseFunction(Arc::new(fbm)));
     commands.insert_resource(StandardTerrainMaterialHandle(
         standard_terrain_material_handle,
@@ -194,7 +270,7 @@ pub fn setup_map(
 pub fn spawn_initial_chunks(
     mut commands: Commands,
     chunk_index_map: Res<ChunkIndexMap>,
-    mut chunk_map: ResMut<ChunkMap>,
+    mut chunk_map: ResMut<ChunkClusterMap>,
     mut meshes: ResMut<Assets<Mesh>>,
     standard_material: Res<StandardTerrainMaterialHandle>,
     fbm: Res<NoiseFunction>,
@@ -259,7 +335,7 @@ pub fn spawn_initial_chunks(
                 } else {
                     commands.spawn((ChunkTag, transform)).id()
                 };
-                chunk_map.0.insert(chunk_coord, (entity, terrain_chunk));
+                chunk_map.insert(chunk_coord, entity, terrain_chunk);
             }
         }
     }

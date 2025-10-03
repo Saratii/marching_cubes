@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::process::exit;
 
 use bevy::diagnostic::{
     EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin, SystemInformationDiagnosticsPlugin,
@@ -32,7 +31,7 @@ use marching_cubes::terrain::chunk_thread::{
     spawn_generated_chunks, spawn_loaded_chunks, z2_chunk_load,
 };
 use marching_cubes::terrain::terrain::{
-    CUBES_PER_CHUNK_DIM, ChunkMap, ChunkTag, HALF_CHUNK, SDF_VALUES_PER_CHUNK_DIM,
+    CUBES_PER_CHUNK_DIM, ChunkClusterMap, ChunkTag, HALF_CHUNK, SDF_VALUES_PER_CHUNK_DIM,
     StandardTerrainMaterialHandle, setup_map, spawn_initial_chunks,
 };
 use rayon::ThreadPoolBuilder;
@@ -109,7 +108,6 @@ fn main() {
                     .after(spawn_generated_chunks),
             ),
         )
-        .add_systems(PostUpdate, dangle_check)
         .run();
 }
 
@@ -130,7 +128,7 @@ fn handle_digging_input(
     mouse_input: Res<ButtonInput<MouseButton>>,
     camera_query: Query<(&Camera, &GlobalTransform), With<MainCameraTag>>,
     window: Single<&Window>,
-    mut chunk_map: ResMut<ChunkMap>,
+    mut chunk_map: ResMut<ChunkClusterMap>,
     mut commands: Commands,
     mut dig_timer: Local<f32>,
     time: Res<Time>,
@@ -166,7 +164,7 @@ fn handle_digging_input(
                     return;
                 }
                 for chunk_coord in modified_chunks {
-                    let (entity, chunk) = chunk_map.0.get(&chunk_coord).unwrap();
+                    let (entity, chunk) = chunk_map.get(&chunk_coord);
                     let new_mesh =
                         march_cubes(&chunk.sdfs, CUBES_PER_CHUNK_DIM, SDF_VALUES_PER_CHUNK_DIM);
                     let vertex_count = new_mesh.count_vertices();
@@ -259,7 +257,7 @@ fn screen_to_world_ray(
     cursor_pos: Vec2,
     camera: &Camera,
     camera_transform: &GlobalTransform,
-    chunk_map: &ResMut<ChunkMap>,
+    chunk_map: &ChunkClusterMap,
 ) -> Option<(Entity, Vec3, Vec3, (i16, i16, i16))> {
     let ray = camera
         .viewport_to_world(camera_transform, cursor_pos)
@@ -272,30 +270,13 @@ fn screen_to_world_ray(
     while distance_traveled < max_distance {
         let current_pos = ray_origin + ray_direction * distance_traveled;
         let chunk_coord = world_pos_to_chunk_coord(&current_pos);
-        if let Some(chunk) = chunk_map.0.get(&chunk_coord) {
-            let voxel_idx = world_pos_to_voxel_index(&current_pos, &chunk_coord);
-            let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
-            if chunk.1.is_solid(voxel_idx.0, voxel_idx.1, voxel_idx.2) {
-                return Some((chunk.0, current_pos, chunk_world_pos, chunk_coord));
-            }
+        let chunk = chunk_map.get(&chunk_coord);
+        let voxel_idx = world_pos_to_voxel_index(&current_pos, &chunk_coord);
+        let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
+        if chunk.1.is_solid(voxel_idx.0, voxel_idx.1, voxel_idx.2) {
+            return Some((chunk.0, current_pos, chunk_world_pos, chunk_coord));
         }
         distance_traveled += step_size;
     }
     None
-}
-
-pub fn dangle_check(query: Query<&Transform, With<ChunkTag>>, chunk_map: Res<ChunkMap>) {
-    for (i, (entity, _)) in chunk_map.0.iter() {
-        if query.get(*entity).is_err() {
-            println!("dangle detected at chunk coord {:?}", i);
-        }
-    }
-    for transform in query.iter() {
-        let pos = transform.translation;
-        let chunk_coord = world_pos_to_chunk_coord(&pos);
-        if !chunk_map.0.contains_key(&chunk_coord) {
-            println!("missing from map {:?}", chunk_coord);
-            exit(1);
-        }
-    }
 }
