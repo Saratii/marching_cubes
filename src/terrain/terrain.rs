@@ -1,6 +1,10 @@
 use std::{collections::HashMap, process::exit, sync::Arc};
 
-use bevy::prelude::*;
+use bevy::{
+    image::{ImageLoaderSettings, ImageSampler},
+    prelude::*,
+    render::render_resource::{AddressMode, SamplerDescriptor},
+};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
 use fastnoise2::{
     SafeNode,
@@ -45,6 +49,9 @@ pub struct VoxelData {
     pub sdf: f32,
     pub material: u8,
 }
+
+#[derive(Resource)]
+pub struct TextureAtlasHandle(pub Handle<Image>);
 
 #[derive(Component, Serialize, Deserialize)]
 pub struct TerrainChunk {
@@ -153,15 +160,35 @@ impl ChunkMap {
     }
 }
 
-pub fn setup_map(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>) {
+pub fn setup_map(
+    mut commands: Commands,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
+) {
+    let atlas_texture_handle: Handle<Image> = asset_server
+        .load_with_settings::<Image, ImageLoaderSettings>("texture_atlas.png", |settings| {
+            settings.sampler = ImageSampler::Descriptor(
+                SamplerDescriptor {
+                    address_mode_u: AddressMode::MirrorRepeat,
+                    address_mode_v: AddressMode::MirrorRepeat,
+                    address_mode_w: AddressMode::MirrorRepeat,
+                    ..Default::default()
+                }
+                .into(),
+            )
+        });
     let fbm =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
-    let standard_terrain_material_handle = materials.add(StandardMaterial { ..default() });
+    let standard_terrain_material_handle = materials.add(StandardMaterial {
+        base_color_texture: Some(atlas_texture_handle.clone()),
+        ..default()
+    });
     commands.insert_resource(ChunkMap::new());
     commands.insert_resource(NoiseFunction(Arc::new(fbm)));
     commands.insert_resource(StandardTerrainMaterialHandle(
         standard_terrain_material_handle,
     ));
+    commands.insert_resource(TextureAtlasHandle(atlas_texture_handle));
 }
 
 pub fn spawn_initial_chunks(

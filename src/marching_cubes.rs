@@ -38,6 +38,7 @@ struct VertexCache {
     edge_to_vertex: HashMap<EdgeId, u32>,
     vertices: Vec<Vec3>,
     colors: Vec<[f32; 4]>,
+    uvs: Vec<[f32; 2]>,
 }
 
 impl VertexCache {
@@ -46,29 +47,39 @@ impl VertexCache {
             edge_to_vertex: HashMap::new(),
             vertices: Vec::new(),
             colors: Vec::new(),
+            uvs: Vec::new(),
         }
     }
-    fn get_or_create_vertex(&mut self, edge_id: EdgeId, position: Vec3, color: [f32; 4]) -> u32 {
+
+    fn get_or_create_vertex(
+        &mut self,
+        edge_id: EdgeId,
+        position: Vec3,
+        color: [f32; 4],
+        material: u8,
+    ) -> u32 {
         if let Some(&vertex_index) = self.edge_to_vertex.get(&edge_id) {
             vertex_index
         } else {
             let vertex_index = self.vertices.len() as u32;
+            let uv = generate_uv_coordinates(position, material);
             self.vertices.push(position);
             self.colors.push(color);
+            self.uvs.push(uv);
             self.edge_to_vertex.insert(edge_id, vertex_index);
             vertex_index
         }
     }
 }
 
-fn voxel_color_from_index(
+fn voxel_data_from_index(
     cube_x: usize,
     cube_y: usize,
     cube_z: usize,
     corner: usize,
     sdf: &[VoxelData],
     sdf_values_per_chunk_dim: usize,
-) -> [f32; 4] {
+) -> ([f32; 4], u8) {
     let (dx, dy, dz) = match corner {
         0 => (0, 0, 0),
         1 => (1, 0, 0),
@@ -85,14 +96,15 @@ fn voxel_color_from_index(
     let z = cube_z + dz;
     let idx =
         z * sdf_values_per_chunk_dim * sdf_values_per_chunk_dim + y * sdf_values_per_chunk_dim + x;
-    match sdf[idx].material {
+    let material = sdf[idx].material;
+    let color = match material {
         1 => [73. / 255., 34. / 255., 1. / 255., 1.0], // dirt
         2 => [17. / 255., 124. / 255., 19. / 255., 1.0], // grass
         255 => [1.0, 0.0, 1.0, 1.0],                   // debug
-        num => {
-            panic!("{}", num);
-        }
-    }
+        num => panic!("{}", num),
+    };
+
+    (color, material)
 }
 
 pub fn march_cubes(
@@ -260,7 +272,7 @@ fn get_or_create_edge_vertex(
     let val1 = values[v1_idx];
     let position = interpolate_edge(edge_index, vertices, values);
     let solid_corner = if val1 >= 0.0 { v1_idx } else { v2_idx };
-    let color = voxel_color_from_index(
+    let (color, material) = voxel_data_from_index(
         cube_x,
         cube_y,
         cube_z,
@@ -268,7 +280,7 @@ fn get_or_create_edge_vertex(
         densities,
         sdf_values_per_chunk_dim,
     );
-    vertex_cache.get_or_create_vertex(edge_id, position, color)
+    vertex_cache.get_or_create_vertex(edge_id, position, color, material)
 }
 
 fn get_canonical_edge_id(edge_index: usize, cube_x: usize, cube_y: usize, cube_z: usize) -> EdgeId {
@@ -489,6 +501,7 @@ fn build_mesh_from_cache_and_indices(
     if vertex_cache.vertices.is_empty() {
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, Vec::<[f32; 3]>::new());
         mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, Vec::<[f32; 3]>::new());
+        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, Vec::<[f32; 2]>::new());
         mesh.insert_indices(Indices::U32(Vec::new()));
     } else {
         let positions: Vec<[f32; 3]> = vertex_cache
@@ -496,16 +509,32 @@ fn build_mesh_from_cache_and_indices(
             .iter()
             .map(|v| [v.x, v.y, v.z])
             .collect();
+
         let normals: Vec<[f32; 3]> = vertex_cache
             .vertices
             .iter()
             .map(|v| calculate_vertex_normal(*v, densities, sdf_values_per_chunk_dim).into())
             .collect();
-        let colors: Vec<[f32; 4]> = vertex_cache.colors;
+
+        let uvs: Vec<[f32; 2]> = vertex_cache.uvs;
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
         mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
         mesh.insert_indices(Indices::U32(indices));
     }
     mesh
+}
+
+fn wrap01(v: f32) -> f32 {
+    ((v % 1.0) + 1.0) % 1.0
+}
+
+fn generate_uv_coordinates(position: Vec3, material: u8) -> [f32; 2] {
+    let scale = 0.1;
+    let base_uv = [wrap01(position.x * scale), wrap01(position.z * scale)];
+    match material {
+        1 => [base_uv[0] * 0.5, base_uv[1]],       // dirt: left half
+        2 => [0.5 + base_uv[0] * 0.5, base_uv[1]], // grass: right half
+        _ => base_uv,
+    }
 }
