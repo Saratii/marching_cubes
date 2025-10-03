@@ -6,16 +6,6 @@ use bevy::{
 };
 use bevy_rapier3d::prelude::*;
 
-use crate::{
-    conversions::world_pos_to_chunk_coord,
-    data_loader::chunk_loader::ChunkIndexMap,
-    terrain::{
-        chunk_generator::{GenerateChunkEvent, LoadChunksEvent},
-        chunk_thread::{LoadChunkTasks, MyMapGenTasks},
-        terrain::{ChunkClusterMap, Z1_RADIUS},
-    },
-};
-
 const CAMERA_3RD_PERSON_OFFSET: Vec3 = Vec3 {
     x: 0.0,
     y: 5.0,
@@ -327,62 +317,5 @@ pub fn player_movement(
         }
         movement_vec.y = vertical_velocity.y;
         controller.translation = Some(movement_vec * time.delta_secs());
-    }
-}
-
-pub fn z1_chunk_load(
-    player_transform: Single<&Transform, (With<PlayerTag>, Changed<Transform>)>,
-    chunk_map: ResMut<ChunkClusterMap>,
-    mut chunk_generation_events: EventWriter<GenerateChunkEvent>,
-    mut map_gen_tasks: ResMut<MyMapGenTasks>,
-    chunk_index_map: Res<ChunkIndexMap>,
-    mut chunk_load_event_writer: EventWriter<LoadChunksEvent>,
-    mut load_chunk_tasks: ResMut<LoadChunkTasks>,
-) {
-    #[cfg(feature = "timers")]
-    let s = std::time::Instant::now();
-    let mut chunks_coords_to_generate = Vec::new();
-    let mut chunk_coords_to_load = Vec::new();
-    let min_world_pos = &player_transform.translation - Vec3::splat(Z1_RADIUS);
-    let max_world_pos = &player_transform.translation + Vec3::splat(Z1_RADIUS);
-    let min_chunk = world_pos_to_chunk_coord(&min_world_pos);
-    let max_chunk = world_pos_to_chunk_coord(&max_world_pos);
-    for chunk_x in min_chunk.0..=max_chunk.0 {
-        for chunk_z in min_chunk.2..=max_chunk.2 {
-            for chunk_y in min_chunk.1..=max_chunk.1 {
-                let chunk_coord = (chunk_x, chunk_y, chunk_z);
-                if !chunk_map.contains(&chunk_coord)
-                    && !map_gen_tasks.chunks_being_generated.contains(&chunk_coord)
-                    && !load_chunk_tasks.chunks_being_loaded.contains(&chunk_coord)
-                {
-                    let chunk_index_map = chunk_index_map.0.lock().unwrap();
-                    if chunk_index_map.contains_key(&chunk_coord) {
-                        chunk_coords_to_load.push(chunk_coord);
-                        load_chunk_tasks.chunks_being_loaded.insert(chunk_coord);
-                    } else {
-                        chunks_coords_to_generate.push(chunk_coord);
-                        map_gen_tasks.chunks_being_generated.insert(chunk_coord);
-                    }
-                    drop(chunk_index_map);
-                }
-            }
-        }
-    }
-    if !chunks_coords_to_generate.is_empty() {
-        chunk_generation_events.write(GenerateChunkEvent {
-            chunk_coords: chunks_coords_to_generate,
-        });
-    }
-    if !chunk_coords_to_load.is_empty() {
-        chunk_load_event_writer.write(LoadChunksEvent {
-            chunk_coords: chunk_coords_to_load,
-        });
-    }
-    #[cfg(feature = "timers")]
-    {
-        let duration = s.elapsed();
-        if duration > std::time::Duration::from_micros(200) {
-            println!("{:<40} {:?}", "z1_chunk_load", duration);
-        }
     }
 }

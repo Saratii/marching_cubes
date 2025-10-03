@@ -3598,6 +3598,7 @@ dependencies = [
  "bevy",
  "bevy_rapier3d",
  "criterion",
+ "crossbeam-channel",
  "fastnoise2",
  "flamegraph",
  "iyes_perf_ui",

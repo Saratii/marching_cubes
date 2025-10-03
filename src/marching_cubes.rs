@@ -108,7 +108,7 @@ fn voxel_data_from_index(
 }
 
 pub fn march_cubes(
-    densities: &[VoxelData],
+    sdfs: &[VoxelData],
     cubes_per_chunk_dim: usize,
     sdf_values_per_chunk_dim: usize,
 ) -> Mesh {
@@ -123,13 +123,13 @@ pub fn march_cubes(
                     z,
                     &mut vertex_cache,
                     &mut indices,
-                    densities,
+                    sdfs,
                     sdf_values_per_chunk_dim,
                 );
             }
         }
     }
-    build_mesh_from_cache_and_indices(vertex_cache, indices, densities, sdf_values_per_chunk_dim)
+    build_mesh_from_cache_and_indices(vertex_cache, indices, sdfs, sdf_values_per_chunk_dim)
 }
 
 fn calculate_cube_index(values: &[f32; 8]) -> u8 {

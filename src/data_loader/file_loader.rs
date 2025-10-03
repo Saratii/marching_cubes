@@ -56,7 +56,7 @@ pub fn deserialize_chunk_data(data: &[u8]) -> TerrainChunk {
 
 pub fn create_chunk_file_data(
     chunk: &TerrainChunk,
-    chunk_coord: (i16, i16, i16),
+    chunk_coord: &(i16, i16, i16),
     index_map: &mut HashMap<(i16, i16, i16), u64>,
     mut data_file: &File,
     mut index_file: &File,
@@ -70,7 +70,7 @@ pub fn create_chunk_file_data(
     index_buffer.extend_from_slice(&chunk_coord.2.to_le_bytes());
     index_buffer.extend_from_slice(&byte_offset.to_le_bytes());
     index_file.write_all(&index_buffer).unwrap();
-    index_map.insert(chunk_coord, byte_offset);
+    index_map.insert(*chunk_coord, byte_offset);
 }
 
 pub fn update_chunk_file_data(
@@ -87,10 +87,8 @@ pub fn update_chunk_file_data(
 
 pub fn load_chunk_data(
     data_file: &mut File,
-    index_map: &HashMap<(i16, i16, i16), u64>,
-    chunk_coord: &(i16, i16, i16),
+    byte_offset: u64,
 ) -> TerrainChunk {
-    let byte_offset = *index_map.get(chunk_coord).unwrap();
     let total_size = VOXELS_PER_CHUNK * 4 + VOXELS_PER_CHUNK; //sdfs + materials
     data_file.seek(SeekFrom::Start(byte_offset)).unwrap();
     let mut buffer = vec![0u8; total_size];
