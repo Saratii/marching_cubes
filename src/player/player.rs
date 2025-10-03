@@ -12,7 +12,7 @@ use crate::{
     terrain::{
         chunk_generator::{GenerateChunkEvent, LoadChunksEvent},
         chunk_thread::{LoadChunkTasks, MyMapGenTasks},
-        terrain::{ChunkMap, Z1_RADIUS},
+        terrain::{ChunkClusterMap, Z1_RADIUS},
     },
 };
 
@@ -332,7 +332,7 @@ pub fn player_movement(
 
 pub fn z1_chunk_load(
     player_transform: Single<&Transform, (With<PlayerTag>, Changed<Transform>)>,
-    chunk_map: ResMut<ChunkMap>,
+    chunk_map: ResMut<ChunkClusterMap>,
     mut chunk_generation_events: EventWriter<GenerateChunkEvent>,
     mut map_gen_tasks: ResMut<MyMapGenTasks>,
     chunk_index_map: Res<ChunkIndexMap>,
@@ -351,7 +351,7 @@ pub fn z1_chunk_load(
         for chunk_z in min_chunk.2..=max_chunk.2 {
             for chunk_y in min_chunk.1..=max_chunk.1 {
                 let chunk_coord = (chunk_x, chunk_y, chunk_z);
-                if !chunk_map.0.contains_key(&chunk_coord)
+                if !chunk_map.contains(&chunk_coord)
                     && !map_gen_tasks.chunks_being_generated.contains(&chunk_coord)
                     && !load_chunk_tasks.chunks_being_loaded.contains(&chunk_coord)
                 {

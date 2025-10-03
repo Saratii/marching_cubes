@@ -34,7 +34,7 @@ use crate::{
     terrain::{
         chunk_generator::{GenerateChunkEvent, LoadChunksEvent},
         terrain::{
-            CUBES_PER_CHUNK_DIM, ChunkMap, ChunkTag, HALF_CHUNK, NoiseFunction,
+            CUBES_PER_CHUNK_DIM, ChunkClusterMap, ChunkTag, HALF_CHUNK, NoiseFunction,
             SDF_VALUES_PER_CHUNK_DIM, StandardTerrainMaterialHandle, TerrainChunk, Z1_RADIUS,
             Z2_RADIUS, Z2_RADIUS_SQUARED,
         },
@@ -85,10 +85,9 @@ where
             bundles.push(bundle);
         }
         let entities: Vec<Entity> = world.spawn_batch(bundles).collect();
-        let mut chunk_map = world.get_resource_mut::<ChunkMap>().unwrap();
-        chunk_map.0.reserve(entities.len());
+        let mut chunk_map = world.get_resource_mut::<ChunkClusterMap>().unwrap();
         for ((coord, chunk_data), entity) in coords_chunks.into_iter().zip(entities) {
-            chunk_map.0.insert(coord, (entity, chunk_data));
+            chunk_map.insert(coord, entity, chunk_data);
         }
         #[cfg(feature = "timers")]
         {
@@ -124,12 +123,10 @@ where
             .collect();
         // Batch spawn bundles
         let entities: Vec<Entity> = world.spawn_batch(bundles).collect();
-        let mut chunk_map = world.get_resource_mut::<ChunkMap>().unwrap();
-        //preallocated hashsmap
-        chunk_map.0.reserve(entities.len());
+        let mut chunk_map = world.get_resource_mut::<ChunkClusterMap>().unwrap();
         // Pair entities with coords/chunks without separate zipping of pre-existing vecs
         for ((coord, chunk), entity) in coords_chunks.into_iter().zip(entities) {
-            chunk_map.0.insert(coord, (entity, chunk));
+            chunk_map.insert(coord, entity, chunk);
         }
         #[cfg(feature = "timers")]
         {
@@ -481,7 +478,7 @@ fn spawn_chunks_from_source_task(
 
 //load chunks within Z2 range that are also in the frustum. Triggered by changing frustum angle.
 pub fn z2_chunk_load(
-    chunk_map: Res<ChunkMap>,
+    chunk_map: Res<ChunkClusterMap>,
     player_transform: Single<&mut Transform, (With<PlayerTag>, Without<MainCameraTag>)>,
     mut chunk_generation_events: EventWriter<GenerateChunkEvent>,
     mut chunk_load_event_writer: EventWriter<LoadChunksEvent>,
@@ -512,7 +509,7 @@ pub fn z2_chunk_load(
                 let distance_squared = chunk_world_pos.distance_squared(player_pos);
                 aabb.center = chunk_world_pos.into();
                 if distance_squared <= Z2_RADIUS_SQUARED && frustum.intersects_obb_identity(&aabb) {
-                    if !chunk_map.0.contains_key(&chunk_coord)
+                    if !chunk_map.contains(&chunk_coord)
                         && !map_gen_tasks.chunks_being_generated.contains(&chunk_coord)
                         && !load_chunk_tasks.chunks_being_loaded.contains(&chunk_coord)
                     {
