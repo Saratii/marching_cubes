@@ -4,13 +4,13 @@ use fastnoise2::{
     generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
 };
 use marching_cubes::{
-    data_loader::chunk_loader::{
+    data_loader::file_loader::{
         create_chunk_file_data, deserialize_chunk_data, load_chunk_data, load_chunk_index_map,
         update_chunk_file_data,
     },
     terrain::{
         chunk_generator::generate_densities,
-        terrain::{Z1_RADIUS_SQUARED, TerrainChunk, VOXELS_PER_CHUNK},
+        terrain::{TerrainChunk, VOXELS_PER_CHUNK, Z1_RADIUS_SQUARED},
     },
 };
 use std::collections::HashMap;
@@ -35,12 +35,12 @@ fn benchmark_load_chunk_data(c: &mut Criterion) {
         .open("data/chunk_data.txt")
         .unwrap();
     let index_map = load_chunk_index_map(&index_file);
+    let offset = index_map.get(&(0, 0, 0)).unwrap();
     c.bench_function("load_chunk_data_single_chunk", |b| {
         b.iter(|| {
             let chunk = load_chunk_data(
                 black_box(&mut data_file),
-                black_box(&index_map),
-                black_box(&(0, -5, 0)),
+                black_box(*offset),
             );
             black_box(chunk);
         })
@@ -59,7 +59,8 @@ fn benchmark_update_chunk_data(c: &mut Criterion) {
         .unwrap();
     let index_map = load_chunk_index_map(&index_file);
     let first_chunk_coord = *index_map.keys().next().unwrap();
-    let chunk = load_chunk_data(&mut data_file, &index_map, &first_chunk_coord);
+    let file_offset = index_map.get(&first_chunk_coord).unwrap();
+    let chunk = load_chunk_data(&mut data_file, *file_offset);
     c.bench_function("update_chunk_file_data_single_chunk", |b| {
         b.iter(|| {
             update_chunk_file_data(
@@ -95,7 +96,7 @@ fn benchmark_create_chunk_file_data(c: &mut Criterion) {
         b.iter(|| {
             create_chunk_file_data(
                 black_box(&terrain_chunk),
-                black_box(chunk_coord),
+                black_box(&chunk_coord),
                 black_box(&mut index_map),
                 black_box(&data_file),
                 black_box(&index_file),

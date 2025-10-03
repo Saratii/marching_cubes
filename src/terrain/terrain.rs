@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     conversions::{chunk_coord_to_world_pos, flatten_index, world_pos_to_chunk_coord},
-    data_loader::chunk_loader::{
+    data_loader::file_loader::{
         ChunkDataFileReadWrite, ChunkIndexFile, ChunkIndexMap, create_chunk_file_data,
         load_chunk_data,
     },
@@ -87,14 +87,14 @@ impl TerrainChunk {
 
 //where the key is the lower left corner of the cluster
 #[derive(Resource)]
-pub struct ChunkClusterMap(HashMap<(i16, i16, i16), [Option<(Entity, TerrainChunk)>; 8]>);
+pub struct ChunkClusterMap(HashMap<(i16, i16, i16), [Option<(Entity, Option<TerrainChunk>)>; 8]>);
 
 impl ChunkClusterMap {
     pub fn new() -> Self {
         Self { 0: HashMap::new() }
     }
 
-    pub fn insert(&mut self, coord: (i16, i16, i16), entity: Entity, chunk: TerrainChunk) {
+    pub fn insert(&mut self, coord: (i16, i16, i16), entity: Entity, chunk: Option<TerrainChunk>) {
         let cluster_x = coord.0 & !1;
         let cluster_y = coord.1 & !1;
         let cluster_z = coord.2 & !1;
@@ -110,7 +110,7 @@ impl ChunkClusterMap {
         cluster[index] = Some((entity, chunk));
     }
 
-    pub fn get(&self, coord: &(i16, i16, i16)) -> &(Entity, TerrainChunk) {
+    pub fn get(&self, coord: &(i16, i16, i16)) -> &(Entity, Option<TerrainChunk>) {
         let cluster_x = coord.0 & !1;
         let cluster_y = coord.1 & !1;
         let cluster_z = coord.2 & !1;
@@ -150,13 +150,18 @@ impl ChunkClusterMap {
 
     pub fn iter(
         &self,
-    ) -> impl Iterator<Item = (&(i16, i16, i16), &[Option<(Entity, TerrainChunk)>; 8])> {
+    ) -> impl Iterator<
+        Item = (
+            &(i16, i16, i16),
+            &[Option<(Entity, Option<TerrainChunk>)>; 8],
+        ),
+    > {
         self.0.iter()
     }
 
     pub fn retain(
         &mut self,
-        f: impl FnMut(&(i16, i16, i16), &mut [Option<(Entity, TerrainChunk)>; 8]) -> bool,
+        f: impl FnMut(&(i16, i16, i16), &mut [Option<(Entity, Option<TerrainChunk>)>; 8]) -> bool,
     ) {
         self.0.retain(f)
     }
@@ -205,7 +210,7 @@ impl ChunkClusterMap {
         let local_y = (chunk_coord.1 & 1) as usize;
         let local_z = (chunk_coord.2 & 1) as usize;
         let index = (local_y << 2) | (local_z << 1) | local_x;
-        if let Some((_, chunk)) = self
+        if let Some((_, Some(chunk))) = self
             .0
             .get_mut(&cluster_key)
             .and_then(|cluster| cluster[index].as_mut())
@@ -292,24 +297,28 @@ pub fn spawn_initial_chunks(
         for chunk_z in min_chunk.2..=max_chunk.2 {
             for chunk_y in min_chunk.1..=max_chunk.1 {
                 let chunk_coord = (chunk_x, chunk_y, chunk_z);
-                let mut locked_index_map = chunk_index_map.0.lock().unwrap();
+                let file_offset = {
+                    let index_map_lock = chunk_index_map.0.lock().unwrap();
+                    index_map_lock.get(&chunk_coord).copied()
+                };
                 let mut data_file = chunk_data_file.0.lock().unwrap();
                 let mut index_file = index_file.0.lock().unwrap();
-                let terrain_chunk = if locked_index_map.contains_key(&chunk_coord) {
-                    load_chunk_data(&mut data_file, &mut locked_index_map, &chunk_coord)
+                let terrain_chunk = if let Some(offset) = file_offset {
+                    load_chunk_data(&mut data_file, offset)
                 } else {
+                    let mut index_map_lock = chunk_index_map.0.lock().unwrap();
                     let chunk = TerrainChunk::new(chunk_coord, &fbm.0);
                     create_chunk_file_data(
                         &chunk,
-                        chunk_coord,
-                        &mut locked_index_map,
+                        &chunk_coord,
+                        &mut index_map_lock,
                         &mut data_file,
                         &mut index_file,
                     );
+                    drop(index_map_lock);
                     chunk
                 };
                 drop(data_file);
-                drop(locked_index_map);
                 drop(index_file);
                 let mesh = march_cubes(
                     &terrain_chunk.sdfs,
@@ -335,7 +344,7 @@ pub fn spawn_initial_chunks(
                 } else {
                     commands.spawn((ChunkTag, transform)).id()
                 };
-                chunk_map.insert(chunk_coord, entity, terrain_chunk);
+                chunk_map.insert(chunk_coord, entity, Some(terrain_chunk));
             }
         }
     }
@@ -375,7 +384,7 @@ pub fn generate_large_map_utility(
                         let mut index_file = index_file.0.lock().unwrap();
                         create_chunk_file_data(
                             &chunk,
-                            chunk_coord,
+                            &chunk_coord,
                             &mut locked_index_map,
                             &mut data_file,
                             &mut index_file,

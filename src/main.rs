@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use bevy::diagnostic::{
     EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin, SystemInformationDiagnosticsPlugin,
 };
@@ -16,20 +14,18 @@ use iyes_perf_ui::prelude::PerfUiDefaultEntries;
 use marching_cubes::conversions::{
     chunk_coord_to_world_pos, world_pos_to_chunk_coord, world_pos_to_voxel_index,
 };
-use marching_cubes::data_loader::chunk_loader::{
+use marching_cubes::data_loader::file_loader::{
     ChunkDataFileReadWrite, ChunkIndexMap, setup_chunk_loading, try_deallocate,
     update_chunk_file_data,
 };
+use marching_cubes::data_loader::driver::{chunk_reciever, setup_loading_thread};
 use marching_cubes::marching_cubes::march_cubes;
 use marching_cubes::player::player::{
     CameraController, KeyBindings, MainCameraTag, camera_look, camera_zoom, cursor_grab,
-    initial_grab_cursor, player_movement, spawn_player, toggle_camera, z1_chunk_load,
+    initial_grab_cursor, player_movement, spawn_player, toggle_camera,
 };
 use marching_cubes::terrain::chunk_generator::{GenerateChunkEvent, LoadChunksEvent};
-use marching_cubes::terrain::chunk_thread::{
-    LoadChunkTasks, MyMapGenTasks, catch_chunk_generation_request, catch_load_generation_request,
-    spawn_generated_chunks, spawn_loaded_chunks, z2_chunk_load,
-};
+use marching_cubes::terrain::lod_zones::{z1_chunk_load, z2_chunk_load};
 use marching_cubes::terrain::terrain::{
     CUBES_PER_CHUNK_DIM, ChunkClusterMap, ChunkTag, HALF_CHUNK, SDF_VALUES_PER_CHUNK_DIM,
     StandardTerrainMaterialHandle, setup_map, spawn_initial_chunks,
@@ -44,14 +40,6 @@ fn main() {
     App::new()
         .insert_resource(KeyBindings::default())
         .insert_resource(CameraController::default())
-        .insert_resource(MyMapGenTasks {
-            generation_tasks: Vec::new(),
-            chunks_being_generated: HashSet::new(),
-        })
-        .insert_resource(LoadChunkTasks {
-            loading_tasks: Vec::new(),
-            chunks_being_loaded: HashSet::new(),
-        })
         .add_event::<LoadChunksEvent>()
         .add_event::<GenerateChunkEvent>()
         .add_plugins((
@@ -75,6 +63,7 @@ fn main() {
         .add_systems(
             Startup,
             (
+                setup_loading_thread.after(setup_chunk_loading),
                 setup,
                 setup_map,
                 setup_crosshair,
@@ -95,17 +84,8 @@ fn main() {
                 player_movement,
                 z2_chunk_load,
                 z1_chunk_load,
-                catch_load_generation_request
-                    .after(z1_chunk_load)
-                    .after(z2_chunk_load),
-                catch_chunk_generation_request
-                    .after(z1_chunk_load)
-                    .after(z2_chunk_load),
-                spawn_generated_chunks.after(catch_chunk_generation_request),
-                spawn_loaded_chunks.after(catch_load_generation_request),
-                try_deallocate
-                    .after(spawn_loaded_chunks)
-                    .after(spawn_generated_chunks),
+                chunk_reciever.after(z2_chunk_load),
+                try_deallocate.after(chunk_reciever),
             ),
         )
         .run();
@@ -165,6 +145,7 @@ fn handle_digging_input(
                 }
                 for chunk_coord in modified_chunks {
                     let (entity, chunk) = chunk_map.get(&chunk_coord);
+                    let chunk = chunk.as_ref().unwrap();
                     let new_mesh =
                         march_cubes(&chunk.sdfs, CUBES_PER_CHUNK_DIM, SDF_VALUES_PER_CHUNK_DIM);
                     let vertex_count = new_mesh.count_vertices();
@@ -273,7 +254,12 @@ fn screen_to_world_ray(
         let chunk = chunk_map.get(&chunk_coord);
         let voxel_idx = world_pos_to_voxel_index(&current_pos, &chunk_coord);
         let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
-        if chunk.1.is_solid(voxel_idx.0, voxel_idx.1, voxel_idx.2) {
+        if chunk
+            .1
+            .as_ref()
+            .unwrap()
+            .is_solid(voxel_idx.0, voxel_idx.1, voxel_idx.2)
+        {
             return Some((chunk.0, current_pos, chunk_world_pos, chunk_coord));
         }
         distance_traveled += step_size;
