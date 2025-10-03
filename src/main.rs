@@ -14,11 +14,13 @@ use iyes_perf_ui::prelude::PerfUiDefaultEntries;
 use marching_cubes::conversions::{
     chunk_coord_to_world_pos, world_pos_to_chunk_coord, world_pos_to_voxel_index,
 };
+use marching_cubes::data_loader::driver::{
+    chunk_reciever, setup_loading_thread, validate_loading_queue,
+};
 use marching_cubes::data_loader::file_loader::{
     ChunkDataFileReadWrite, ChunkIndexMap, setup_chunk_loading, try_deallocate,
     update_chunk_file_data,
 };
-use marching_cubes::data_loader::driver::{chunk_reciever, setup_loading_thread};
 use marching_cubes::marching_cubes::march_cubes;
 use marching_cubes::player::player::{
     CameraController, KeyBindings, MainCameraTag, camera_look, camera_zoom, cursor_grab,
@@ -84,8 +86,9 @@ fn main() {
                 player_movement,
                 z2_chunk_load,
                 z1_chunk_load,
-                chunk_reciever.after(z2_chunk_load),
-                try_deallocate.after(chunk_reciever),
+                chunk_reciever.after(z2_chunk_load).after(z1_chunk_load),
+                validate_loading_queue.after(chunk_reciever),
+                try_deallocate.after(validate_loading_queue),
             ),
         )
         .run();

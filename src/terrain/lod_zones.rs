@@ -1,3 +1,5 @@
+use std::sync::{Arc, atomic::AtomicBool};
+
 use bevy::{
     ecs::{
         query::{Changed, With, Without},
@@ -14,6 +16,21 @@ use crate::{
     player::player::{MainCameraTag, PlayerTag},
     terrain::terrain::{ChunkClusterMap, HALF_CHUNK, Z1_RADIUS, Z2_RADIUS, Z2_RADIUS_SQUARED},
 };
+
+#[inline]
+pub fn in_zone_1(player_position: &Vec3, chunk_center: &Vec3) -> bool {
+    (player_position.x >= chunk_center.x - Z1_RADIUS)
+        && (player_position.x <= chunk_center.x + Z1_RADIUS)
+        && (player_position.y >= chunk_center.y - Z1_RADIUS)
+        && (player_position.y <= chunk_center.y + Z1_RADIUS)
+        && (player_position.z >= chunk_center.z - Z1_RADIUS)
+        && (player_position.z <= chunk_center.z + Z1_RADIUS)
+}
+
+#[inline]
+pub fn in_zone_2(aabb: &Aabb, frustum: &Frustum) -> bool {
+    frustum.intersects_obb_identity(aabb)
+}
 
 pub fn z1_chunk_load(
     player_transform: Single<&Transform, (With<PlayerTag>, Changed<Transform>)>,
@@ -32,14 +49,18 @@ pub fn z1_chunk_load(
             for chunk_y in min_chunk.1..=max_chunk.1 {
                 let chunk_coord = (chunk_x, chunk_y, chunk_z);
                 if !chunk_map.contains(&chunk_coord)
-                    && !chunks_being_loaded.0.contains(&chunk_coord)
+                    && !chunks_being_loaded.0.contains_key(&chunk_coord)
                 {
-                    chunks_being_loaded.0.insert(chunk_coord);
+                    let canceled_pointer = Arc::new(AtomicBool::new(false));
+                    chunks_being_loaded
+                        .0
+                        .insert(chunk_coord, Arc::clone(&canceled_pointer));
                     chunk_channels
                         .requests
                         .send(ChunkRequest {
                             position: chunk_coord,
                             level: 0,
+                            canceled: canceled_pointer,
                         })
                         .unwrap();
                 }
@@ -81,16 +102,20 @@ pub fn z2_chunk_load(
                 let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
                 let distance_squared = chunk_world_pos.distance_squared(player_pos);
                 aabb.center = chunk_world_pos.into();
-                if distance_squared <= Z2_RADIUS_SQUARED && frustum.intersects_obb_identity(&aabb) {
+                if distance_squared <= Z2_RADIUS_SQUARED && in_zone_2(&aabb, &frustum) {
                     if !chunk_map.contains(&chunk_coord)
-                        && !chunks_being_loaded.0.contains(&chunk_coord)
+                        && !chunks_being_loaded.0.contains_key(&chunk_coord)
                     {
-                        chunks_being_loaded.0.insert(chunk_coord);
+                        let canceled_pointer = Arc::new(AtomicBool::new(false));
+                        chunks_being_loaded
+                            .0
+                            .insert(chunk_coord, Arc::clone(&canceled_pointer));
                         chunk_channels
                             .requests
                             .send(ChunkRequest {
                                 position: chunk_coord,
                                 level: 0,
+                                canceled: canceled_pointer,
                             })
                             .unwrap();
                     }
