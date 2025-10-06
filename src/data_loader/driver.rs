@@ -7,10 +7,7 @@ use std::{
     },
 };
 
-use bevy::{
-    prelude::*,
-    render::primitives::{Aabb, Frustum},
-};
+use bevy::prelude::*;
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use fastnoise2::{
@@ -19,12 +16,18 @@ use fastnoise2::{
 };
 
 use crate::{
-    conversions::chunk_coord_to_world_pos, data_loader::file_loader::{create_chunk_file_data, load_chunk_data, ChunkIndexMap}, marching_cubes::march_cubes, player::player::{MainCameraTag, PlayerTag}, sparse_voxel_octree::ChunkSvo, terrain::{
-        lod_zones::{in_zone_1, in_zone_2},
+    conversions::chunk_coord_to_world_pos,
+    data_loader::file_loader::{ChunkIndexMap, create_chunk_file_data, load_chunk_data},
+    marching_cubes::march_cubes,
+    player::player::PlayerTag,
+    sparse_voxel_octree::ChunkSvo,
+    terrain::{
+        lod_zones::in_zone_1,
         terrain::{
-            ChunkTag, StandardTerrainMaterialHandle, TerrainChunk, CUBES_PER_CHUNK_DIM, HALF_CHUNK, SDF_VALUES_PER_CHUNK_DIM
+            CUBES_PER_CHUNK_DIM, ChunkTag, SDF_VALUES_PER_CHUNK_DIM, StandardTerrainMaterialHandle,
+            TerrainChunk, Z2_RADIUS_SQUARED,
         },
-    }
+    },
 };
 
 #[derive(Resource)]
@@ -167,18 +170,13 @@ pub fn chunk_reciever(
 pub fn validate_loading_queue(
     mut chunks_being_loaded: ResMut<ChunksBeingLoaded>,
     player_transform: Single<&Transform, With<PlayerTag>>,
-    frustum: Single<&Frustum, With<MainCameraTag>>,
 ) {
     let player_position = player_transform.translation;
-    let mut aabb = Aabb {
-        center: Vec3A::ZERO,
-        half_extents: Vec3A::splat(HALF_CHUNK),
-    };
     chunks_being_loaded.0.retain(|chunk_coord, canceled| {
         let chunk_world_pos = chunk_coord_to_world_pos(chunk_coord);
         if !in_zone_1(&player_position, &chunk_world_pos) {
-            aabb.center = chunk_world_pos.into();
-            if !in_zone_2(&aabb, &frustum) {
+            let distance_squared = chunk_world_pos.distance_squared(player_position);
+            if distance_squared <= Z2_RADIUS_SQUARED {
                 canceled.store(true, Ordering::Relaxed);
                 return false;
             }
