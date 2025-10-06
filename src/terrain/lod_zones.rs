@@ -14,7 +14,8 @@ use crate::{
     conversions::{chunk_coord_to_world_pos, world_pos_to_chunk_coord},
     data_loader::driver::{ChunkChannels, ChunkRequest, ChunksBeingLoaded},
     player::player::{MainCameraTag, PlayerTag},
-    terrain::terrain::{ChunkClusterMap, HALF_CHUNK, Z1_RADIUS, Z2_RADIUS, Z2_RADIUS_SQUARED},
+    sparse_voxel_octree::ChunkSvo,
+    terrain::terrain::{HALF_CHUNK, Z1_RADIUS, Z2_RADIUS, Z2_RADIUS_SQUARED},
 };
 
 #[inline]
@@ -34,7 +35,7 @@ pub fn in_zone_2(aabb: &Aabb, frustum: &Frustum) -> bool {
 
 pub fn z1_chunk_load(
     player_transform: Single<&Transform, (With<PlayerTag>, Changed<Transform>)>,
-    chunk_map: ResMut<ChunkClusterMap>,
+    svo: Res<ChunkSvo>,
     chunk_channels: ResMut<ChunkChannels>,
     mut chunks_being_loaded: ResMut<ChunksBeingLoaded>,
 ) {
@@ -48,7 +49,7 @@ pub fn z1_chunk_load(
         for chunk_z in min_chunk.2..=max_chunk.2 {
             for chunk_y in min_chunk.1..=max_chunk.1 {
                 let chunk_coord = (chunk_x, chunk_y, chunk_z);
-                if !chunk_map.contains(&chunk_coord)
+                if !svo.root.contains(&chunk_coord)
                     && !chunks_being_loaded.0.contains_key(&chunk_coord)
                 {
                     let canceled_pointer = Arc::new(AtomicBool::new(false));
@@ -78,7 +79,7 @@ pub fn z1_chunk_load(
 
 //load chunks within Z2 range that are also in the frustum. Triggered by changing frustum angle.
 pub fn z2_chunk_load(
-    chunk_map: Res<ChunkClusterMap>,
+    svo: Res<ChunkSvo>,
     player_transform: Single<&mut Transform, (With<PlayerTag>, Without<MainCameraTag>)>,
     frustum: Single<&Frustum, (With<MainCameraTag>, Changed<Frustum>)>,
     chunk_channels: ResMut<ChunkChannels>,
@@ -103,7 +104,7 @@ pub fn z2_chunk_load(
                 let distance_squared = chunk_world_pos.distance_squared(player_pos);
                 aabb.center = chunk_world_pos.into();
                 if distance_squared <= Z2_RADIUS_SQUARED && in_zone_2(&aabb, &frustum) {
-                    if !chunk_map.contains(&chunk_coord)
+                    if !svo.root.contains(&chunk_coord)
                         && !chunks_being_loaded.0.contains_key(&chunk_coord)
                     {
                         let canceled_pointer = Arc::new(AtomicBool::new(false));

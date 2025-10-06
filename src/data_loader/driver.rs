@@ -19,17 +19,12 @@ use fastnoise2::{
 };
 
 use crate::{
-    conversions::chunk_coord_to_world_pos,
-    data_loader::file_loader::{ChunkIndexMap, create_chunk_file_data, load_chunk_data},
-    marching_cubes::march_cubes,
-    player::player::{MainCameraTag, PlayerTag},
-    terrain::{
+    conversions::chunk_coord_to_world_pos, data_loader::file_loader::{create_chunk_file_data, load_chunk_data, ChunkIndexMap}, marching_cubes::march_cubes, player::player::{MainCameraTag, PlayerTag}, sparse_voxel_octree::ChunkSvo, terrain::{
         lod_zones::{in_zone_1, in_zone_2},
         terrain::{
-            CUBES_PER_CHUNK_DIM, ChunkClusterMap, ChunkTag, HALF_CHUNK, SDF_VALUES_PER_CHUNK_DIM,
-            StandardTerrainMaterialHandle, TerrainChunk,
+            ChunkTag, StandardTerrainMaterialHandle, TerrainChunk, CUBES_PER_CHUNK_DIM, HALF_CHUNK, SDF_VALUES_PER_CHUNK_DIM
         },
-    },
+    }
 };
 
 #[derive(Resource)]
@@ -144,7 +139,7 @@ pub fn chunk_reciever(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     standard_material: Res<StandardTerrainMaterialHandle>,
-    mut chunk_map: ResMut<ChunkClusterMap>,
+    mut svo: ResMut<ChunkSvo>,
     mut chunks_being_loaded: ResMut<ChunksBeingLoaded>,
 ) {
     while let Ok(result) = channels.results.try_recv() {
@@ -162,9 +157,8 @@ pub fn chunk_reciever(
             commands.spawn((ChunkTag, result.transform)).id()
         };
         if let Some(data) = result.data {
-            chunk_map.insert(result.chunk_coord, entity, Some(data));
+            svo.root.insert(result.chunk_coord, entity, data);
         } else {
-            chunk_map.insert(result.chunk_coord, entity, None);
         }
         chunks_being_loaded.0.remove(&result.chunk_coord);
     }

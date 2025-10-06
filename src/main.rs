@@ -26,10 +26,11 @@ use marching_cubes::player::player::{
     CameraController, KeyBindings, MainCameraTag, camera_look, camera_zoom, cursor_grab,
     initial_grab_cursor, player_movement, spawn_player, toggle_camera,
 };
+use marching_cubes::sparse_voxel_octree::ChunkSvo;
 use marching_cubes::terrain::chunk_generator::{GenerateChunkEvent, LoadChunksEvent};
 use marching_cubes::terrain::lod_zones::{z1_chunk_load, z2_chunk_load};
 use marching_cubes::terrain::terrain::{
-    CUBES_PER_CHUNK_DIM, ChunkClusterMap, ChunkTag, HALF_CHUNK, SDF_VALUES_PER_CHUNK_DIM,
+    CUBES_PER_CHUNK_DIM, ChunkTag, HALF_CHUNK, SDF_VALUES_PER_CHUNK_DIM,
     StandardTerrainMaterialHandle, setup_map, spawn_initial_chunks,
 };
 use rayon::ThreadPoolBuilder;
@@ -111,7 +112,7 @@ fn handle_digging_input(
     mouse_input: Res<ButtonInput<MouseButton>>,
     camera_query: Query<(&Camera, &GlobalTransform), With<MainCameraTag>>,
     window: Single<&Window>,
-    mut chunk_map: ResMut<ChunkClusterMap>,
+    mut svo: ResMut<ChunkSvo>,
     mut commands: Commands,
     mut dig_timer: Local<f32>,
     time: Res<Time>,
@@ -140,15 +141,14 @@ fn handle_digging_input(
         if let Some(cursor_pos) = window.cursor_position() {
             let (camera, camera_transform) = camera_query.single().unwrap();
             if let Some((_, world_pos, _, _)) =
-                screen_to_world_ray(cursor_pos, camera, camera_transform, &chunk_map)
+                screen_to_world_ray(cursor_pos, camera, camera_transform, &svo)
             {
-                let modified_chunks = chunk_map.dig_sphere(world_pos, DIG_RADIUS, DIG_STRENGTH);
+                let modified_chunks = svo.root.dig_sphere(world_pos, DIG_RADIUS, DIG_STRENGTH);
                 if modified_chunks.is_empty() {
                     return;
                 }
                 for chunk_coord in modified_chunks {
-                    let (entity, chunk) = chunk_map.get(&chunk_coord);
-                    let chunk = chunk.as_ref().unwrap();
+                    let (entity, chunk) = svo.root.get(&chunk_coord);
                     let new_mesh =
                         march_cubes(&chunk.sdfs, CUBES_PER_CHUNK_DIM, SDF_VALUES_PER_CHUNK_DIM);
                     let vertex_count = new_mesh.count_vertices();
@@ -241,7 +241,7 @@ fn screen_to_world_ray(
     cursor_pos: Vec2,
     camera: &Camera,
     camera_transform: &GlobalTransform,
-    chunk_map: &ChunkClusterMap,
+    svo: &ChunkSvo,
 ) -> Option<(Entity, Vec3, Vec3, (i16, i16, i16))> {
     let ray = camera
         .viewport_to_world(camera_transform, cursor_pos)
@@ -254,15 +254,10 @@ fn screen_to_world_ray(
     while distance_traveled < max_distance {
         let current_pos = ray_origin + ray_direction * distance_traveled;
         let chunk_coord = world_pos_to_chunk_coord(&current_pos);
-        let chunk = chunk_map.get(&chunk_coord);
+        let chunk = svo.root.get(&chunk_coord);
         let voxel_idx = world_pos_to_voxel_index(&current_pos, &chunk_coord);
         let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
-        if chunk
-            .1
-            .as_ref()
-            .unwrap()
-            .is_solid(voxel_idx.0, voxel_idx.1, voxel_idx.2)
-        {
+        if chunk.1.is_solid(voxel_idx.0, voxel_idx.1, voxel_idx.2) {
             return Some((chunk.0, current_pos, chunk_world_pos, chunk_coord));
         }
         distance_traveled += step_size;
