@@ -1,8 +1,8 @@
 use crate::conversions::chunk_coord_to_world_pos;
 use crate::player::player::{MainCameraTag, PlayerTag};
+use crate::sparse_voxel_octree::ChunkSvo;
 use crate::terrain::terrain::{
-    ChunkClusterMap, HALF_CHUNK, TerrainChunk, VOXELS_PER_CHUNK, VoxelData, Z1_RADIUS,
-    Z2_RADIUS_SQUARED,
+    CHUNK_SIZE, HALF_CHUNK, TerrainChunk, VOXELS_PER_CHUNK, VoxelData, Z1_RADIUS, Z2_RADIUS_SQUARED,
 };
 use bevy::prelude::*;
 use bevy::render::primitives::{Aabb, Frustum};
@@ -138,61 +138,53 @@ pub fn setup_chunk_loading(mut commands: Commands) {
 //this could be optimized by not calling it every frame
 //loop through every loaded chunk and validate it against Z1 and Z2
 pub fn try_deallocate(
-    mut chunk_map: ResMut<ChunkClusterMap>,
+    mut svo: ResMut<ChunkSvo>,
     mut commands: Commands,
     frustum: Single<&Frustum, With<MainCameraTag>>,
-    player_position: Single<&Transform, With<PlayerTag>>,
+    player_transform: Single<&Transform, With<PlayerTag>>,
 ) {
-    #[cfg(feature = "timers")]
-    let s = std::time::Instant::now();
-    let mut aabb = Aabb {
-        center: Vec3A::ZERO,
-        half_extents: Vec3A::splat(HALF_CHUNK * 2.0),
-    };
-    let min_z1_cube = player_position.translation - Vec3::splat(Z1_RADIUS);
-    let max_z1_cube = player_position.translation + Vec3::splat(Z1_RADIUS);
-    chunk_map.retain(|cluster_key, cluster| {
-        let cluster_min = chunk_coord_to_world_pos(cluster_key);
-        let cluster_max = cluster_min + Vec3::splat(HALF_CHUNK * 4.0);
-        let inside_cube = (cluster_max.x >= min_z1_cube.x && cluster_min.x <= max_z1_cube.x)
-            && (cluster_max.y >= min_z1_cube.y && cluster_min.y <= max_z1_cube.y)
-            && (cluster_max.z >= min_z1_cube.z && cluster_min.z <= max_z1_cube.z);
-        if inside_cube {
-            return true;
+    let player_pos = player_transform.translation;
+    let min_z1_cube = player_pos - Vec3::splat(Z1_RADIUS);
+    let max_z1_cube = player_pos + Vec3::splat(Z1_RADIUS);
+
+    // Collect all leaves to remove
+    let mut leaves_to_remove = Vec::new();
+
+    for leaf in svo.root.iter() {
+        let leaf_world_pos = chunk_coord_to_world_pos(&leaf.position);
+        let leaf_max = leaf_world_pos + Vec3::splat(leaf.size as f32 * CHUNK_SIZE);
+
+        // Skip leaves inside Z1 cube
+        if (leaf_max.x >= min_z1_cube.x && leaf_world_pos.x <= max_z1_cube.x)
+            && (leaf_max.y >= min_z1_cube.y && leaf_world_pos.y <= max_z1_cube.y)
+            && (leaf_max.z >= min_z1_cube.z && leaf_world_pos.z <= max_z1_cube.z)
+        {
+            continue;
         }
-        for i in 0..8 {
-            if let Some((_, _)) = &cluster[i] {
-                let local_x = i & 1;
-                let local_z = (i >> 1) & 1;
-                let local_y = (i >> 2) & 1;
-                let chunk_coord = (
-                    cluster_key.0 + local_x as i16,
-                    cluster_key.1 + local_y as i16,
-                    cluster_key.2 + local_z as i16,
-                );
-                let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
-                let distance_squared =
-                    chunk_world_pos.distance_squared(player_position.translation);
-                if distance_squared <= Z2_RADIUS_SQUARED {
-                    aabb.center = chunk_world_pos.into();
-                    if frustum.intersects_obb_identity(&aabb) {
-                        return true;
-                    }
-                }
-            }
-        }
-        for i in 0..8 {
-            if let Some((entity, _)) = &cluster[i] {
+
+        // Check chunks for Z2 and frustum; if none are kept, mark leaf for removal
+        let mut keep_any_chunk = false;
+        for (entity, _chunk) in &leaf.chunks {
+            let chunk_world_pos = chunk_coord_to_world_pos(&leaf.position);
+            let distance_sq = chunk_world_pos.distance_squared(player_pos);
+            let aabb = Aabb {
+                center: chunk_world_pos.into(),
+                half_extents: Vec3A::splat(HALF_CHUNK),
+            };
+            if distance_sq <= Z2_RADIUS_SQUARED && frustum.intersects_obb_identity(&aabb) {
+                keep_any_chunk = true;
+            } else {
                 commands.entity(*entity).despawn();
             }
         }
-        false
-    });
-    #[cfg(feature = "timers")]
-    {
-        let duration = s.elapsed();
-        if duration > std::time::Duration::from_micros(160) {
-            println!("{:<40} {:?}", "try_deallocate", duration);
+
+        if !keep_any_chunk {
+            leaves_to_remove.push(leaf.position);
         }
+    }
+
+    // Remove empty leaves from the SVO
+    for pos in leaves_to_remove {
+        svo.root.remove_leaf(pos);
     }
 }

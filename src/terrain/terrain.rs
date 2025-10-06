@@ -1,4 +1,4 @@
-use std::{collections::HashMap, process::exit, sync::Arc};
+use std::{process::exit, sync::Arc};
 
 use bevy::{
     image::{ImageLoaderSettings, ImageSampler},
@@ -20,6 +20,7 @@ use crate::{
     },
     marching_cubes::march_cubes,
     player::player::PLAYER_SPAWN,
+    sparse_voxel_octree::ChunkSvo,
     terrain::chunk_generator::generate_densities,
 };
 
@@ -85,162 +86,6 @@ impl TerrainChunk {
     }
 }
 
-//where the key is the lower left corner of the cluster
-#[derive(Resource)]
-pub struct ChunkClusterMap(HashMap<(i16, i16, i16), [Option<(Entity, Option<TerrainChunk>)>; 8]>);
-
-impl ChunkClusterMap {
-    pub fn new() -> Self {
-        Self { 0: HashMap::new() }
-    }
-
-    pub fn insert(&mut self, coord: (i16, i16, i16), entity: Entity, chunk: Option<TerrainChunk>) {
-        let cluster_x = coord.0 & !1;
-        let cluster_y = coord.1 & !1;
-        let cluster_z = coord.2 & !1;
-        let cluster_key = (cluster_x, cluster_y, cluster_z);
-        let local_x = (coord.0 & 1) as usize;
-        let local_y = (coord.1 & 1) as usize;
-        let local_z = (coord.2 & 1) as usize;
-        let index = (local_y << 2) | (local_z << 1) | local_x;
-        let cluster = self
-            .0
-            .entry(cluster_key)
-            .or_insert_with(|| std::array::from_fn(|_| None));
-        cluster[index] = Some((entity, chunk));
-    }
-
-    pub fn get(&self, coord: &(i16, i16, i16)) -> &(Entity, Option<TerrainChunk>) {
-        let cluster_x = coord.0 & !1;
-        let cluster_y = coord.1 & !1;
-        let cluster_z = coord.2 & !1;
-        let cluster_key = (cluster_x, cluster_y, cluster_z);
-        let local_x = (coord.0 & 1) as usize;
-        let local_y = (coord.1 & 1) as usize;
-        let local_z = (coord.2 & 1) as usize;
-        let index = (local_y << 2) | (local_z << 1) | local_x;
-        &self.0[&cluster_key][index]
-            .as_ref()
-            .expect(&format!("Chunk {:?} does not exist", coord))
-    }
-
-    pub fn contains(&self, coord: &(i16, i16, i16)) -> bool {
-        let cluster_key = (coord.0 & !1, coord.1 & !1, coord.2 & !1);
-        let local_x: usize = (coord.0 & 1) as usize;
-        let local_y = (coord.1 & 1) as usize;
-        let local_z = (coord.2 & 1) as usize;
-        let index = (local_y << 2) | (local_z << 1) | local_x;
-        self.0
-            .get(&cluster_key)
-            .map_or(false, |cluster| cluster[index].is_some())
-    }
-
-    pub fn remove(&mut self, coord: (i16, i16, i16)) {
-        let cluster_key = (coord.0 & !1, coord.1 & !1, coord.2 & !1);
-        let local_x = (coord.0 & 1) as usize;
-        let local_y = (coord.1 & 1) as usize;
-        let local_z = (coord.2 & 1) as usize;
-        let index = (local_y << 2) | (local_z << 1) | local_x;
-        let cluster = self.0.get_mut(&cluster_key).unwrap();
-        cluster[index] = None;
-        if cluster.iter().all(|slot| slot.is_none()) {
-            self.0.remove(&cluster_key);
-        }
-    }
-
-    pub fn iter(
-        &self,
-    ) -> impl Iterator<
-        Item = (
-            &(i16, i16, i16),
-            &[Option<(Entity, Option<TerrainChunk>)>; 8],
-        ),
-    > {
-        self.0.iter()
-    }
-
-    pub fn retain(
-        &mut self,
-        f: impl FnMut(&(i16, i16, i16), &mut [Option<(Entity, Option<TerrainChunk>)>; 8]) -> bool,
-    ) {
-        self.0.retain(f)
-    }
-
-    pub fn dig_sphere(&mut self, center: Vec3, radius: f32, strength: f32) -> Vec<(i16, i16, i16)> {
-        let mut modified_chunks = Vec::new();
-        let min_world = center - Vec3::splat(radius);
-        let max_world = center + Vec3::splat(radius);
-        let min_chunk = world_pos_to_chunk_coord(&min_world);
-        let max_chunk = world_pos_to_chunk_coord(&max_world);
-        for chunk_x in min_chunk.0..=max_chunk.0 {
-            for chunk_y in min_chunk.1..=max_chunk.1 {
-                for chunk_z in min_chunk.2..=max_chunk.2 {
-                    let chunk_coord = (chunk_x, chunk_y, chunk_z);
-                    let chunk_center = chunk_coord_to_world_pos(&chunk_coord);
-                    let chunk_modified = self.modify_chunk_voxels(
-                        chunk_coord,
-                        chunk_center,
-                        center,
-                        radius,
-                        strength,
-                    );
-                    if chunk_modified && !modified_chunks.contains(&chunk_coord) {
-                        modified_chunks.push(chunk_coord);
-                    }
-                }
-            }
-        }
-        modified_chunks
-    }
-
-    fn modify_chunk_voxels(
-        &mut self,
-        chunk_coord: (i16, i16, i16),
-        chunk_center: Vec3,
-        dig_center: Vec3,
-        radius: f32,
-        strength: f32,
-    ) -> bool {
-        let mut chunk_modified = false;
-        let cluster_x = chunk_coord.0 & !1;
-        let cluster_y = chunk_coord.1 & !1;
-        let cluster_z = chunk_coord.2 & !1;
-        let cluster_key = (cluster_x, cluster_y, cluster_z);
-        let local_x = (chunk_coord.0 & 1) as usize;
-        let local_y = (chunk_coord.1 & 1) as usize;
-        let local_z = (chunk_coord.2 & 1) as usize;
-        let index = (local_y << 2) | (local_z << 1) | local_x;
-        if let Some((_, Some(chunk))) = self
-            .0
-            .get_mut(&cluster_key)
-            .and_then(|cluster| cluster[index].as_mut())
-        {
-            for z in 0..SDF_VALUES_PER_CHUNK_DIM {
-                for y in 0..SDF_VALUES_PER_CHUNK_DIM {
-                    for x in 0..SDF_VALUES_PER_CHUNK_DIM {
-                        let world_x = chunk_center.x - HALF_CHUNK + x as f32 * VOXEL_SIZE;
-                        let world_y = chunk_center.y - HALF_CHUNK + y as f32 * VOXEL_SIZE;
-                        let world_z = chunk_center.z - HALF_CHUNK + z as f32 * VOXEL_SIZE;
-                        let voxel_world_pos = Vec3::new(world_x, world_y, world_z);
-                        let distance = voxel_world_pos.distance(dig_center);
-                        if distance <= radius {
-                            let falloff = 1.0 - (distance / radius).clamp(0.0, 1.0);
-                            let dig_amount = strength * falloff;
-                            let current_density =
-                                chunk.get_mut_density(x as u32, y as u32, z as u32);
-                            if current_density.sdf > 0.0 {
-                                current_density.sdf -= dig_amount;
-                                chunk_modified = true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        chunk_modified
-    }
-}
-
 pub fn setup_map(
     mut commands: Commands,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -264,7 +109,7 @@ pub fn setup_map(
         base_color_texture: Some(atlas_texture_handle.clone()),
         ..default()
     });
-    commands.insert_resource(ChunkClusterMap::new());
+    commands.insert_resource(ChunkSvo::new());
     commands.insert_resource(NoiseFunction(Arc::new(fbm)));
     commands.insert_resource(StandardTerrainMaterialHandle(
         standard_terrain_material_handle,
@@ -275,7 +120,7 @@ pub fn setup_map(
 pub fn spawn_initial_chunks(
     mut commands: Commands,
     chunk_index_map: Res<ChunkIndexMap>,
-    mut chunk_map: ResMut<ChunkClusterMap>,
+    mut svo: ResMut<ChunkSvo>,
     mut meshes: ResMut<Assets<Mesh>>,
     standard_material: Res<StandardTerrainMaterialHandle>,
     fbm: Res<NoiseFunction>,
@@ -344,7 +189,7 @@ pub fn spawn_initial_chunks(
                 } else {
                     commands.spawn((ChunkTag, transform)).id()
                 };
-                chunk_map.insert(chunk_coord, entity, Some(terrain_chunk));
+                svo.root.insert(chunk_coord, entity, terrain_chunk);
             }
         }
     }
