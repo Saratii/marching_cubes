@@ -1,7 +1,7 @@
 use bevy::{
     input::mouse::{MouseMotion, MouseWheel},
     prelude::*,
-    render::{camera::Viewport, primitives::Frustum},
+    render::camera::Viewport,
     window::{CursorGrabMode, PrimaryWindow},
 };
 use bevy_rapier3d::prelude::*;
@@ -196,7 +196,7 @@ pub fn camera_zoom(
 
 pub fn camera_look(
     mut mouse_motion: EventReader<MouseMotion>,
-    mut camera_transform: Single<(&mut Transform, &Frustum), With<MainCameraTag>>,
+    mut camera_transform: Single<&mut Transform, With<MainCameraTag>>,
     mut camera_controller: ResMut<CameraController>,
 ) {
     if camera_controller.is_cursor_grabbed {
@@ -213,9 +213,9 @@ pub fn camera_look(
         }
         if angles_changed {
             if camera_controller.is_first_person {
-                update_first_person_camera(&mut camera_transform.0, &camera_controller);
+                update_first_person_camera(&mut camera_transform, &camera_controller);
             } else {
-                update_camera_position(&mut camera_transform.0, &camera_controller);
+                update_camera_position(&mut camera_transform, &camera_controller);
             }
         }
     }

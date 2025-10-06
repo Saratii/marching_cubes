@@ -5,8 +5,7 @@ use bevy::{
         query::{Changed, With, Without},
         system::{Res, ResMut, Single},
     },
-    math::{Vec3, Vec3A},
-    render::primitives::{Aabb, Frustum},
+    math::Vec3,
     transform::components::Transform,
 };
 
@@ -15,7 +14,7 @@ use crate::{
     data_loader::driver::{ChunkChannels, ChunkRequest, ChunksBeingLoaded},
     player::player::{MainCameraTag, PlayerTag},
     sparse_voxel_octree::ChunkSvo,
-    terrain::terrain::{HALF_CHUNK, Z1_RADIUS, Z2_RADIUS, Z2_RADIUS_SQUARED},
+    terrain::terrain::{Z1_RADIUS, Z2_RADIUS, Z2_RADIUS_SQUARED},
 };
 
 #[inline]
@@ -26,11 +25,6 @@ pub fn in_zone_1(player_position: &Vec3, chunk_center: &Vec3) -> bool {
         && (player_position.y <= chunk_center.y + Z1_RADIUS)
         && (player_position.z >= chunk_center.z - Z1_RADIUS)
         && (player_position.z <= chunk_center.z + Z1_RADIUS)
-}
-
-#[inline]
-pub fn in_zone_2(aabb: &Aabb, frustum: &Frustum) -> bool {
-    frustum.intersects_obb_identity(aabb)
 }
 
 pub fn z1_chunk_load(
@@ -77,11 +71,10 @@ pub fn z1_chunk_load(
     }
 }
 
-//load chunks within Z2 range that are also in the frustum. Triggered by changing frustum angle.
+//load chunks within Z2 range.
 pub fn z2_chunk_load(
     svo: Res<ChunkSvo>,
     player_transform: Single<&mut Transform, (With<PlayerTag>, Without<MainCameraTag>)>,
-    frustum: Single<&Frustum, (With<MainCameraTag>, Changed<Frustum>)>,
     chunk_channels: ResMut<ChunkChannels>,
     mut chunks_being_loaded: ResMut<ChunksBeingLoaded>,
 ) {
@@ -92,18 +85,13 @@ pub fn z2_chunk_load(
     let max_world_pos = player_pos + Vec3::splat(Z2_RADIUS);
     let min_chunk = world_pos_to_chunk_coord(&min_world_pos);
     let max_chunk = world_pos_to_chunk_coord(&max_world_pos);
-    let mut aabb = Aabb {
-        center: Vec3A::ZERO,
-        half_extents: Vec3A::splat(HALF_CHUNK),
-    };
     for chunk_x in min_chunk.0..=max_chunk.0 {
         for chunk_z in min_chunk.2..=max_chunk.2 {
             for chunk_y in min_chunk.1..=max_chunk.1 {
                 let chunk_coord = (chunk_x, chunk_y, chunk_z);
                 let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
                 let distance_squared = chunk_world_pos.distance_squared(player_pos);
-                aabb.center = chunk_world_pos.into();
-                if distance_squared <= Z2_RADIUS_SQUARED && in_zone_2(&aabb, &frustum) {
+                if distance_squared <= Z2_RADIUS_SQUARED {
                     if !svo.root.contains(&chunk_coord)
                         && !chunks_being_loaded.0.contains_key(&chunk_coord)
                     {

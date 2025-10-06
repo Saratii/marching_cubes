@@ -1,11 +1,10 @@
 use crate::conversions::chunk_coord_to_world_pos;
-use crate::player::player::{MainCameraTag, PlayerTag};
+use crate::player::player::PlayerTag;
 use crate::sparse_voxel_octree::ChunkSvo;
 use crate::terrain::terrain::{
-    CHUNK_SIZE, HALF_CHUNK, TerrainChunk, VOXELS_PER_CHUNK, VoxelData, Z1_RADIUS, Z2_RADIUS_SQUARED,
+    CHUNK_SIZE, TerrainChunk, VOXELS_PER_CHUNK, VoxelData, Z1_RADIUS, Z2_RADIUS_SQUARED,
 };
 use bevy::prelude::*;
-use bevy::render::primitives::{Aabb, Frustum};
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -140,7 +139,6 @@ pub fn setup_chunk_loading(mut commands: Commands) {
 pub fn try_deallocate(
     mut svo: ResMut<ChunkSvo>,
     mut commands: Commands,
-    frustum: Single<&Frustum, With<MainCameraTag>>,
     player_transform: Single<&Transform, With<PlayerTag>>,
 ) {
     let player_pos = player_transform.translation;
@@ -162,22 +160,17 @@ pub fn try_deallocate(
             continue;
         }
 
-        // Check chunks for Z2 and frustum; if none are kept, mark leaf for removal
+        // Check chunks for Z2; if none are kept, mark leaf for removal
         let mut keep_any_chunk = false;
         for (entity, _chunk) in &leaf.chunks {
             let chunk_world_pos = chunk_coord_to_world_pos(&leaf.position);
             let distance_sq = chunk_world_pos.distance_squared(player_pos);
-            let aabb = Aabb {
-                center: chunk_world_pos.into(),
-                half_extents: Vec3A::splat(HALF_CHUNK),
-            };
-            if distance_sq <= Z2_RADIUS_SQUARED && frustum.intersects_obb_identity(&aabb) {
+            if distance_sq <= Z2_RADIUS_SQUARED {
                 keep_any_chunk = true;
             } else {
                 commands.entity(*entity).despawn();
             }
         }
-
         if !keep_any_chunk {
             leaves_to_remove.push(leaf.position);
         }
