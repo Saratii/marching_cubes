@@ -24,6 +24,10 @@ bevy = { git = "https://github.com/Saratii/bevy", branch = "release-0.16.1" }
 name = "chunk_generation"
 harness = false
 
+[[bench]]
+name = "file_io"
+harness = false
+
 [profile.release]
 debug = true
 

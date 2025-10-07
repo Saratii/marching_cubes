@@ -1,0 +1,81 @@
+PS C:\Programming\marching_cubes> cargo bench --bench file_io
+    Finished `bench` profile [optimized + debuginfo] target(s) in 0.53s
+     Running benches\file_io.rs (target\release\deps\file_io-527214c30c9a448e.exe)
+Gnuplot not found, using plotters backend
+read_single_chunk       time:   [23.657 µs 23.674 µs 23.692 µs]
+                        change: [−0.7948% −0.5571% −0.3798%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 8 outliers among 100 measurements (8.00%)
+  1 (1.00%) low mild
+  2 (2.00%) high mild
+  5 (5.00%) high severe
+
+write_single_existing_chunk
+                        time:   [30.130 µs 30.162 µs 30.202 µs]
+                        change: [−1.4267% −1.0820% −0.7329%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 16 outliers among 100 measurements (16.00%)
+  3 (3.00%) high mild
+  13 (13.00%) high severe
+
+write_single_new_chunk  time:   [62.195 µs 68.295 µs 78.036 µs]
+                        change: [−69.691% −45.331% −2.4840%] (p = 0.21 > 0.05)
+                        No change in performance detected.
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high severe
+
+bulk_read_chunks        time:   [3.5168 ms 3.5332 ms 3.5527 ms]
+                        change: [−4.8785% −4.1891% −3.5474%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 4 outliers among 100 measurements (4.00%)
+  3 (3.00%) high mild
+  1 (1.00%) high severe
+
+bulk_write_new_chunks   time:   [6.8604 ms 6.9028 ms 6.9484 ms]
+                        change: [−10.331% −9.0035% −7.8783%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 5 outliers among 100 measurements (5.00%)
+  4 (4.00%) high mild
+  1 (1.00%) high severe
+
+PS C:\Programming\marching_cubes> cargo bench --bench file_io
+    Finished `bench` profile [optimized + debuginfo] target(s) in 0.49s
+     Running benches\file_io.rs (target\release\deps\file_io-527214c30c9a448e.exe)
+Gnuplot not found, using plotters backend
+read_single_chunk       time:   [23.722 µs 23.744 µs 23.773 µs]
+                        change: [+0.3387% +0.4773% +0.6256%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 7 outliers among 100 measurements (7.00%)
+  5 (5.00%) high mild
+  2 (2.00%) high severe
+
+write_single_existing_chunk
+                        time:   [30.202 µs 30.233 µs 30.272 µs]
+                        change: [−0.6527% −0.2572% +0.1334%] (p = 0.20 > 0.05)
+                        No change in performance detected.
+Found 11 outliers among 100 measurements (11.00%)
+  3 (3.00%) low mild
+  2 (2.00%) high mild
+  6 (6.00%) high severe
+
+write_single_new_chunk  time:   [62.267 µs 62.900 µs 63.788 µs]
+                        change: [−8.7280% −2.0734% +4.3806%] (p = 0.62 > 0.05)
+                        No change in performance detected.
+Found 7 outliers among 100 measurements (7.00%)
+  2 (2.00%) low mild
+  3 (3.00%) high mild
+  2 (2.00%) high severe
+
+bulk_read_chunks        time:   [3.4500 ms 3.4596 ms 3.4701 ms]
+                        change: [−2.6951% −2.0839% −1.5443%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 5 outliers among 100 measurements (5.00%)
+  4 (4.00%) high mild
+  1 (1.00%) high severe
+
+bulk_write_new_chunks   time:   [6.7223 ms 6.8004 ms 6.8963 ms]
+                        change: [−2.8184% −1.4834% −0.0915%] (p = 0.04 < 0.05)
+                        Change within noise threshold.
+Found 6 outliers among 100 measurements (6.00%)
+  3 (3.00%) high mild
+  3 (3.00%) high severe
