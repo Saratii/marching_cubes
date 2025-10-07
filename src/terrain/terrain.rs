@@ -33,7 +33,7 @@ pub const VOXELS_PER_CHUNK: usize =
 pub const HALF_CHUNK: f32 = CHUNK_SIZE / 2.0;
 pub const Z1_RADIUS: f32 = 20.0; //in world units. Distance where everything is loaded at all times and physically simulated.
 pub const Z1_RADIUS_SQUARED: f32 = Z1_RADIUS * Z1_RADIUS;
-pub const Z2_RADIUS: f32 = 40.0; //in world units. Distance where chunks are loaded but not physically simulated.
+pub const Z2_RADIUS: f32 = 90.0; //in world units. Distance where chunks are loaded but not physically simulated.
 pub const Z2_RADIUS_SQUARED: f32 = Z2_RADIUS * Z2_RADIUS;
 
 #[derive(Component)]

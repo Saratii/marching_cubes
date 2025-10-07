@@ -438,17 +438,78 @@ impl SvoNode {
                 .as_ref()
                 .map_or(false, |c| c.iter().any(|x| x.is_some()))
     }
+
+    /// Query all chunks that are completely outside the given sphere.
+    /// Returns coordinates and entity IDs.
+    pub fn query_chunks_outside_sphere(
+        &self,
+        center: &Vec3,
+        radius: f32,
+        results: &mut Vec<((i16, i16, i16), Entity)>,
+    ) {
+        let chunk_world_size = SDF_VALUES_PER_CHUNK_DIM as f32 * VOXEL_SIZE;
+
+        let node_min = Vec3::new(
+            self.position.0 as f32 * chunk_world_size,
+            self.position.1 as f32 * chunk_world_size,
+            self.position.2 as f32 * chunk_world_size,
+        );
+        let node_max = node_min + Vec3::splat(self.size as f32 * chunk_world_size);
+        let intersects = sphere_intersects_aabb(center, radius, &node_min, &node_max);
+        if self.is_leaf() && self.size == 1 {
+            if !intersects {
+                if let Some((entity, _)) = &self.chunk {
+                    results.push((self.position, *entity));
+                }
+            }
+            return;
+        }
+        if !intersects {
+            self.collect_all_chunks(results);
+            return;
+        }
+        if let Some(children) = &self.children {
+            for child in children.iter().filter_map(|c| c.as_ref()) {
+                child.query_chunks_outside_sphere(center, radius, results);
+            }
+        }
+    }
+
+    fn collect_all_chunks(&self, results: &mut Vec<((i16, i16, i16), Entity)>) {
+        if self.is_leaf() && self.size == 1 {
+            if let Some((entity, _)) = &self.chunk {
+                results.push((self.position, *entity));
+            }
+            return;
+        }
+        if let Some(children) = &self.children {
+            for child in children.iter().filter_map(|c| c.as_ref()) {
+                child.collect_all_chunks(results);
+            }
+        }
+    }
 }
 
 fn sphere_intersects_aabb(center: &Vec3, radius: f32, min: &Vec3, max: &Vec3) -> bool {
+    let radius_sq = radius * radius;
     let mut d = 0.0;
-    for i in 0..3 {
-        let v = center[i];
-        if v < min[i] {
-            d += (min[i] - v) * (min[i] - v);
-        } else if v > max[i] {
-            d += (v - max[i]) * (v - max[i]);
-        }
+    let v = center.x;
+    if v < min.x {
+        d += (min.x - v) * (min.x - v);
+    } else if v > max.x {
+        d += (v - max.x) * (v - max.x);
     }
-    d <= radius * radius
+    let v = center.y;
+    if v < min.y {
+        d += (min.y - v) * (min.y - v);
+    } else if v > max.y {
+        d += (v - max.y) * (v - max.y);
+    }
+    let v = center.z;
+    if v < min.z {
+        d += (min.z - v) * (min.z - v);
+    } else if v > max.z {
+        d += (v - max.z) * (v - max.z);
+    }
+    d <= radius_sq
 }

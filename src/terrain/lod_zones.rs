@@ -23,7 +23,7 @@ pub fn z2_chunk_load(
     #[cfg(feature = "timers")]
     let start = std::time::Instant::now();
     let mut chunks_to_deallocate = Vec::new();
-    svo.root.deallocate_chunks_outside_radius(
+    svo.root.query_chunks_outside_sphere(
         &player_transform.translation,
         Z2_RADIUS,
         &mut chunks_to_deallocate,
@@ -32,6 +32,7 @@ pub fn z2_chunk_load(
         if let Some(canceled) = chunks_being_loaded.0.remove(chunk_coord) {
             canceled.0.store(true, std::sync::atomic::Ordering::Relaxed);
         }
+        svo.root.delete(*chunk_coord);
         commands.entity(*entity).despawn();
     }
     svo.root.fill_missing_chunks_in_radius(
