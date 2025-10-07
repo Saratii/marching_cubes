@@ -18,8 +18,7 @@ use marching_cubes::data_loader::driver::{
     chunk_reciever, setup_loading_thread, validate_loading_queue,
 };
 use marching_cubes::data_loader::file_loader::{
-    ChunkDataFileReadWrite, ChunkIndexMap, setup_chunk_loading, try_deallocate,
-    update_chunk_file_data,
+    ChunkDataFileReadWrite, ChunkIndexMap, setup_chunk_loading, update_chunk_file_data,
 };
 use marching_cubes::marching_cubes::march_cubes;
 use marching_cubes::player::player::{
@@ -28,7 +27,7 @@ use marching_cubes::player::player::{
 };
 use marching_cubes::sparse_voxel_octree::ChunkSvo;
 use marching_cubes::terrain::chunk_generator::{GenerateChunkEvent, LoadChunksEvent};
-use marching_cubes::terrain::lod_zones::{z1_chunk_load, z2_chunk_load};
+use marching_cubes::terrain::lod_zones::z2_chunk_load;
 use marching_cubes::terrain::terrain::{
     CUBES_PER_CHUNK_DIM, ChunkTag, HALF_CHUNK, SDF_VALUES_PER_CHUNK_DIM,
     StandardTerrainMaterialHandle, setup_map, spawn_initial_chunks,
@@ -86,10 +85,8 @@ fn main() {
                 camera_look,
                 player_movement,
                 z2_chunk_load,
-                z1_chunk_load,
-                chunk_reciever.after(z2_chunk_load).after(z1_chunk_load),
+                chunk_reciever.after(z2_chunk_load),
                 validate_loading_queue.after(chunk_reciever),
-                try_deallocate.after(validate_loading_queue),
             ),
         )
         .run();
@@ -148,7 +145,7 @@ fn handle_digging_input(
                     return;
                 }
                 for chunk_coord in modified_chunks {
-                    let (entity, chunk) = svo.root.get(&chunk_coord);
+                    let (entity, chunk) = svo.root.get(chunk_coord).unwrap();
                     let new_mesh =
                         march_cubes(&chunk.sdfs, CUBES_PER_CHUNK_DIM, SDF_VALUES_PER_CHUNK_DIM);
                     let vertex_count = new_mesh.count_vertices();
@@ -254,7 +251,7 @@ fn screen_to_world_ray(
     while distance_traveled < max_distance {
         let current_pos = ray_origin + ray_direction * distance_traveled;
         let chunk_coord = world_pos_to_chunk_coord(&current_pos);
-        let chunk = svo.root.get(&chunk_coord);
+        let chunk = svo.root.get(chunk_coord).unwrap();
         let voxel_idx = world_pos_to_voxel_index(&current_pos, &chunk_coord);
         let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
         if chunk.1.is_solid(voxel_idx.0, voxel_idx.1, voxel_idx.2) {
