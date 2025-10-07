@@ -396,49 +396,6 @@ impl SvoNode {
         }
     }
 
-    pub fn deallocate_chunks_outside_radius(
-        &mut self,
-        center: &Vec3,
-        radius: f32,
-        chunks_to_deallocate: &mut Vec<((i16, i16, i16), Entity)>,
-    ) -> bool {
-        let chunk_world_size = SDF_VALUES_PER_CHUNK_DIM as f32 * VOXEL_SIZE;
-        let node_min = Vec3::new(
-            self.position.0 as f32 * chunk_world_size,
-            self.position.1 as f32 * chunk_world_size,
-            self.position.2 as f32 * chunk_world_size,
-        );
-        let node_max = node_min + Vec3::splat(self.size as f32 * chunk_world_size);
-        let intersects = sphere_intersects_aabb(center, radius, &node_min, &node_max);
-        if self.is_leaf() && self.size == 1 {
-            if !intersects && self.chunk.is_some() {
-                let entity = self.chunk.as_ref().unwrap().0;
-                chunks_to_deallocate.push((self.position, entity));
-                self.chunk = None;
-            }
-            return self.chunk.is_some();
-        }
-        if let Some(children) = &mut self.children {
-            for i in 0..8 {
-                if let Some(child) = &mut children[i] {
-                    let has_data = child.deallocate_chunks_outside_radius(
-                        center,
-                        radius,
-                        chunks_to_deallocate,
-                    );
-                    if !has_data {
-                        children[i] = None;
-                    }
-                }
-            }
-        }
-        self.chunk.is_some()
-            || self
-                .children
-                .as_ref()
-                .map_or(false, |c| c.iter().any(|x| x.is_some()))
-    }
-
     /// Query all chunks that are completely outside the given sphere.
     /// Returns coordinates and entity IDs.
     pub fn query_chunks_outside_sphere(
@@ -448,7 +405,6 @@ impl SvoNode {
         results: &mut Vec<((i16, i16, i16), Entity)>,
     ) {
         let chunk_world_size = SDF_VALUES_PER_CHUNK_DIM as f32 * VOXEL_SIZE;
-
         let node_min = Vec3::new(
             self.position.0 as f32 * chunk_world_size,
             self.position.1 as f32 * chunk_world_size,
