@@ -1,9 +1,4 @@
-use crate::conversions::chunk_coord_to_world_pos;
-use crate::player::player::PlayerTag;
-use crate::sparse_voxel_octree::ChunkSvo;
-use crate::terrain::terrain::{
-    CHUNK_SIZE, TerrainChunk, VOXELS_PER_CHUNK, VoxelData, Z1_RADIUS, Z2_RADIUS_SQUARED,
-};
+use crate::terrain::terrain::{TerrainChunk, VOXELS_PER_CHUNK, VoxelData};
 use bevy::prelude::*;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
@@ -132,52 +127,4 @@ pub fn setup_chunk_loading(mut commands: Commands) {
         &index_file,
     )))));
     commands.insert_resource(ChunkIndexFile(Arc::new(Mutex::new(index_file))));
-}
-
-//this could be optimized by not calling it every frame
-//loop through every loaded chunk and validate it against Z1 and Z2
-pub fn try_deallocate(
-    mut svo: ResMut<ChunkSvo>,
-    mut commands: Commands,
-    player_transform: Single<&Transform, With<PlayerTag>>,
-) {
-    let player_pos = player_transform.translation;
-    let min_z1_cube = player_pos - Vec3::splat(Z1_RADIUS);
-    let max_z1_cube = player_pos + Vec3::splat(Z1_RADIUS);
-
-    // Collect all leaves to remove
-    let mut leaves_to_remove = Vec::new();
-
-    for leaf in svo.root.iter() {
-        let leaf_world_pos = chunk_coord_to_world_pos(&leaf.position);
-        let leaf_max = leaf_world_pos + Vec3::splat(leaf.size as f32 * CHUNK_SIZE);
-
-        // Skip leaves inside Z1 cube
-        if (leaf_max.x >= min_z1_cube.x && leaf_world_pos.x <= max_z1_cube.x)
-            && (leaf_max.y >= min_z1_cube.y && leaf_world_pos.y <= max_z1_cube.y)
-            && (leaf_max.z >= min_z1_cube.z && leaf_world_pos.z <= max_z1_cube.z)
-        {
-            continue;
-        }
-
-        // Check chunks for Z2; if none are kept, mark leaf for removal
-        let mut keep_any_chunk = false;
-        for (entity, _chunk) in &leaf.chunks {
-            let chunk_world_pos = chunk_coord_to_world_pos(&leaf.position);
-            let distance_sq = chunk_world_pos.distance_squared(player_pos);
-            if distance_sq <= Z2_RADIUS_SQUARED {
-                keep_any_chunk = true;
-            } else {
-                commands.entity(*entity).despawn();
-            }
-        }
-        if !keep_any_chunk {
-            leaves_to_remove.push(leaf.position);
-        }
-    }
-
-    // Remove empty leaves from the SVO
-    for pos in leaves_to_remove {
-        svo.root.remove_leaf(pos);
-    }
 }

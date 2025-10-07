@@ -21,12 +21,9 @@ use crate::{
     marching_cubes::march_cubes,
     player::player::PlayerTag,
     sparse_voxel_octree::ChunkSvo,
-    terrain::{
-        lod_zones::in_zone_1,
-        terrain::{
-            CUBES_PER_CHUNK_DIM, ChunkTag, SDF_VALUES_PER_CHUNK_DIM, StandardTerrainMaterialHandle,
-            TerrainChunk, Z2_RADIUS_SQUARED,
-        },
+    terrain::terrain::{
+        CUBES_PER_CHUNK_DIM, ChunkTag, SDF_VALUES_PER_CHUNK_DIM, StandardTerrainMaterialHandle,
+        TerrainChunk, Z2_RADIUS_SQUARED,
     },
 };
 
@@ -37,7 +34,10 @@ pub struct ChunkChannels {
 }
 
 #[derive(Resource)]
-pub struct ChunksBeingLoaded(pub HashMap<(i16, i16, i16), Arc<AtomicBool>>);
+pub struct ChunksBeingLoaded(
+    pub HashMap<(i16, i16, i16), (Arc<AtomicBool>, u64)>,
+    pub u64,
+);
 
 //level 0: full detail, returns TerrainChunk and collider
 //level n: full/(2^n) detail, no persistant data besides mesh
@@ -45,6 +45,7 @@ pub struct ChunkRequest {
     pub position: (i16, i16, i16),
     pub level: u8,
     pub canceled: Arc<AtomicBool>,
+    pub request_id: u64,
 }
 
 pub struct ChunkResult {
@@ -53,6 +54,7 @@ pub struct ChunkResult {
     collider: Option<Collider>,
     transform: Transform,
     chunk_coord: (i16, i16, i16),
+    request_id: u64,
 }
 
 pub fn setup_loading_thread(mut commands: Commands, index_map: Res<ChunkIndexMap>) {
@@ -127,6 +129,7 @@ pub fn setup_loading_thread(mut commands: Commands, index_map: Res<ChunkIndexMap
                 collider,
                 transform: Transform::from_translation(chunk_coord_to_world_pos(&chunk_coord)),
                 chunk_coord,
+                request_id: req.request_id,
             });
         }
     });
@@ -134,7 +137,7 @@ pub fn setup_loading_thread(mut commands: Commands, index_map: Res<ChunkIndexMap
         requests: req_tx,
         results: res_rx,
     });
-    commands.insert_resource(ChunksBeingLoaded(chunks_being_loaded));
+    commands.insert_resource(ChunksBeingLoaded(chunks_being_loaded, 1));
 }
 
 pub fn chunk_reciever(
@@ -146,24 +149,33 @@ pub fn chunk_reciever(
     mut chunks_being_loaded: ResMut<ChunksBeingLoaded>,
 ) {
     while let Ok(result) = channels.results.try_recv() {
-        let entity = if let (Some(mesh), Some(collider)) = (result.mesh, result.collider) {
-            commands
-                .spawn((
-                    Mesh3d(meshes.add(mesh)),
-                    collider,
-                    ChunkTag,
-                    result.transform,
-                    MeshMaterial3d(standard_material.0.clone()),
-                ))
-                .id()
-        } else {
-            commands.spawn((ChunkTag, result.transform)).id()
-        };
-        if let Some(data) = result.data {
-            svo.root.insert(result.chunk_coord, entity, data);
-        } else {
+        match chunks_being_loaded.0.get(&result.chunk_coord) {
+            Some((_, expected_id)) if *expected_id == result.request_id => {
+                let entity = if let (Some(mesh), Some(collider)) = (result.mesh, result.collider) {
+                    commands
+                        .spawn((
+                            Mesh3d(meshes.add(mesh)),
+                            collider,
+                            ChunkTag,
+                            result.transform,
+                            MeshMaterial3d(standard_material.0.clone()),
+                        ))
+                        .id()
+                } else {
+                    commands.spawn((ChunkTag, result.transform)).id()
+                };
+
+                if let Some(data) = result.data {
+                    svo.root.insert(result.chunk_coord, entity, data);
+                }
+                chunks_being_loaded.0.remove(&result.chunk_coord);
+            }
+            _ => {
+                // Stale/unknown result: drop it. Do NOT remove any current in-flight entry
+                // (the map may contain a newer id now). Also do not spawn an entity for it.
+                continue;
+            }
         }
-        chunks_being_loaded.0.remove(&result.chunk_coord);
     }
 }
 
@@ -174,12 +186,10 @@ pub fn validate_loading_queue(
     let player_position = player_transform.translation;
     chunks_being_loaded.0.retain(|chunk_coord, canceled| {
         let chunk_world_pos = chunk_coord_to_world_pos(chunk_coord);
-        if !in_zone_1(&player_position, &chunk_world_pos) {
-            let distance_squared = chunk_world_pos.distance_squared(player_position);
-            if distance_squared <= Z2_RADIUS_SQUARED {
-                canceled.store(true, Ordering::Relaxed);
-                return false;
-            }
+        let distance_squared = player_position.distance_squared(chunk_world_pos);
+        if distance_squared > Z2_RADIUS_SQUARED {
+            canceled.0.store(true, Ordering::Relaxed);
+            return false;
         }
         true
     });
