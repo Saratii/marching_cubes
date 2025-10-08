@@ -145,7 +145,7 @@ fn handle_digging_input(
                     return;
                 }
                 for chunk_coord in modified_chunks {
-                    let (entity, chunk) = svo.root.get(chunk_coord).unwrap();
+                    let (entity, chunk) = svo.root.get_mut(chunk_coord).unwrap();
                     let new_mesh =
                         march_cubes(&chunk.sdfs, CUBES_PER_CHUNK_DIM, SDF_VALUES_PER_CHUNK_DIM);
                     let vertex_count = new_mesh.count_vertices();
@@ -155,28 +155,43 @@ fn handle_digging_input(
                             &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
                         )
                         .unwrap();
-                        match solid_chunk_query.get_mut(*entity) {
-                            //chunk geometry already existed
-                            Ok((mut collider_component, mut mesh_handle, entity)) => {
+                        match entity {
+                            //entity already existed, update it
+                            Some(entity) => {
+                                let (mut collider_component, mut mesh_handle, _) =
+                                    solid_chunk_query.get_mut(*entity).unwrap();
                                 *collider_component = collider;
                                 mesh_handles.remove(&mesh_handle.0);
                                 *mesh_handle = Mesh3d(mesh_handles.add(new_mesh));
-                                commands.entity(entity).insert(NoFrustumCulling); //this is bad
+                                commands.entity(*entity).insert(NoFrustumCulling); //this is bad
                             }
-                            //chunk geometry didn't exist before (was air)
-                            Err(_) => {
-                                commands.entity(*entity).insert((
-                                    collider,
-                                    Mesh3d(mesh_handles.add(new_mesh)),
-                                    MeshMaterial3d(material_handle.0.clone()),
-                                    Aabb {
-                                        center: chunk_coord_to_world_pos(&chunk_coord).into(),
-                                        half_extents: Vec3A::splat(HALF_CHUNK),
-                                    },
-                                    NoFrustumCulling, //this is bad
-                                ));
+                            //entity did not already exist
+                            None => {
+                                let new_entity = commands
+                                    .spawn((
+                                        collider,
+                                        Mesh3d(mesh_handles.add(new_mesh)),
+                                        MeshMaterial3d(material_handle.0.clone()),
+                                        Aabb {
+                                            center: chunk_coord_to_world_pos(&chunk_coord).into(),
+                                            half_extents: Vec3A::splat(HALF_CHUNK),
+                                        },
+                                        NoFrustumCulling, //this is bad
+                                        ChunkTag,
+                                        Transform::from_translation(chunk_coord_to_world_pos(
+                                            &chunk_coord,
+                                        )),
+                                    ))
+                                    .id();
+                                *entity = Some(new_entity);
                             }
                         }
+                    } else {
+                        //no geometry, remove existing entity if it exists
+                        if let Some(entity) = entity {
+                            commands.entity(*entity).despawn();
+                        }
+                        *entity = None
                     }
                     let chunk_index_map = chunk_index_map.0.lock().unwrap();
                     let mut data_file = chunk_data_file.0.lock().unwrap();
@@ -239,7 +254,7 @@ fn screen_to_world_ray(
     camera: &Camera,
     camera_transform: &GlobalTransform,
     svo: &ChunkSvo,
-) -> Option<(Entity, Vec3, Vec3, (i16, i16, i16))> {
+) -> Option<(Option<Entity>, Vec3, Vec3, (i16, i16, i16))> {
     let ray = camera
         .viewport_to_world(camera_transform, cursor_pos)
         .unwrap();
