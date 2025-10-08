@@ -171,13 +171,13 @@ pub fn spawn_initial_chunks(
                     SDF_VALUES_PER_CHUNK_DIM,
                 );
                 let transform = Transform::from_translation(chunk_coord_to_world_pos(&chunk_coord));
-                let entity: Entity = if mesh.count_vertices() > 0 {
+                let entity = if mesh.count_vertices() > 0 {
                     let collider = Collider::from_bevy_mesh(
                         &mesh,
                         &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
                     )
                     .unwrap();
-                    commands
+                    Some(commands
                         .spawn((
                             Mesh3d(meshes.add(mesh)),
                             MeshMaterial3d(standard_material.0.clone()),
@@ -185,9 +185,9 @@ pub fn spawn_initial_chunks(
                             transform,
                             collider,
                         ))
-                        .id()
+                        .id())
                 } else {
-                    commands.spawn((ChunkTag, transform)).id()
+                    None
                 };
                 svo.root.insert(chunk_coord, entity, terrain_chunk);
             }

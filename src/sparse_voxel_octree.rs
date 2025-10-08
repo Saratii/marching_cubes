@@ -31,7 +31,7 @@ pub struct SvoNode {
     pub position: (i16, i16, i16), // lower corner in chunk coordinates
     pub size: i16,                 // region size in chunks (power of 2)
     pub children: Option<Box<[Option<SvoNode>; 8]>>,
-    pub chunk: Option<(Entity, TerrainChunk)>,
+    pub chunk: Option<(Option<Entity>, TerrainChunk)>,
 }
 
 impl SvoNode {
@@ -63,17 +63,28 @@ impl SvoNode {
         index
     }
 
-    pub fn get(&self, coord: (i16, i16, i16)) -> Option<&(Entity, TerrainChunk)> {
+    pub fn get(&self, coord: (i16, i16, i16)) -> Option<&(Option<Entity>, TerrainChunk)> {
         if self.size == 1 {
             return self.chunk.as_ref();
         }
-
         let children = self.children.as_ref()?;
         let idx = self.child_index(&coord);
         children[idx].as_ref()?.get(coord)
     }
 
-    pub fn insert(&mut self, coord: (i16, i16, i16), entity: Entity, chunk: TerrainChunk) {
+    pub fn get_mut(
+        &mut self,
+        coord: (i16, i16, i16),
+    ) -> Option<&mut (Option<Entity>, TerrainChunk)> {
+        if self.size == 1 {
+            return self.chunk.as_mut();
+        }
+        let idx = self.child_index(&coord);
+        let children = self.children.as_mut()?;
+        children[idx].as_mut()?.get_mut(coord)
+    }
+
+    pub fn insert(&mut self, coord: (i16, i16, i16), entity: Option<Entity>, chunk: TerrainChunk) {
         if self.size == 1 {
             debug_assert!(
                 self.chunk.is_none(),
@@ -402,7 +413,7 @@ impl SvoNode {
         &self,
         center: &Vec3,
         radius: f32,
-        results: &mut Vec<((i16, i16, i16), Entity)>,
+        results: &mut Vec<((i16, i16, i16), Option<Entity>)>,
     ) {
         let chunk_world_size = SDF_VALUES_PER_CHUNK_DIM as f32 * VOXEL_SIZE;
         let node_min = Vec3::new(
@@ -431,7 +442,7 @@ impl SvoNode {
         }
     }
 
-    fn collect_all_chunks(&self, results: &mut Vec<((i16, i16, i16), Entity)>) {
+    fn collect_all_chunks(&self, results: &mut Vec<((i16, i16, i16), Option<Entity>)>) {
         if self.is_leaf() && self.size == 1 {
             if let Some((entity, _)) = &self.chunk {
                 results.push((self.position, *entity));

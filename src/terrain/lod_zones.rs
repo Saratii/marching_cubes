@@ -33,7 +33,9 @@ pub fn z2_chunk_load(
             canceled.0.store(true, std::sync::atomic::Ordering::Relaxed);
         }
         svo.root.delete(*chunk_coord);
-        commands.entity(*entity).despawn();
+        if let Some(entity) = entity {
+            commands.entity(*entity).despawn();
+        }
     }
     svo.root.fill_missing_chunks_in_radius(
         &player_transform.translation,

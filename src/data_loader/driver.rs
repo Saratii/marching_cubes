@@ -152,19 +152,20 @@ pub fn chunk_reciever(
         match chunks_being_loaded.0.get(&result.chunk_coord) {
             Some((_, expected_id)) if *expected_id == result.request_id => {
                 let entity = if let (Some(mesh), Some(collider)) = (result.mesh, result.collider) {
-                    commands
-                        .spawn((
-                            Mesh3d(meshes.add(mesh)),
-                            collider,
-                            ChunkTag,
-                            result.transform,
-                            MeshMaterial3d(standard_material.0.clone()),
-                        ))
-                        .id()
+                    Some(
+                        commands
+                            .spawn((
+                                Mesh3d(meshes.add(mesh)),
+                                collider,
+                                ChunkTag,
+                                result.transform,
+                                MeshMaterial3d(standard_material.0.clone()),
+                            ))
+                            .id(),
+                    )
                 } else {
-                    commands.spawn((ChunkTag, result.transform)).id()
+                    None
                 };
-
                 if let Some(data) = result.data {
                     svo.root.insert(result.chunk_coord, entity, data);
                 }
