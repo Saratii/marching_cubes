@@ -1,0 +1,30 @@
+PS C:\Programming\marching_cubes> cargo bench --bench file_io
+   Compiling marching_cubes v0.1.0 (C:\Programming\marching_cubes)
+    Finished `bench` profile [optimized + debuginfo] target(s) in 5.79s
+     Running benches\file_io.rs (target\release\deps\file_io-7e2c5623ed90855c.exe)
+Gnuplot not found, using plotters backend
+bulk_read_chunks        time:   [15.218 ms 15.362 ms 15.522 ms]
+                        change: [+2.0080% +3.1267% +4.2626%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 6 outliers among 100 measurements (6.00%)
+  3 (3.00%) high mild
+  3 (3.00%) high severe
+
+bulk_write_new_chunks   time:   [28.729 ms 29.102 ms 29.514 ms]
+                        change: [+6.2546% +7.7570% +9.2740%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 9 outliers among 100 measurements (9.00%)
+  4 (4.00%) high mild
+  5 (5.00%) high severe
+
+write_single_new_chunk  time:   [277.98 µs 283.54 µs 289.98 µs]
+                        change: [+331.15% +354.75% +370.51%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+
+read_single_chunk       time:   [147.64 µs 148.53 µs 149.53 µs]
+                        change: [+519.53% +523.42% +527.68%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 16 outliers among 100 measurements (16.00%)
+  1 (1.00%) low mild
+  7 (7.00%) high mild
+  8 (8.00%) high severe

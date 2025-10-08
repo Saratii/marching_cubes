@@ -16,6 +16,8 @@ serde_json = "1.0.143"
 serde = "1.0.219"
 flamegraph = "0.6.9"
 crossbeam-channel = "0.5.15"
+heed = "0.22.0"
+fs = "0.0.5"
 
 [patch.crates-io]
 bevy = { git = "https://github.com/Saratii/bevy", branch = "release-0.16.1" }
