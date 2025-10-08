@@ -18,7 +18,7 @@ use marching_cubes::data_loader::driver::{
     chunk_reciever, setup_loading_thread, validate_loading_queue,
 };
 use marching_cubes::data_loader::file_loader::{
-    ChunkDataFileReadWrite, ChunkIndexMap, setup_chunk_loading, update_chunk_file_data,
+    DataBaseEnvHandle, DataBaseHandle, serialize_chunk_data, setup_chunk_loading,
 };
 use marching_cubes::marching_cubes::march_cubes;
 use marching_cubes::player::player::{
@@ -113,11 +113,11 @@ fn handle_digging_input(
     mut commands: Commands,
     mut dig_timer: Local<f32>,
     time: Res<Time>,
-    chunk_data_file: Res<ChunkDataFileReadWrite>,
-    chunk_index_map: Res<ChunkIndexMap>,
     material_handle: Res<StandardTerrainMaterialHandle>,
     mut solid_chunk_query: Query<(&mut Collider, &mut Mesh3d, Entity), With<ChunkTag>>,
     mut mesh_handles: ResMut<Assets<Mesh>>,
+    database_env: Res<DataBaseEnvHandle>,
+    database: Res<DataBaseHandle>,
 ) {
     const DIG_STRENGTH: f32 = 0.1;
     const DIG_TIMER: f32 = 0.02; // seconds
@@ -178,11 +178,9 @@ fn handle_digging_input(
                             }
                         }
                     }
-                    let chunk_index_map = chunk_index_map.0.lock().unwrap();
-                    let mut data_file = chunk_data_file.0.lock().unwrap();
-                    update_chunk_file_data(&chunk_index_map, chunk_coord, &chunk, &mut data_file);
-                    drop(chunk_index_map);
-                    drop(data_file);
+                    let mut wtxn = database_env.0.write_txn().unwrap();
+                    let bytes = serialize_chunk_data(&chunk);
+                    database.0.put(&mut wtxn, &chunk_coord, &bytes).unwrap();
                 }
             }
         }

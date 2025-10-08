@@ -1,8 +1,7 @@
 use std::{
     collections::HashMap,
-    fs::OpenOptions,
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -17,7 +16,10 @@ use fastnoise2::{
 
 use crate::{
     conversions::chunk_coord_to_world_pos,
-    data_loader::file_loader::{ChunkIndexMap, create_chunk_file_data, load_chunk_data},
+    data_loader::file_loader::{
+        DataBaseEnvHandle, DataBaseHandle, LoadedChunkKeys, deserialize_chunk_data,
+        serialize_chunk_data,
+    },
     marching_cubes::march_cubes,
     player::player::PlayerTag,
     sparse_voxel_octree::ChunkSvo,
@@ -57,23 +59,19 @@ pub struct ChunkResult {
     request_id: u64,
 }
 
-pub fn setup_loading_thread(mut commands: Commands, index_map: Res<ChunkIndexMap>) {
+pub fn setup_loading_thread(
+    mut commands: Commands,
+    loaded_chunk_keys: Res<LoadedChunkKeys>,
+    database_env: Res<DataBaseEnvHandle>,
+    database: Res<DataBaseHandle>,
+) {
     let (req_tx, req_rx) = unbounded::<ChunkRequest>();
     let (res_tx, res_rx) = unbounded::<ChunkResult>();
-    let index_map_arc: Arc<Mutex<std::collections::HashMap<(i16, i16, i16), u64>>> =
-        Arc::clone(&index_map.0);
+    let loaded_chunk_keys = Arc::clone(&loaded_chunk_keys.0);
     let chunks_being_loaded = HashMap::new();
+    let env = database_env.0.clone();
+    let db = database.0.clone();
     std::thread::spawn(move || {
-        let mut data_file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open("data/chunk_data.txt")
-            .unwrap();
-        let index_file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open("data/chunk_index_data.txt")
-            .unwrap();
         let fbm = || -> GeneratorWrapper<SafeNode> {
             (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build()
         }();
@@ -82,22 +80,20 @@ pub fn setup_loading_thread(mut commands: Commands, index_map: Res<ChunkIndexMap
                 continue;
             }
             let chunk_coord = req.position;
-            let file_offset = {
-                let index_map_lock = index_map_arc.lock().unwrap();
-                index_map_lock.get(&chunk_coord).copied()
-            };
-            let chunk_sdfs = if let Some(offset) = file_offset {
-                load_chunk_data(&mut data_file, offset)
+            let rtxn = env.read_txn().unwrap();
+            let mut loaded_chunk_keys_locked = loaded_chunk_keys.lock().unwrap();
+            let chunk_sdfs = if loaded_chunk_keys_locked.contains(&chunk_coord) {
+                drop(loaded_chunk_keys_locked);
+                let bytes = db.get(&rtxn, &chunk_coord).unwrap().unwrap();
+                deserialize_chunk_data(&bytes)
             } else {
+                loaded_chunk_keys_locked.insert(chunk_coord);
+                drop(loaded_chunk_keys_locked);
                 let chunk = TerrainChunk::new(chunk_coord, &fbm);
-                let mut index_map_lock = index_map_arc.lock().unwrap();
-                create_chunk_file_data(
-                    &chunk,
-                    &chunk_coord,
-                    &mut index_map_lock,
-                    &data_file,
-                    &index_file,
-                );
+                let mut wtxn = env.write_txn().unwrap();
+                let bytes = serialize_chunk_data(&chunk);
+                db.put(&mut wtxn, &chunk_coord, &bytes).unwrap();
+                wtxn.commit().unwrap();
                 chunk
             };
             let mesh = march_cubes(

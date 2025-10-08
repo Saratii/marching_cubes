@@ -14,9 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     conversions::{chunk_coord_to_world_pos, flatten_index, world_pos_to_chunk_coord},
-    data_loader::file_loader::{
-        ChunkDataFileReadWrite, ChunkIndexFile, ChunkIndexMap, create_chunk_file_data,
-        load_chunk_data,
+    data_loader::file_loader::{DataBaseEnvHandle, DataBaseHandle, LoadedChunkKeys, deserialize_chunk_data, serialize_chunk_data,
     },
     marching_cubes::march_cubes,
     player::player::PLAYER_SPAWN,
@@ -119,13 +117,13 @@ pub fn setup_map(
 
 pub fn spawn_initial_chunks(
     mut commands: Commands,
-    chunk_index_map: Res<ChunkIndexMap>,
+    loaded_chunk_keys: Res<LoadedChunkKeys>,
     mut svo: ResMut<ChunkSvo>,
     mut meshes: ResMut<Assets<Mesh>>,
     standard_material: Res<StandardTerrainMaterialHandle>,
     fbm: Res<NoiseFunction>,
-    index_file: ResMut<ChunkIndexFile>,
-    chunk_data_file: Res<ChunkDataFileReadWrite>,
+    database_env: Res<DataBaseEnvHandle>,
+    database: Res<DataBaseHandle>,
 ) {
     let player_chunk = world_pos_to_chunk_coord(&PLAYER_SPAWN);
     let min_chunk = (
@@ -142,31 +140,24 @@ pub fn spawn_initial_chunks(
         for chunk_z in min_chunk.2..=max_chunk.2 {
             for chunk_y in min_chunk.1..=max_chunk.1 {
                 let chunk_coord = (chunk_x, chunk_y, chunk_z);
-                let file_offset = {
-                    let index_map_lock = chunk_index_map.0.lock().unwrap();
-                    index_map_lock.get(&chunk_coord).copied()
-                };
-                let mut data_file = chunk_data_file.0.lock().unwrap();
-                let mut index_file = index_file.0.lock().unwrap();
-                let terrain_chunk = if let Some(offset) = file_offset {
-                    load_chunk_data(&mut data_file, offset)
+                let mut locked_loaded_chunk_keys = loaded_chunk_keys.0.lock().unwrap();
+                let chunk_data = if locked_loaded_chunk_keys.contains(&chunk_coord) {
+                    drop(locked_loaded_chunk_keys);
+                    let rtxn = database_env.0.read_txn().unwrap();
+                    let bytes = database.0.get(&rtxn, &chunk_coord).unwrap().unwrap();
+                    deserialize_chunk_data(&bytes)
                 } else {
-                    let mut index_map_lock = chunk_index_map.0.lock().unwrap();
+                    locked_loaded_chunk_keys.insert(chunk_coord);
+                    drop(locked_loaded_chunk_keys);
                     let chunk = TerrainChunk::new(chunk_coord, &fbm.0);
-                    create_chunk_file_data(
-                        &chunk,
-                        &chunk_coord,
-                        &mut index_map_lock,
-                        &mut data_file,
-                        &mut index_file,
-                    );
-                    drop(index_map_lock);
+                    let mut wtxn = database_env.0.write_txn().unwrap();
+                    let bytes = serialize_chunk_data(&chunk);
+                    database.0.put(&mut wtxn, &chunk_coord, &bytes).unwrap();
+                    wtxn.commit().unwrap();
                     chunk
                 };
-                drop(data_file);
-                drop(index_file);
                 let mesh = march_cubes(
-                    &terrain_chunk.sdfs,
+                    &chunk_data.sdfs,
                     CUBES_PER_CHUNK_DIM,
                     SDF_VALUES_PER_CHUNK_DIM,
                 );
@@ -189,7 +180,7 @@ pub fn spawn_initial_chunks(
                 } else {
                     commands.spawn((ChunkTag, transform)).id()
                 };
-                svo.root.insert(chunk_coord, entity, terrain_chunk);
+                svo.root.insert(chunk_coord, entity, chunk_data);
             }
         }
     }
@@ -198,10 +189,10 @@ pub fn spawn_initial_chunks(
 //writes data to disk for a large amount of chunks without saving to memory
 // 900GB written in 8 minutes HEHE
 pub fn generate_large_map_utility(
-    chunk_index_map: Res<ChunkIndexMap>,
+    loaded_chunk_keys: Res<LoadedChunkKeys>,
     fbm: Res<NoiseFunction>,
-    index_file: ResMut<ChunkIndexFile>,
-    chunk_data_file: Res<ChunkDataFileReadWrite>,
+    database_env: Res<DataBaseEnvHandle>,
+    database: Res<DataBaseHandle>,
 ) {
     const CREATION_RADIUS: f32 = 100.0;
     const CREATION_RADIUS_SQUARED: f32 = CREATION_RADIUS * CREATION_RADIUS;
@@ -222,22 +213,17 @@ pub fn generate_large_map_utility(
                 let chunk_coord = (chunk_x, chunk_y, chunk_z);
                 let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
                 if chunk_world_pos.distance_squared(PLAYER_SPAWN) < CREATION_RADIUS_SQUARED {
-                    let mut locked_index_map = chunk_index_map.0.lock().unwrap();
-                    if !locked_index_map.contains_key(&chunk_coord) {
+                    let mut locked_index_map = loaded_chunk_keys.0.lock().unwrap();
+                    if !locked_index_map.contains(&chunk_coord) {
                         let chunk = TerrainChunk::new(chunk_coord, &fbm.0);
-                        let mut data_file = chunk_data_file.0.lock().unwrap();
-                        let mut index_file = index_file.0.lock().unwrap();
-                        create_chunk_file_data(
-                            &chunk,
-                            &chunk_coord,
-                            &mut locked_index_map,
-                            &mut data_file,
-                            &mut index_file,
-                        );
-                        drop(data_file);
-                        drop(index_file);
-                    };
-                    drop(locked_index_map);
+                        locked_index_map.insert(chunk_coord);
+                        drop(locked_index_map);
+                        let mut wtxn = database_env.0.write_txn().unwrap();
+                        let bytes = serialize_chunk_data(&chunk);
+                        database.0.put(&mut wtxn, &chunk_coord, &bytes).unwrap();
+                    } else {
+                        drop(locked_index_map);
+                    }
                 }
             }
         }
