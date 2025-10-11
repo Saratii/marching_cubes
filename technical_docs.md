@@ -4,7 +4,7 @@ Engine:
     The end goal is to have all volumetric data abide by variable viscous fluid dynamics, providing hyper-realistic terrain. 
 
 World Representation:
-    The world is represented as volumetric SDF data where each float is a distance to an implicit surface.
+    The world is represented as volumetric SDF data where each quantized float is a density value, which also works as the distance to a local implicit surface.
     The volumetric data is chunked to allow local world modification and smaller mesh regeneration.
     The Marching Cubes algorithm is used to approximate an isosurface and create a mesh for each chunk out of triangles. 
     Within marching cubes, I used trilinear interpolation to create artifically smooth surfaces from discrete volumetric data.
@@ -21,6 +21,7 @@ Chunk Allocation/Deallocation:
     Anytime a chunk is deformed, the data is overwritten in storage creating a persistant game state withing having to explictely "save".
     Because chunk operations are expensive, chunk updates require the distance from the last update to be greater than some constant grace area.
     This allows the player to move around a small area that follows the player without any chunk unloading or unloading. 
+    Chunks are loaded asyncronously in a long term compute thread. I used pipes to send the load requests and recieve the data. 
 
 Backend Bevy:
     This engine uses the popular rust game backend, bevy. This allows much of the boilerplate code to be handled by bevy while still allowing low level attention to detail. 
@@ -35,6 +36,12 @@ World Generation:
     Runtime chunks are generated in parallel and async already but the Mutex locking could be improved. 
 
 - leave no core un-fucked
+
+
+
+Failed Technologies:
+    8 bit symmetric quantization - too much data loss, causes visual artifacts
+    Memory mapped database, LMDB. The internet said it was fast, its not. My custom file loading was 6x faster. 
 
 Drucker-Prager Elastoplasticity - https://math.ucdavis.edu/~jteran/papers/KGPSJT16.pdf, https://www.youtube.com/watch?v=Bqme4WWuIVQ, https://math.ucdavis.edu/~jteran/
 visco fluid sim - https://github.com/kotsoft/particle_based_viscoelastic_fluid

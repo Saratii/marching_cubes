@@ -5,7 +5,10 @@ use bevy::prelude::*;
 use crate::{
     conversions::{chunk_coord_to_world_pos, world_pos_to_chunk_coord},
     data_loader::driver::{ChunkChannels, ChunkRequest, ChunksBeingLoaded},
-    terrain::terrain::{HALF_CHUNK, SDF_VALUES_PER_CHUNK_DIM, TerrainChunk, VOXEL_SIZE},
+    terrain::{
+        chunk_generator::{dequantize_i16_to_f32, quantize_f32_to_i16},
+        terrain::{HALF_CHUNK, SDF_VALUES_PER_CHUNK_DIM, TerrainChunk, VOXEL_SIZE},
+    },
 };
 
 const MAX_WORLD_SIZE: i16 = 2048;
@@ -310,8 +313,10 @@ impl SvoNode {
                             let dig_amount = strength * falloff;
                             let current_density =
                                 chunk.get_mut_density(x as u32, y as u32, z as u32);
-                            if current_density.sdf > 0.0 {
-                                current_density.sdf -= dig_amount;
+                            if current_density.sdf > 0 {
+                                let sdf_f32 = dequantize_i16_to_f32(current_density.sdf);
+                                let new_sdf = (sdf_f32 - dig_amount).clamp(-10.0, 10.0);
+                                current_density.sdf = quantize_f32_to_i16(new_sdf);
                                 chunk_modified = true;
                             }
                         }

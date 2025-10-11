@@ -67,12 +67,13 @@ fn main() {
             (
                 setup_loading_thread.after(setup_chunk_loading),
                 setup,
+                setup_chunk_loading,
+                // generate_large_map_utility.after(setup_chunk_loading),
                 setup_map,
                 setup_crosshair,
                 spawn_player,
                 initial_grab_cursor,
                 spawn_initial_chunks.after(setup_chunk_loading),
-                setup_chunk_loading,
             ),
         )
         .add_systems(
@@ -119,9 +120,9 @@ fn handle_digging_input(
     mut solid_chunk_query: Query<(&mut Collider, &mut Mesh3d, Entity), With<ChunkTag>>,
     mut mesh_handles: ResMut<Assets<Mesh>>,
 ) {
-    const DIG_STRENGTH: f32 = 0.1;
+    const DIG_STRENGTH: f32 = 0.3;
     const DIG_TIMER: f32 = 0.02; // seconds
-    const DIG_RADIUS: f32 = 0.3; // world space
+    const DIG_RADIUS: f32 = 0.5; // world space
     let should_dig = if mouse_input.pressed(MouseButton::Left) {
         *dig_timer += time.delta_secs();
         if *dig_timer >= DIG_TIMER {

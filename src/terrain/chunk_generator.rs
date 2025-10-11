@@ -25,7 +25,7 @@ pub fn generate_densities(
 ) -> (Box<[VoxelData; VOXELS_PER_CHUNK]>, bool) {
     let mut densities = vec![
         VoxelData {
-            sdf: 0.0,
+            sdf: 0,
             material: 255
         };
         VOXELS_PER_CHUNK
@@ -62,9 +62,9 @@ pub fn chunk_contains_surface(chunk: &TerrainChunk) -> bool {
     let mut has_positive = false;
     let mut has_negative = false;
     for &sdf in &chunk.sdfs {
-        if sdf.sdf > 0.0 {
+        if sdf.sdf > 0 {
             has_positive = true;
-        } else if sdf.sdf < 0.0 {
+        } else if sdf.sdf < 0 {
             has_negative = true;
         }
         if has_positive && has_negative {
@@ -101,13 +101,14 @@ fn fill_voxel_densities(densities: &mut [VoxelData], chunk_start: &Vec3, terrain
             for x in 0..SDF_VALUES_PER_CHUNK_DIM {
                 let terrain_height = terrain_heights[height_base + x];
                 let voxel_index = index_base + x;
-                let distance_to_surface = terrain_height - world_y;
-                if distance_to_surface < 0.0 {
+                let distance_to_surface =
+                    quantize_f32_to_i16((terrain_height - world_y).clamp(-10.0, 10.0));
+                if distance_to_surface < 0 {
                     densities[voxel_index] = VoxelData {
                         sdf: distance_to_surface,
                         material: 0,
                     };
-                } else if distance_to_surface < VOXEL_SIZE * 2.0 {
+                } else if distance_to_surface < quantize_f32_to_i16(VOXEL_SIZE * 2.0) {
                     densities[voxel_index] = VoxelData {
                         sdf: distance_to_surface,
                         material: 2,
@@ -121,4 +122,16 @@ fn fill_voxel_densities(densities: &mut [VoxelData], chunk_start: &Vec3, terrain
             }
         }
     }
+}
+
+#[inline]
+pub fn quantize_f32_to_i16(value: f32) -> i16 {
+    let scale = 32767.0 / 10.0; // Map [-10, 10] to [-32767, 32767]
+    (value * scale).round() as i16
+}
+
+#[inline]
+pub fn dequantize_i16_to_f32(q: i16) -> f32 {
+    let scale = 32767.0 / 10.0;
+    q as f32 / scale
 }
