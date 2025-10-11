@@ -21,7 +21,7 @@ use crate::{
     marching_cubes::march_cubes,
     player::player::PLAYER_SPAWN,
     sparse_voxel_octree::ChunkSvo,
-    terrain::chunk_generator::generate_densities,
+    terrain::chunk_generator::{chunk_contains_surface, generate_densities},
 };
 
 pub const SDF_VALUES_PER_CHUNK_DIM: usize = 32; // Number of voxel sample points
@@ -31,7 +31,7 @@ pub const CHUNK_SIZE: f32 = CUBES_PER_CHUNK_DIM as f32 * VOXEL_SIZE; // 7.875 me
 pub const VOXELS_PER_CHUNK: usize =
     SDF_VALUES_PER_CHUNK_DIM * SDF_VALUES_PER_CHUNK_DIM * SDF_VALUES_PER_CHUNK_DIM;
 pub const HALF_CHUNK: f32 = CHUNK_SIZE / 2.0;
-pub const Z1_RADIUS: f32 = 20.0; //in world units. Distance where everything is loaded at all times and physically simulated.
+pub const Z1_RADIUS: f32 = 10.0; //in world units. Distance where everything is loaded at all times and physically simulated.
 pub const Z1_RADIUS_SQUARED: f32 = Z1_RADIUS * Z1_RADIUS;
 pub const Z2_RADIUS: f32 = 90.0; //in world units. Distance where chunks are loaded but not physically simulated.
 pub const Z2_RADIUS_SQUARED: f32 = Z2_RADIUS * Z2_RADIUS;
@@ -60,10 +60,9 @@ pub struct TerrainChunk {
 }
 
 impl TerrainChunk {
-    pub fn new(chunk_coord: (i16, i16, i16), fbm: &GeneratorWrapper<SafeNode>) -> Self {
-        Self {
-            sdfs: generate_densities(&chunk_coord, fbm),
-        }
+    pub fn new(chunk_coord: (i16, i16, i16), fbm: &GeneratorWrapper<SafeNode>) -> (Self, bool) {
+        let (densities, has_surface) = generate_densities(&chunk_coord, fbm);
+        (Self { sdfs: densities }, has_surface)
     }
 
     pub fn set_density(&mut self, x: u32, y: u32, z: u32, density: VoxelData) {
@@ -107,6 +106,7 @@ pub fn setup_map(
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
     let standard_terrain_material_handle = materials.add(StandardMaterial {
         base_color_texture: Some(atlas_texture_handle.clone()),
+        perceptual_roughness: 0.6,
         ..default()
     });
     commands.insert_resource(ChunkSvo::new());
@@ -138,46 +138,43 @@ pub fn spawn_initial_chunks(
         player_chunk.1 + Z1_RADIUS as i16,
         player_chunk.2 + Z1_RADIUS as i16,
     );
+    let mut index_map_lock = chunk_index_map.0.lock().unwrap();
+    let mut data_file_lock = chunk_data_file.0.lock().unwrap();
+    let mut index_file_lock = index_file.0.lock().unwrap();
     for chunk_x in min_chunk.0..=max_chunk.0 {
         for chunk_z in min_chunk.2..=max_chunk.2 {
             for chunk_y in min_chunk.1..=max_chunk.1 {
                 let chunk_coord = (chunk_x, chunk_y, chunk_z);
-                let file_offset = {
-                    let index_map_lock = chunk_index_map.0.lock().unwrap();
-                    index_map_lock.get(&chunk_coord).copied()
-                };
-                let mut data_file = chunk_data_file.0.lock().unwrap();
-                let mut index_file = index_file.0.lock().unwrap();
-                let terrain_chunk = if let Some(offset) = file_offset {
-                    load_chunk_data(&mut data_file, offset)
+                let file_offset = index_map_lock.get(&chunk_coord);
+                let (terrain_chunk, contains_surface) = if let Some(offset) = file_offset {
+                    let chunk = load_chunk_data(&mut data_file_lock, *offset);
+                    let contains_surface = chunk_contains_surface(&chunk);
+                    (chunk, contains_surface)
                 } else {
-                    let mut index_map_lock = chunk_index_map.0.lock().unwrap();
-                    let chunk = TerrainChunk::new(chunk_coord, &fbm.0);
+                    let (chunk, contains_surface) = TerrainChunk::new(chunk_coord, &fbm.0);
                     create_chunk_file_data(
                         &chunk,
                         &chunk_coord,
                         &mut index_map_lock,
-                        &mut data_file,
-                        &mut index_file,
+                        &mut data_file_lock,
+                        &mut index_file_lock,
                     );
-                    drop(index_map_lock);
-                    chunk
+                    (chunk, contains_surface)
                 };
-                drop(data_file);
-                drop(index_file);
-                let mesh = march_cubes(
-                    &terrain_chunk.sdfs,
-                    CUBES_PER_CHUNK_DIM,
-                    SDF_VALUES_PER_CHUNK_DIM,
-                );
-                let transform = Transform::from_translation(chunk_coord_to_world_pos(&chunk_coord));
-                let entity = if mesh.count_vertices() > 0 {
+                if contains_surface {
+                    let mesh = march_cubes(
+                        &terrain_chunk.sdfs,
+                        CUBES_PER_CHUNK_DIM,
+                        SDF_VALUES_PER_CHUNK_DIM,
+                    );
+                    let transform =
+                        Transform::from_translation(chunk_coord_to_world_pos(&chunk_coord));
                     let collider = Collider::from_bevy_mesh(
                         &mesh,
                         &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
                     )
                     .unwrap();
-                    Some(commands
+                    let id = commands
                         .spawn((
                             Mesh3d(meshes.add(mesh)),
                             MeshMaterial3d(standard_material.0.clone()),
@@ -185,11 +182,11 @@ pub fn spawn_initial_chunks(
                             transform,
                             collider,
                         ))
-                        .id())
+                        .id();
+                    svo.root.insert(chunk_coord, Some(id), terrain_chunk);
                 } else {
-                    None
-                };
-                svo.root.insert(chunk_coord, entity, terrain_chunk);
+                    svo.root.insert(chunk_coord, None, terrain_chunk);
+                }
             }
         }
     }
@@ -224,7 +221,7 @@ pub fn generate_large_map_utility(
                 if chunk_world_pos.distance_squared(PLAYER_SPAWN) < CREATION_RADIUS_SQUARED {
                     let mut locked_index_map = chunk_index_map.0.lock().unwrap();
                     if !locked_index_map.contains_key(&chunk_coord) {
-                        let chunk = TerrainChunk::new(chunk_coord, &fbm.0);
+                        let (chunk, _) = TerrainChunk::new(chunk_coord, &fbm.0);
                         let mut data_file = chunk_data_file.0.lock().unwrap();
                         let mut index_file = index_file.0.lock().unwrap();
                         create_chunk_file_data(
