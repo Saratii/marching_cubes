@@ -6,10 +6,7 @@ use bevy::{
     render::render_resource::{AddressMode, SamplerDescriptor},
 };
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
-use fastnoise2::{
-    SafeNode,
-    generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
-};
+use fastnoise2::{SafeNode, generator::GeneratorWrapper};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -47,7 +44,7 @@ pub struct StandardTerrainMaterialHandle(pub Handle<StandardMaterial>);
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct VoxelData {
-    pub sdf: f32,
+    pub sdf: i16,
     pub material: u8,
 }
 
@@ -81,7 +78,7 @@ impl TerrainChunk {
     }
 
     pub fn is_solid(&self, x: u32, y: u32, z: u32) -> bool {
-        self.get_density(x, y, z).sdf > 0.0
+        self.get_density(x, y, z).sdf > 0
     }
 }
 
@@ -102,15 +99,12 @@ pub fn setup_map(
                 .into(),
             )
         });
-    let fbm =
-        || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
     let standard_terrain_material_handle = materials.add(StandardMaterial {
         base_color_texture: Some(atlas_texture_handle.clone()),
         perceptual_roughness: 0.6,
         ..default()
     });
     commands.insert_resource(ChunkSvo::new());
-    commands.insert_resource(NoiseFunction(Arc::new(fbm)));
     commands.insert_resource(StandardTerrainMaterialHandle(
         standard_terrain_material_handle,
     ));
@@ -200,7 +194,7 @@ pub fn generate_large_map_utility(
     index_file: ResMut<ChunkIndexFile>,
     chunk_data_file: Res<ChunkDataFileReadWrite>,
 ) {
-    const CREATION_RADIUS: f32 = 100.0;
+    const CREATION_RADIUS: f32 = 150.0;
     const CREATION_RADIUS_SQUARED: f32 = CREATION_RADIUS * CREATION_RADIUS;
     let player_chunk = world_pos_to_chunk_coord(&PLAYER_SPAWN);
     let min_chunk = (
@@ -239,5 +233,6 @@ pub fn generate_large_map_utility(
             }
         }
     }
+    println!("Finished generating large map.");
     exit(0);
 }

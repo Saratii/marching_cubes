@@ -1,11 +1,14 @@
-use crate::terrain::terrain::{TerrainChunk, VOXELS_PER_CHUNK, VoxelData};
+use crate::terrain::terrain::{NoiseFunction, TerrainChunk, VOXELS_PER_CHUNK, VoxelData};
 use bevy::prelude::*;
+use fastnoise2::SafeNode;
+use fastnoise2::generator::simplex::opensimplex2;
+use fastnoise2::generator::{Generator, GeneratorWrapper};
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex};
 
-const BYTES_PER_VOXEL: usize = std::mem::size_of::<f32>() + std::mem::size_of::<u8>();
+const BYTES_PER_VOXEL: usize = std::mem::size_of::<i16>() + std::mem::size_of::<u8>();
 const CHUNK_SERIALIZED_SIZE: usize = VOXELS_PER_CHUNK * BYTES_PER_VOXEL;
 
 #[derive(Resource)]
@@ -21,8 +24,7 @@ pub struct ChunkDataFileReadWrite(pub Arc<Mutex<File>>);
 pub struct ChunkIndexMap(pub Arc<Mutex<HashMap<(i16, i16, i16), u64>>>);
 
 // Binary format layout:
-// - Number of voxels: u32 (4 bytes)
-// - SDF values: num_voxels * f32 (4 bytes each)
+// - SDF values: num_voxels * i16 (2 bytes each)
 // - Material values: num_voxels * u8 (1 byte each)
 
 fn serialize_chunk_data(chunk: &TerrainChunk) -> Vec<u8> {
@@ -38,9 +40,9 @@ fn serialize_chunk_data(chunk: &TerrainChunk) -> Vec<u8> {
 
 pub fn deserialize_chunk_data(data: &[u8]) -> TerrainChunk {
     let mut sdfs = Vec::with_capacity(VOXELS_PER_CHUNK);
-    let (sdf_bytes, material_bytes) = data.split_at(VOXELS_PER_CHUNK * 4);
-    for (sdf_bytes, &material) in sdf_bytes.chunks_exact(4).zip(material_bytes) {
-        let sdf = f32::from_le_bytes(sdf_bytes.try_into().unwrap());
+    let (sdf_bytes, material_bytes) = data.split_at(VOXELS_PER_CHUNK * 2);
+    for (sdf_chunk, &material) in sdf_bytes.chunks_exact(2).zip(material_bytes) {
+        let sdf = i16::from_le_bytes([sdf_chunk[0], sdf_chunk[1]]);
         sdfs.push(VoxelData { sdf, material });
     }
     TerrainChunk {
@@ -80,7 +82,7 @@ pub fn update_chunk_file_data(
 }
 
 pub fn load_chunk_data(data_file: &mut File, byte_offset: u64) -> TerrainChunk {
-    let total_size = VOXELS_PER_CHUNK * 4 + VOXELS_PER_CHUNK; //sdfs + materials
+    let total_size = VOXELS_PER_CHUNK * 2 + VOXELS_PER_CHUNK; // i16 sdfs (2 bytes) + u8 materials (1 byte)
     data_file.seek(SeekFrom::Start(byte_offset)).unwrap();
     let mut buffer = vec![0u8; total_size];
     data_file.read_exact(&mut buffer).unwrap();
@@ -127,4 +129,7 @@ pub fn setup_chunk_loading(mut commands: Commands) {
         &index_file,
     )))));
     commands.insert_resource(ChunkIndexFile(Arc::new(Mutex::new(index_file))));
+    let fbm =
+        || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
+    commands.insert_resource(NoiseFunction(Arc::new(fbm)));
 }
