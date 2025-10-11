@@ -21,9 +21,12 @@ use crate::{
     marching_cubes::march_cubes,
     player::player::PlayerTag,
     sparse_voxel_octree::ChunkSvo,
-    terrain::terrain::{
-        CUBES_PER_CHUNK_DIM, ChunkTag, SDF_VALUES_PER_CHUNK_DIM, StandardTerrainMaterialHandle,
-        TerrainChunk, Z2_RADIUS_SQUARED,
+    terrain::{
+        chunk_generator::chunk_contains_surface,
+        terrain::{
+            CUBES_PER_CHUNK_DIM, ChunkTag, SDF_VALUES_PER_CHUNK_DIM, StandardTerrainMaterialHandle,
+            TerrainChunk, Z2_RADIUS_SQUARED,
+        },
     },
 };
 
@@ -86,10 +89,12 @@ pub fn setup_loading_thread(mut commands: Commands, index_map: Res<ChunkIndexMap
                 let index_map_lock = index_map_arc.lock().unwrap();
                 index_map_lock.get(&chunk_coord).copied()
             };
-            let chunk_sdfs = if let Some(offset) = file_offset {
-                load_chunk_data(&mut data_file, offset)
+            let (chunk_sdfs, contains_surface) = if let Some(offset) = file_offset {
+                let chunk = load_chunk_data(&mut data_file, offset);
+                let contains_surface = chunk_contains_surface(&chunk);
+                (chunk, contains_surface)
             } else {
-                let chunk = TerrainChunk::new(chunk_coord, &fbm);
+                let (chunk, contains_surface) = TerrainChunk::new(chunk_coord, &fbm);
                 let mut index_map_lock = index_map_arc.lock().unwrap();
                 create_chunk_file_data(
                     &chunk,
@@ -98,31 +103,34 @@ pub fn setup_loading_thread(mut commands: Commands, index_map: Res<ChunkIndexMap
                     &data_file,
                     &index_file,
                 );
-                chunk
+                (chunk, contains_surface)
             };
-            let mesh = march_cubes(
-                &chunk_sdfs.sdfs,
-                CUBES_PER_CHUNK_DIM,
-                SDF_VALUES_PER_CHUNK_DIM,
-            );
-            let vertex_count = mesh.count_vertices();
-            let collider = if req.level == 0 && vertex_count > 0 {
-                Some(
-                    Collider::from_bevy_mesh(
-                        &mesh,
-                        &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
+            let (collider, mesh) = if contains_surface {
+                let mesh = march_cubes(
+                    &chunk_sdfs.sdfs,
+                    CUBES_PER_CHUNK_DIM,
+                    SDF_VALUES_PER_CHUNK_DIM,
+                );
+                let collider = if req.level == 0 {
+                    Some(
+                        Collider::from_bevy_mesh(
+                            &mesh,
+                            &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
+                        )
+                        .unwrap(),
                     )
-                    .unwrap(),
-                )
+                } else {
+                    None
+                };
+                (collider, Some(mesh))
             } else {
-                None
+                (None, None)
             };
             let data = if req.level == 0 {
                 Some(chunk_sdfs)
             } else {
                 None
             };
-            let mesh = if vertex_count > 0 { Some(mesh) } else { None };
             let _ = res_tx.send(ChunkResult {
                 data,
                 mesh,

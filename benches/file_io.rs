@@ -60,7 +60,7 @@ fn benchmark_write_single_existing_chunk(c: &mut Criterion) {
 fn benchmark_write_single_new_chunk(c: &mut Criterion) {
     let noise_function =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
-    let chunk = generate_densities(&(0, 0, 0), &noise_function);
+    let (chunk, _) = generate_densities(&(0, 0, 0), &noise_function);
     let terrain_chunk = TerrainChunk { sdfs: chunk };
     let chunk_coord = (1000, 1000, 1000);
     let mut index_map = HashMap::new();
@@ -122,7 +122,7 @@ fn benchmark_bulk_write_new_chunk(c: &mut Criterion) {
     let mut chunks_data = Vec::new();
     for i in 0..100 {
         let chunk_coord = (1000 + i, 1000, 1000);
-        let chunk = generate_densities(&chunk_coord, &noise_function);
+        let (chunk, _) = generate_densities(&chunk_coord, &noise_function);
         let terrain_chunk = TerrainChunk { sdfs: chunk };
         chunks_data.push((terrain_chunk, chunk_coord));
     }

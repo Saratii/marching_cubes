@@ -2,7 +2,8 @@ use bevy::{ecs::event::Event, math::Vec3};
 use fastnoise2::{SafeNode, generator::GeneratorWrapper};
 
 use crate::terrain::terrain::{
-    CHUNK_SIZE, HALF_CHUNK, SDF_VALUES_PER_CHUNK_DIM, VOXEL_SIZE, VOXELS_PER_CHUNK, VoxelData,
+    CHUNK_SIZE, HALF_CHUNK, SDF_VALUES_PER_CHUNK_DIM, TerrainChunk, VOXEL_SIZE, VOXELS_PER_CHUNK,
+    VoxelData,
 };
 
 pub const NOISE_SEED: u32 = 100; // Seed for noise generation
@@ -21,7 +22,7 @@ pub struct LoadChunksEvent {
 pub fn generate_densities(
     chunk_coord: &(i16, i16, i16),
     fbm: &GeneratorWrapper<SafeNode>,
-) -> Box<[VoxelData; VOXELS_PER_CHUNK]> {
+) -> (Box<[VoxelData; VOXELS_PER_CHUNK]>, bool) {
     let mut densities = vec![
         VoxelData {
             sdf: 0.0,
@@ -31,8 +32,9 @@ pub fn generate_densities(
     ];
     let chunk_start = calculate_chunk_start(chunk_coord);
     let terrain_heights = generate_terrain_heights(&chunk_start, fbm);
+    let contains_surface = heights_contains_surface(&chunk_start, &terrain_heights);
     fill_voxel_densities(&mut densities, &chunk_start, &terrain_heights);
-    densities.try_into().unwrap()
+    (densities.try_into().unwrap(), contains_surface)
 }
 
 fn calculate_chunk_start(chunk_coord: &(i16, i16, i16)) -> Vec3 {
@@ -41,6 +43,35 @@ fn calculate_chunk_start(chunk_coord: &(i16, i16, i16)) -> Vec3 {
         chunk_coord.1 as f32 * CHUNK_SIZE - HALF_CHUNK,
         chunk_coord.2 as f32 * CHUNK_SIZE - HALF_CHUNK,
     )
+}
+
+pub fn heights_contains_surface(chunk_start: &Vec3, terrain_heights: &[f32]) -> bool {
+    let chunk_bottom = chunk_start.y;
+    let chunk_top = chunk_start.y + CHUNK_SIZE;
+    let mut min_height = f32::INFINITY;
+    let mut max_height = f32::NEG_INFINITY;
+    for &height in terrain_heights {
+        min_height = min_height.min(height);
+        max_height = max_height.max(height);
+    }
+    max_height >= chunk_bottom && min_height < chunk_top
+}
+
+//it may be better to store a byte signifying if a chunk contains a surface when saving to disk
+pub fn chunk_contains_surface(chunk: &TerrainChunk) -> bool {
+    let mut has_positive = false;
+    let mut has_negative = false;
+    for &sdf in &chunk.sdfs {
+        if sdf.sdf > 0.0 {
+            has_positive = true;
+        } else if sdf.sdf < 0.0 {
+            has_negative = true;
+        }
+        if has_positive && has_negative {
+            return true;
+        }
+    }
+    false
 }
 
 fn generate_terrain_heights(chunk_start: &Vec3, fbm: &GeneratorWrapper<SafeNode>) -> Vec<f32> {
