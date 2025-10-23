@@ -313,9 +313,9 @@ impl SvoNode {
                             let dig_amount = strength * falloff;
                             let current_density =
                                 chunk.get_mut_density(x as u32, y as u32, z as u32);
-                            if *current_density > 0 {
+                            if *current_density < 0 {
                                 let sdf_f32 = dequantize_i16_to_f32(*current_density);
-                                let new_sdf = (sdf_f32 - dig_amount).clamp(-10.0, 10.0);
+                                let new_sdf = (sdf_f32 + dig_amount).clamp(-10.0, 10.0);
                                 *current_density = quantize_f32_to_i16(new_sdf);
                                 chunk_modified = true;
                             }

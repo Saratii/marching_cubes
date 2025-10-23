@@ -9,6 +9,8 @@ use bevy::render::view::NoFrustumCulling;
 use bevy::window::PresentMode;
 use bevy_rapier3d::plugin::{NoUserData, RapierPhysicsPlugin};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
+use isomesh::marching_cubes::color_provider::MaterialColorProvider;
+use isomesh::marching_cubes::mc::{MeshBuffers, mc_mesh_generation};
 use iyes_perf_ui::PerfUiPlugin;
 use iyes_perf_ui::prelude::PerfUiDefaultEntries;
 use marching_cubes::conversions::{
@@ -20,7 +22,6 @@ use marching_cubes::data_loader::driver::{
 use marching_cubes::data_loader::file_loader::{
     ChunkDataFileReadWrite, ChunkIndexMap, setup_chunk_loading, update_chunk_file_data,
 };
-use marching_cubes::marching_cubes::march_cubes;
 use marching_cubes::player::player::{
     CameraController, KeyBindings, MainCameraTag, camera_look, camera_zoom, cursor_grab,
     initial_grab_cursor, player_movement, spawn_player, toggle_camera,
@@ -30,7 +31,7 @@ use marching_cubes::terrain::chunk_generator::{GenerateChunkEvent, LoadChunksEve
 use marching_cubes::terrain::lod_zones::z2_chunk_load;
 use marching_cubes::terrain::terrain::{
     CUBES_PER_CHUNK_DIM, ChunkTag, HALF_CHUNK, SDF_VALUES_PER_CHUNK_DIM,
-    StandardTerrainMaterialHandle, setup_map, spawn_initial_chunks,
+    StandardTerrainMaterialHandle, VOXEL_SIZE, generate_bevy_mesh, setup_map, spawn_initial_chunks,
 };
 use rayon::ThreadPoolBuilder;
 
@@ -147,12 +148,18 @@ fn handle_digging_input(
                 }
                 for chunk_coord in modified_chunks {
                     let (entity, chunk) = svo.root.get_mut(chunk_coord).unwrap();
-                    let new_mesh = march_cubes(
+                    let mut mesh_buffers = MeshBuffers::new();
+                    mc_mesh_generation(
+                        &mut mesh_buffers,
                         &chunk.densities,
                         &chunk.materials,
                         CUBES_PER_CHUNK_DIM,
                         SDF_VALUES_PER_CHUNK_DIM,
+                        &MaterialColorProvider,
+                        HALF_CHUNK,
+                        VOXEL_SIZE,
                     );
+                    let new_mesh = generate_bevy_mesh(mesh_buffers);
                     let vertex_count = new_mesh.count_vertices();
                     if vertex_count > 0 {
                         let collider = Collider::from_bevy_mesh(

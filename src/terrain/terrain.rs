@@ -1,12 +1,17 @@
 use std::{process::exit, sync::Arc};
 
 use bevy::{
+    asset::RenderAssetUsages,
     image::{ImageLoaderSettings, ImageSampler},
     prelude::*,
-    render::render_resource::{AddressMode, SamplerDescriptor},
+    render::{
+        mesh::{Indices, PrimitiveTopology},
+        render_resource::{AddressMode, SamplerDescriptor},
+    },
 };
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
 use fastnoise2::{SafeNode, generator::GeneratorWrapper};
+use isomesh::marching_cubes::{color_provider::MaterialColorProvider, mc::{mc_mesh_generation, MeshBuffers}};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -15,7 +20,6 @@ use crate::{
         ChunkDataFileReadWrite, ChunkIndexFile, ChunkIndexMap, create_chunk_file_data,
         load_chunk_data,
     },
-    marching_cubes::march_cubes,
     player::player::PLAYER_SPAWN,
     sparse_voxel_octree::ChunkSvo,
     terrain::chunk_generator::{chunk_contains_surface, generate_densities},
@@ -79,7 +83,7 @@ impl TerrainChunk {
     }
 
     pub fn is_solid(&self, x: u32, y: u32, z: u32) -> bool {
-        self.get_density(x, y, z) > 0
+        self.get_density(x, y, z) < 0
     }
 }
 
@@ -157,12 +161,18 @@ pub fn spawn_initial_chunks(
                     (chunk, contains_surface)
                 };
                 if contains_surface {
-                    let mesh = march_cubes(
+                    let mut mesh_buffers = MeshBuffers::new();
+                    mc_mesh_generation(
+                        &mut mesh_buffers,
                         &terrain_chunk.densities,
                         &terrain_chunk.materials,
                         CUBES_PER_CHUNK_DIM,
                         SDF_VALUES_PER_CHUNK_DIM,
+                        &MaterialColorProvider,
+                        HALF_CHUNK,
+                        VOXEL_SIZE,
                     );
+                    let mesh = generate_bevy_mesh(mesh_buffers);
                     let transform =
                         Transform::from_translation(chunk_coord_to_world_pos(&chunk_coord));
                     let collider = Collider::from_bevy_mesh(
@@ -237,4 +247,24 @@ pub fn generate_large_map_utility(
     }
     println!("Finished generating large map.");
     exit(0);
+}
+
+pub fn generate_bevy_mesh(mesh_buffers: MeshBuffers) -> Mesh {
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
+    let MeshBuffers {
+        positions,
+        normals,
+        colors,
+        indices,
+        uvs,
+    } = mesh_buffers;
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    mesh.insert_indices(Indices::U32(indices));
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh
 }
