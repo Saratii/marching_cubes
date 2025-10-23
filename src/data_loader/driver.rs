@@ -107,7 +107,8 @@ pub fn setup_loading_thread(mut commands: Commands, index_map: Res<ChunkIndexMap
             };
             let (collider, mesh) = if contains_surface {
                 let mesh = march_cubes(
-                    &chunk_sdfs.sdfs,
+                    &chunk_sdfs.densities,
+                    &chunk_sdfs.materials,
                     CUBES_PER_CHUNK_DIM,
                     SDF_VALUES_PER_CHUNK_DIM,
                 );
