@@ -14,18 +14,19 @@ use fastnoise2::{
     SafeNode,
     generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
 };
+use isomesh::marching_cubes::{color_provider::MaterialColorProvider, mc::{mc_mesh_generation, MeshBuffers}};
 
 use crate::{
     conversions::chunk_coord_to_world_pos,
     data_loader::file_loader::{ChunkIndexMap, create_chunk_file_data, load_chunk_data},
-    marching_cubes::march_cubes,
     player::player::PlayerTag,
     sparse_voxel_octree::ChunkSvo,
     terrain::{
         chunk_generator::chunk_contains_surface,
         terrain::{
-            CUBES_PER_CHUNK_DIM, ChunkTag, SDF_VALUES_PER_CHUNK_DIM, StandardTerrainMaterialHandle,
-            TerrainChunk, Z2_RADIUS_SQUARED,
+            CUBES_PER_CHUNK_DIM, ChunkTag, HALF_CHUNK, SDF_VALUES_PER_CHUNK_DIM,
+            StandardTerrainMaterialHandle, TerrainChunk, VOXEL_SIZE, Z2_RADIUS_SQUARED,
+            generate_bevy_mesh,
         },
     },
 };
@@ -106,12 +107,18 @@ pub fn setup_loading_thread(mut commands: Commands, index_map: Res<ChunkIndexMap
                 (chunk, contains_surface)
             };
             let (collider, mesh) = if contains_surface {
-                let mesh = march_cubes(
+                let mut mesh_buffers = MeshBuffers::new();
+                mc_mesh_generation(
+                    &mut mesh_buffers,
                     &chunk_sdfs.densities,
                     &chunk_sdfs.materials,
                     CUBES_PER_CHUNK_DIM,
                     SDF_VALUES_PER_CHUNK_DIM,
+                    &MaterialColorProvider,
+                    HALF_CHUNK,
+                    VOXEL_SIZE,
                 );
+                let mesh = generate_bevy_mesh(mesh_buffers);
                 let collider = if req.level == 0 {
                     Some(
                         Collider::from_bevy_mesh(

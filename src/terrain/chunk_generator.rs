@@ -110,14 +110,16 @@ fn fill_voxel_densities(
                 let terrain_height = terrain_heights[height_base + x];
                 let voxel_index = index_base + x;
                 let distance_to_surface =
-                    quantize_f32_to_i16((terrain_height - world_y).clamp(-10.0, 10.0));
+                    quantize_f32_to_i16((world_y - terrain_height).clamp(-10.0, 10.0));
                 densities[voxel_index] = distance_to_surface;
                 if distance_to_surface < 0 {
-                    materials[voxel_index] = 0;
-                } else if distance_to_surface < quantize_f32_to_i16(VOXEL_SIZE * 2.0) {
-                    materials[voxel_index] = 2;
+                    if distance_to_surface < quantize_f32_to_i16(-VOXEL_SIZE * 2.0) {
+                        materials[voxel_index] = 1;
+                    } else {
+                        materials[voxel_index] = 2;
+                    }
                 } else {
-                    materials[voxel_index] = 1;
+                    materials[voxel_index] = 0;
                 }
             }
         }
