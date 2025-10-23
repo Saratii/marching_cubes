@@ -147,8 +147,12 @@ fn handle_digging_input(
                 }
                 for chunk_coord in modified_chunks {
                     let (entity, chunk) = svo.root.get_mut(chunk_coord).unwrap();
-                    let new_mesh =
-                        march_cubes(&chunk.sdfs, CUBES_PER_CHUNK_DIM, SDF_VALUES_PER_CHUNK_DIM);
+                    let new_mesh = march_cubes(
+                        &chunk.densities,
+                        &chunk.materials,
+                        CUBES_PER_CHUNK_DIM,
+                        SDF_VALUES_PER_CHUNK_DIM,
+                    );
                     let vertex_count = new_mesh.count_vertices();
                     if vertex_count > 0 {
                         let collider = Collider::from_bevy_mesh(

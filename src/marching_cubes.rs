@@ -7,7 +7,7 @@ use bevy::{
 };
 
 use crate::{
-    terrain::terrain::{HALF_CHUNK, VOXEL_SIZE, VoxelData},
+    terrain::terrain::{HALF_CHUNK, VOXEL_SIZE},
     triangle_table::TRIANGLE_TABLE,
 };
 
@@ -77,8 +77,8 @@ fn voxel_data_from_index(
     cube_y: usize,
     cube_z: usize,
     corner: usize,
-    sdf: &[VoxelData],
-    sdf_values_per_chunk_dim: usize,
+    materials: &[u8],
+    samples_per_chunk_dim: usize,
 ) -> ([f32; 4], u8) {
     let (dx, dy, dz) = match corner {
         0 => (0, 0, 0),
@@ -94,9 +94,8 @@ fn voxel_data_from_index(
     let x = cube_x + dx;
     let y = cube_y + dy;
     let z = cube_z + dz;
-    let idx =
-        z * sdf_values_per_chunk_dim * sdf_values_per_chunk_dim + y * sdf_values_per_chunk_dim + x;
-    let material = sdf[idx].material;
+    let idx = z * samples_per_chunk_dim * samples_per_chunk_dim + y * samples_per_chunk_dim + x;
+    let material = materials[idx];
     let color = match material {
         1 => [73. / 255., 34. / 255., 1. / 255., 1.0], // dirt
         2 => [17. / 255., 124. / 255., 19. / 255., 1.0], // grass
@@ -108,9 +107,10 @@ fn voxel_data_from_index(
 }
 
 pub fn march_cubes(
-    sdfs: &[VoxelData],
+    densities: &[i16],
+    materials: &[u8],
     cubes_per_chunk_dim: usize,
-    sdf_values_per_chunk_dim: usize,
+    samples_per_chunk_dim: usize,
 ) -> Mesh {
     let mut vertex_cache = VertexCache::new();
     let mut indices = Vec::new();
@@ -123,13 +123,14 @@ pub fn march_cubes(
                     z,
                     &mut vertex_cache,
                     &mut indices,
-                    sdfs,
-                    sdf_values_per_chunk_dim,
+                    densities,
+                    materials,
+                    samples_per_chunk_dim,
                 );
             }
         }
     }
-    build_mesh_from_cache_and_indices(vertex_cache, indices, sdfs, sdf_values_per_chunk_dim)
+    build_mesh_from_cache_and_indices(vertex_cache, indices, densities, samples_per_chunk_dim)
 }
 
 fn calculate_cube_index(values: &[f32; 8]) -> u8 {
@@ -169,11 +170,12 @@ fn process_cube_with_cache(
     z: usize,
     vertex_cache: &mut VertexCache,
     indices: &mut Vec<u32>,
-    densities: &[VoxelData],
-    sdf_values_per_chunk_dim: usize,
+    densities: &[i16],
+    materials: &[u8],
+    samples_per_chunk_dim: usize,
 ) {
     let cube_vertices = get_cube_vertices(x, y, z);
-    let cube_values = sample_cube_values_from_sdf(x, y, z, densities, sdf_values_per_chunk_dim);
+    let cube_values = sample_cube_values_from_sdf(x, y, z, densities, samples_per_chunk_dim);
     let cube_index = calculate_cube_index(&cube_values);
     if cube_index == 0 || cube_index == 255 {
         return;
@@ -186,8 +188,8 @@ fn process_cube_with_cache(
         y,
         z,
         vertex_cache,
-        densities,
-        sdf_values_per_chunk_dim,
+        materials,
+        samples_per_chunk_dim,
     );
     for triangle in triangles {
         indices.extend_from_slice(&triangle);
@@ -206,8 +208,8 @@ fn triangulate_cube_with_cache(
     cube_y: usize,
     cube_z: usize,
     vertex_cache: &mut VertexCache,
-    densities: &[VoxelData],
-    sdf_values_per_chunk_dim: usize,
+    materials: &[u8],
+    samples_per_chunk_dim: usize,
 ) -> Vec<[u32; 3]> {
     let edge_table = get_edge_table_for_cube(cube_index);
     let mut result = Vec::new();
@@ -222,8 +224,8 @@ fn triangulate_cube_with_cache(
                 cube_y,
                 cube_z,
                 vertex_cache,
-                densities,
-                sdf_values_per_chunk_dim,
+                materials,
+                samples_per_chunk_dim,
             );
             let v2 = get_or_create_edge_vertex(
                 edge_table[i + 1] as usize,
@@ -233,8 +235,8 @@ fn triangulate_cube_with_cache(
                 cube_y,
                 cube_z,
                 vertex_cache,
-                densities,
-                sdf_values_per_chunk_dim,
+                materials,
+                samples_per_chunk_dim,
             );
             let v3 = get_or_create_edge_vertex(
                 edge_table[i + 2] as usize,
@@ -244,8 +246,8 @@ fn triangulate_cube_with_cache(
                 cube_y,
                 cube_z,
                 vertex_cache,
-                densities,
-                sdf_values_per_chunk_dim,
+                materials,
+                samples_per_chunk_dim,
             );
             result.push([v1, v3, v2]);
             i += 3;
@@ -264,8 +266,8 @@ fn get_or_create_edge_vertex(
     cube_y: usize,
     cube_z: usize,
     vertex_cache: &mut VertexCache,
-    densities: &[VoxelData],
-    sdf_values_per_chunk_dim: usize,
+    materials: &[u8],
+    samples_per_chunk_dim: usize,
 ) -> u32 {
     let edge_id = get_canonical_edge_id(edge_index, cube_x, cube_y, cube_z);
     let (v1_idx, v2_idx) = EDGE_VERTICES[edge_index];
@@ -277,8 +279,8 @@ fn get_or_create_edge_vertex(
         cube_y,
         cube_z,
         solid_corner,
-        densities,
-        sdf_values_per_chunk_dim,
+        materials,
+        samples_per_chunk_dim,
     );
     vertex_cache.get_or_create_vertex(edge_id, position, color, material)
 }
@@ -384,14 +386,12 @@ fn sample_cube_values_from_sdf(
     x: usize,
     y: usize,
     z: usize,
-    sdf: &[VoxelData],
-    sdf_values_per_chunk_dim: usize,
+    densities: &[i16],
+    samples_per_chunk_dim: usize,
 ) -> [f32; 8] {
     let get_sdf = |x: usize, y: usize, z: usize| -> f32 {
-        let idx = z * sdf_values_per_chunk_dim * sdf_values_per_chunk_dim
-            + y * sdf_values_per_chunk_dim
-            + x;
-        sdf[idx].sdf as f32
+        let idx = z * samples_per_chunk_dim * samples_per_chunk_dim + y * samples_per_chunk_dim + x;
+        densities[idx] as f32
     };
     [
         get_sdf(x, y, z),
@@ -405,40 +405,36 @@ fn sample_cube_values_from_sdf(
     ]
 }
 
-fn calculate_vertex_normal(
-    point: Vec3,
-    sdf: &[VoxelData],
-    sdf_values_per_chunk_dim: usize,
-) -> Vec3 {
+fn calculate_vertex_normal(point: Vec3, densities: &[i16], samples_per_chunk_dim: usize) -> Vec3 {
     let epsilon = VOXEL_SIZE;
     let grad_x = sample_sdf_at_point_with_interpolation(
         point + Vec3::new(epsilon, 0.0, 0.0),
-        sdf,
-        sdf_values_per_chunk_dim,
+        densities,
+        samples_per_chunk_dim,
     ) - sample_sdf_at_point_with_interpolation(
         point - Vec3::new(epsilon, 0.0, 0.0),
-        sdf,
-        sdf_values_per_chunk_dim,
+        densities,
+        samples_per_chunk_dim,
     );
 
     let grad_y = sample_sdf_at_point_with_interpolation(
         point + Vec3::new(0.0, epsilon, 0.0),
-        sdf,
-        sdf_values_per_chunk_dim,
+        densities,
+        samples_per_chunk_dim,
     ) - sample_sdf_at_point_with_interpolation(
         point - Vec3::new(0.0, epsilon, 0.0),
-        sdf,
-        sdf_values_per_chunk_dim,
+        densities,
+        samples_per_chunk_dim,
     );
 
     let grad_z = sample_sdf_at_point_with_interpolation(
         point + Vec3::new(0.0, 0.0, epsilon),
-        sdf,
-        sdf_values_per_chunk_dim,
+        densities,
+        samples_per_chunk_dim,
     ) - sample_sdf_at_point_with_interpolation(
         point - Vec3::new(0.0, 0.0, epsilon),
-        sdf,
-        sdf_values_per_chunk_dim,
+        densities,
+        samples_per_chunk_dim,
     );
 
     Vec3::new(-grad_x, -grad_y, -grad_z).normalize_or_zero()
@@ -446,29 +442,27 @@ fn calculate_vertex_normal(
 
 fn sample_sdf_at_point_with_interpolation(
     point: Vec3,
-    sdf: &[VoxelData],
-    sdf_values_per_chunk_dim: usize,
+    densities: &[i16],
+    samples_per_chunk_dim: usize,
 ) -> f32 {
     let voxel_x = (point.x + HALF_CHUNK) / VOXEL_SIZE;
     let voxel_y = (point.y + HALF_CHUNK) / VOXEL_SIZE;
     let voxel_z = (point.z + HALF_CHUNK) / VOXEL_SIZE;
-    let voxel_x = voxel_x.clamp(0.0, (sdf_values_per_chunk_dim - 1) as f32);
-    let voxel_y = voxel_y.clamp(0.0, (sdf_values_per_chunk_dim - 1) as f32);
-    let voxel_z = voxel_z.clamp(0.0, (sdf_values_per_chunk_dim - 1) as f32);
+    let voxel_x = voxel_x.clamp(0.0, (samples_per_chunk_dim - 1) as f32);
+    let voxel_y = voxel_y.clamp(0.0, (samples_per_chunk_dim - 1) as f32);
+    let voxel_z = voxel_z.clamp(0.0, (samples_per_chunk_dim - 1) as f32);
     let x0 = voxel_x.floor() as usize;
     let y0 = voxel_y.floor() as usize;
     let z0 = voxel_z.floor() as usize;
-    let x1 = (x0 + 1).min(sdf_values_per_chunk_dim - 1);
-    let y1 = (y0 + 1).min(sdf_values_per_chunk_dim - 1);
-    let z1 = (z0 + 1).min(sdf_values_per_chunk_dim - 1);
+    let x1 = (x0 + 1).min(samples_per_chunk_dim - 1);
+    let y1 = (y0 + 1).min(samples_per_chunk_dim - 1);
+    let z1 = (z0 + 1).min(samples_per_chunk_dim - 1);
     let fx = voxel_x - x0 as f32;
     let fy = voxel_y - y0 as f32;
     let fz = voxel_z - z0 as f32;
     let get_sdf = |x: usize, y: usize, z: usize| -> f32 {
-        let idx = z * sdf_values_per_chunk_dim * sdf_values_per_chunk_dim
-            + y * sdf_values_per_chunk_dim
-            + x;
-        sdf[idx].sdf as f32
+        let idx = z * samples_per_chunk_dim * samples_per_chunk_dim + y * samples_per_chunk_dim + x;
+        densities[idx] as f32
     };
     let c000 = get_sdf(x0, y0, z0);
     let c100 = get_sdf(x1, y0, z0);
@@ -491,8 +485,8 @@ fn sample_sdf_at_point_with_interpolation(
 fn build_mesh_from_cache_and_indices(
     vertex_cache: VertexCache,
     indices: Vec<u32>,
-    densities: &[VoxelData],
-    sdf_values_per_chunk_dim: usize,
+    densities: &[i16],
+    samples_per_chunk_dim: usize,
 ) -> Mesh {
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
@@ -513,7 +507,7 @@ fn build_mesh_from_cache_and_indices(
         let normals: Vec<[f32; 3]> = vertex_cache
             .vertices
             .iter()
-            .map(|v| calculate_vertex_normal(*v, densities, sdf_values_per_chunk_dim).into())
+            .map(|v| calculate_vertex_normal(*v, densities, samples_per_chunk_dim).into())
             .collect();
 
         let uvs: Vec<[f32; 2]> = vertex_cache.uvs;

@@ -3,7 +3,6 @@ use fastnoise2::{SafeNode, generator::GeneratorWrapper};
 
 use crate::terrain::terrain::{
     CHUNK_SIZE, HALF_CHUNK, SDF_VALUES_PER_CHUNK_DIM, TerrainChunk, VOXEL_SIZE, VOXELS_PER_CHUNK,
-    VoxelData,
 };
 
 pub const NOISE_SEED: u32 = 100; // Seed for noise generation
@@ -22,19 +21,23 @@ pub struct LoadChunksEvent {
 pub fn generate_densities(
     chunk_coord: &(i16, i16, i16),
     fbm: &GeneratorWrapper<SafeNode>,
-) -> (Box<[VoxelData; VOXELS_PER_CHUNK]>, bool) {
-    let mut densities = vec![
-        VoxelData {
-            sdf: 0,
-            material: 255
-        };
-        VOXELS_PER_CHUNK
-    ];
+) -> (Box<[i16]>, Box<[u8]>, bool) {
+    let mut densities = vec![0; VOXELS_PER_CHUNK];
+    let mut materials = vec![0; VOXELS_PER_CHUNK];
     let chunk_start = calculate_chunk_start(chunk_coord);
     let terrain_heights = generate_terrain_heights(&chunk_start, fbm);
     let contains_surface = heights_contains_surface(&chunk_start, &terrain_heights);
-    fill_voxel_densities(&mut densities, &chunk_start, &terrain_heights);
-    (densities.try_into().unwrap(), contains_surface)
+    fill_voxel_densities(
+        &mut densities,
+        &mut materials,
+        &chunk_start,
+        &terrain_heights,
+    );
+    (
+        densities.try_into().unwrap(),
+        materials.try_into().unwrap(),
+        contains_surface,
+    )
 }
 
 fn calculate_chunk_start(chunk_coord: &(i16, i16, i16)) -> Vec3 {
@@ -61,10 +64,10 @@ pub fn heights_contains_surface(chunk_start: &Vec3, terrain_heights: &[f32]) -> 
 pub fn chunk_contains_surface(chunk: &TerrainChunk) -> bool {
     let mut has_positive = false;
     let mut has_negative = false;
-    for &sdf in &chunk.sdfs {
-        if sdf.sdf > 0 {
+    for &density in &chunk.densities {
+        if density > 0 {
             has_positive = true;
-        } else if sdf.sdf < 0 {
+        } else if density < 0 {
             has_negative = true;
         }
         if has_positive && has_negative {
@@ -91,7 +94,12 @@ fn generate_terrain_heights(chunk_start: &Vec3, fbm: &GeneratorWrapper<SafeNode>
     terrain_heights
 }
 
-fn fill_voxel_densities(densities: &mut [VoxelData], chunk_start: &Vec3, terrain_heights: &[f32]) {
+fn fill_voxel_densities(
+    densities: &mut [i16],
+    materials: &mut [u8],
+    chunk_start: &Vec3,
+    terrain_heights: &[f32],
+) {
     for z in 0..SDF_VALUES_PER_CHUNK_DIM {
         let height_base = z * SDF_VALUES_PER_CHUNK_DIM;
         for y in 0..SDF_VALUES_PER_CHUNK_DIM {
@@ -103,21 +111,13 @@ fn fill_voxel_densities(densities: &mut [VoxelData], chunk_start: &Vec3, terrain
                 let voxel_index = index_base + x;
                 let distance_to_surface =
                     quantize_f32_to_i16((terrain_height - world_y).clamp(-10.0, 10.0));
+                densities[voxel_index] = distance_to_surface;
                 if distance_to_surface < 0 {
-                    densities[voxel_index] = VoxelData {
-                        sdf: distance_to_surface,
-                        material: 0,
-                    };
+                    materials[voxel_index] = 0;
                 } else if distance_to_surface < quantize_f32_to_i16(VOXEL_SIZE * 2.0) {
-                    densities[voxel_index] = VoxelData {
-                        sdf: distance_to_surface,
-                        material: 2,
-                    };
+                    materials[voxel_index] = 2;
                 } else {
-                    densities[voxel_index] = VoxelData {
-                        sdf: distance_to_surface,
-                        material: 1,
-                    };
+                    materials[voxel_index] = 1;
                 }
             }
         }

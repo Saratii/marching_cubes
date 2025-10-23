@@ -42,43 +42,44 @@ pub struct NoiseFunction(pub Arc<GeneratorWrapper<SafeNode>>);
 #[derive(Resource)]
 pub struct StandardTerrainMaterialHandle(pub Handle<StandardMaterial>);
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct VoxelData {
-    pub sdf: i16,
-    pub material: u8,
-}
-
 #[derive(Resource)]
 pub struct TextureAtlasHandle(pub Handle<Image>);
 
 #[derive(Component, Serialize, Deserialize, Debug)]
 pub struct TerrainChunk {
-    pub sdfs: Box<[VoxelData]>,
+    pub densities: Box<[i16]>,
+    pub materials: Box<[u8]>,
 }
 
 impl TerrainChunk {
     pub fn new(chunk_coord: (i16, i16, i16), fbm: &GeneratorWrapper<SafeNode>) -> (Self, bool) {
-        let (densities, has_surface) = generate_densities(&chunk_coord, fbm);
-        (Self { sdfs: densities }, has_surface)
+        let (densities, materials, has_surface) = generate_densities(&chunk_coord, fbm);
+        (
+            Self {
+                densities,
+                materials,
+            },
+            has_surface,
+        )
     }
 
-    pub fn set_density(&mut self, x: u32, y: u32, z: u32, density: VoxelData) {
+    pub fn set_density(&mut self, x: u32, y: u32, z: u32, density: i16) {
         let index = flatten_index(x, y, z, SDF_VALUES_PER_CHUNK_DIM);
-        self.sdfs[index as usize] = density;
+        self.densities[index as usize] = density;
     }
 
-    pub fn get_density(&self, x: u32, y: u32, z: u32) -> &VoxelData {
+    pub fn get_density(&self, x: u32, y: u32, z: u32) -> i16 {
         let index = flatten_index(x, y, z, SDF_VALUES_PER_CHUNK_DIM);
-        &self.sdfs[index as usize]
+        self.densities[index as usize]
     }
 
-    pub fn get_mut_density(&mut self, x: u32, y: u32, z: u32) -> &mut VoxelData {
+    pub fn get_mut_density(&mut self, x: u32, y: u32, z: u32) -> &mut i16 {
         let index = flatten_index(x, y, z, SDF_VALUES_PER_CHUNK_DIM);
-        &mut self.sdfs[index as usize]
+        &mut self.densities[index as usize]
     }
 
     pub fn is_solid(&self, x: u32, y: u32, z: u32) -> bool {
-        self.get_density(x, y, z).sdf > 0
+        self.get_density(x, y, z) > 0
     }
 }
 
@@ -157,7 +158,8 @@ pub fn spawn_initial_chunks(
                 };
                 if contains_surface {
                     let mesh = march_cubes(
-                        &terrain_chunk.sdfs,
+                        &terrain_chunk.densities,
+                        &terrain_chunk.materials,
                         CUBES_PER_CHUNK_DIM,
                         SDF_VALUES_PER_CHUNK_DIM,
                     );

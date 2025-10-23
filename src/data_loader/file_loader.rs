@@ -1,4 +1,4 @@
-use crate::terrain::terrain::{NoiseFunction, TerrainChunk, VOXELS_PER_CHUNK, VoxelData};
+use crate::terrain::terrain::{NoiseFunction, TerrainChunk, VOXELS_PER_CHUNK};
 use bevy::prelude::*;
 use fastnoise2::SafeNode;
 use fastnoise2::generator::simplex::opensimplex2;
@@ -29,24 +29,27 @@ pub struct ChunkIndexMap(pub Arc<Mutex<HashMap<(i16, i16, i16), u64>>>);
 
 fn serialize_chunk_data(chunk: &TerrainChunk) -> Vec<u8> {
     let mut buffer = Vec::with_capacity(CHUNK_SERIALIZED_SIZE);
-    for voxel in chunk.sdfs.iter() {
-        buffer.extend_from_slice(&voxel.sdf.to_le_bytes());
+    for density in chunk.densities.iter() {
+        buffer.extend_from_slice(&density.to_le_bytes());
     }
-    for voxel in chunk.sdfs.iter() {
-        buffer.push(voxel.material);
+    for material in chunk.materials.iter() {
+        buffer.push(*material);
     }
     buffer
 }
 
 pub fn deserialize_chunk_data(data: &[u8]) -> TerrainChunk {
-    let mut sdfs = Vec::with_capacity(VOXELS_PER_CHUNK);
+    let mut densities = Vec::with_capacity(VOXELS_PER_CHUNK);
+    let mut materials = Vec::with_capacity(VOXELS_PER_CHUNK);
     let (sdf_bytes, material_bytes) = data.split_at(VOXELS_PER_CHUNK * 2);
     for (sdf_chunk, &material) in sdf_bytes.chunks_exact(2).zip(material_bytes) {
-        let sdf = i16::from_le_bytes([sdf_chunk[0], sdf_chunk[1]]);
-        sdfs.push(VoxelData { sdf, material });
+        let density = i16::from_le_bytes([sdf_chunk[0], sdf_chunk[1]]);
+        densities.push(density);
+        materials.push(material);
     }
     TerrainChunk {
-        sdfs: sdfs.into_boxed_slice(),
+        densities: densities.into_boxed_slice(),
+        materials: materials.into_boxed_slice(),
     }
 }
 
