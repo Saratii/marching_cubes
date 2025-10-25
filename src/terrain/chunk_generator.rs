@@ -2,7 +2,7 @@ use bevy::{ecs::event::Event, math::Vec3};
 use fastnoise2::{SafeNode, generator::GeneratorWrapper};
 
 use crate::terrain::terrain::{
-    CHUNK_SIZE, HALF_CHUNK, SDF_VALUES_PER_CHUNK_DIM, TerrainChunk, VOXEL_SIZE, VOXELS_PER_CHUNK,
+    CHUNK_SIZE, HALF_CHUNK, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainChunk, VOXEL_SIZE,
 };
 
 pub const NOISE_SEED: u32 = 100; // Seed for noise generation
@@ -22,8 +22,8 @@ pub fn generate_densities(
     chunk_coord: &(i16, i16, i16),
     fbm: &GeneratorWrapper<SafeNode>,
 ) -> (Box<[i16]>, Box<[u8]>, bool) {
-    let mut densities = vec![0; VOXELS_PER_CHUNK];
-    let mut materials = vec![0; VOXELS_PER_CHUNK];
+    let mut densities = vec![0; SAMPLES_PER_CHUNK];
+    let mut materials = vec![0; SAMPLES_PER_CHUNK];
     let chunk_start = calculate_chunk_start(chunk_coord);
     let terrain_heights = generate_terrain_heights(&chunk_start, fbm);
     let contains_surface = heights_contains_surface(&chunk_start, &terrain_heights);
@@ -78,11 +78,11 @@ pub fn chunk_contains_surface(chunk: &TerrainChunk) -> bool {
 }
 
 fn generate_terrain_heights(chunk_start: &Vec3, fbm: &GeneratorWrapper<SafeNode>) -> Vec<f32> {
-    let mut terrain_heights = vec![0.0f32; SDF_VALUES_PER_CHUNK_DIM * SDF_VALUES_PER_CHUNK_DIM];
-    for z in 0..SDF_VALUES_PER_CHUNK_DIM {
+    let mut terrain_heights = vec![0.0f32; SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM];
+    for z in 0..SAMPLES_PER_CHUNK_DIM {
         let world_z = chunk_start.z + z as f32 * VOXEL_SIZE;
-        let height_base = z * SDF_VALUES_PER_CHUNK_DIM;
-        for x in 0..SDF_VALUES_PER_CHUNK_DIM {
+        let height_base = z * SAMPLES_PER_CHUNK_DIM;
+        for x in 0..SAMPLES_PER_CHUNK_DIM {
             let world_x = chunk_start.x + x as f32 * VOXEL_SIZE;
             terrain_heights[height_base + x] = fbm.gen_single_2d(
                 world_x * NOISE_FREQUENCY,
@@ -100,13 +100,13 @@ fn fill_voxel_densities(
     chunk_start: &Vec3,
     terrain_heights: &[f32],
 ) {
-    for z in 0..SDF_VALUES_PER_CHUNK_DIM {
-        let height_base = z * SDF_VALUES_PER_CHUNK_DIM;
-        for y in 0..SDF_VALUES_PER_CHUNK_DIM {
+    for z in 0..SAMPLES_PER_CHUNK_DIM {
+        let height_base = z * SAMPLES_PER_CHUNK_DIM;
+        for y in 0..SAMPLES_PER_CHUNK_DIM {
             let world_y = chunk_start.y + y as f32 * VOXEL_SIZE;
-            let index_base = z * SDF_VALUES_PER_CHUNK_DIM * SDF_VALUES_PER_CHUNK_DIM
-                + y * SDF_VALUES_PER_CHUNK_DIM;
-            for x in 0..SDF_VALUES_PER_CHUNK_DIM {
+            let index_base =
+                z * SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM + y * SAMPLES_PER_CHUNK_DIM;
+            for x in 0..SAMPLES_PER_CHUNK_DIM {
                 let terrain_height = terrain_heights[height_base + x];
                 let voxel_index = index_base + x;
                 let distance_to_surface =

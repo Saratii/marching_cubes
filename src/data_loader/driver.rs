@@ -14,7 +14,10 @@ use fastnoise2::{
     SafeNode,
     generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
 };
-use isomesh::marching_cubes::{color_provider::MaterialColorProvider, mc::{mc_mesh_generation, MeshBuffers}};
+use isomesh::marching_cubes::{
+    color_provider::MaterialColorProvider,
+    mc::{MeshBuffers, mc_mesh_generation},
+};
 
 use crate::{
     conversions::chunk_coord_to_world_pos,
@@ -24,9 +27,8 @@ use crate::{
     terrain::{
         chunk_generator::chunk_contains_surface,
         terrain::{
-            CUBES_PER_CHUNK_DIM, ChunkTag, HALF_CHUNK, SDF_VALUES_PER_CHUNK_DIM,
-            StandardTerrainMaterialHandle, TerrainChunk, VOXEL_SIZE, Z2_RADIUS_SQUARED,
-            generate_bevy_mesh,
+            ChunkTag, HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, StandardTerrainMaterialHandle,
+            TerrainChunk, Z2_RADIUS_SQUARED, generate_bevy_mesh,
         },
     },
 };
@@ -112,11 +114,9 @@ pub fn setup_loading_thread(mut commands: Commands, index_map: Res<ChunkIndexMap
                     &mut mesh_buffers,
                     &chunk_sdfs.densities,
                     &chunk_sdfs.materials,
-                    CUBES_PER_CHUNK_DIM,
-                    SDF_VALUES_PER_CHUNK_DIM,
+                    SAMPLES_PER_CHUNK_DIM,
                     &MaterialColorProvider,
                     HALF_CHUNK,
-                    VOXEL_SIZE,
                 );
                 let mesh = generate_bevy_mesh(mesh_buffers);
                 let collider = if req.level == 0 {

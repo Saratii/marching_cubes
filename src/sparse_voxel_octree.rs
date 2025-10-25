@@ -7,7 +7,7 @@ use crate::{
     data_loader::driver::{ChunkChannels, ChunkRequest, ChunksBeingLoaded},
     terrain::{
         chunk_generator::{dequantize_i16_to_f32, quantize_f32_to_i16},
-        terrain::{HALF_CHUNK, SDF_VALUES_PER_CHUNK_DIM, TerrainChunk, VOXEL_SIZE},
+        terrain::{HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainChunk, VOXEL_SIZE},
     },
 };
 
@@ -289,7 +289,7 @@ impl SvoNode {
             let (_entity, chunk) = self.chunk.as_mut().unwrap();
 
             let chunk_center = chunk_coord_to_world_pos(&chunk_coord);
-            let chunk_world_size = SDF_VALUES_PER_CHUNK_DIM as f32 * VOXEL_SIZE;
+            let chunk_world_size = SAMPLES_PER_CHUNK_DIM as f32 * VOXEL_SIZE;
             let node_min = Vec3::new(
                 chunk_center.x - HALF_CHUNK,
                 chunk_center.y - HALF_CHUNK,
@@ -300,9 +300,9 @@ impl SvoNode {
                 return false;
             }
             let mut chunk_modified = false;
-            for z in 0..SDF_VALUES_PER_CHUNK_DIM {
-                for y in 0..SDF_VALUES_PER_CHUNK_DIM {
-                    for x in 0..SDF_VALUES_PER_CHUNK_DIM {
+            for z in 0..SAMPLES_PER_CHUNK_DIM {
+                for y in 0..SAMPLES_PER_CHUNK_DIM {
+                    for x in 0..SAMPLES_PER_CHUNK_DIM {
                         let world_x = chunk_center.x - HALF_CHUNK + x as f32 * VOXEL_SIZE;
                         let world_y = chunk_center.y - HALF_CHUNK + y as f32 * VOXEL_SIZE;
                         let world_z = chunk_center.z - HALF_CHUNK + z as f32 * VOXEL_SIZE;
@@ -342,7 +342,7 @@ impl SvoNode {
         chunks_being_loaded: &mut ChunksBeingLoaded,
         chunk_channels: &ChunkChannels,
     ) {
-        let chunk_world_size = SDF_VALUES_PER_CHUNK_DIM as f32 * VOXEL_SIZE;
+        let chunk_world_size = SAMPLES_PER_CHUNK_DIM as f32 * VOXEL_SIZE;
         let node_min = Vec3::new(
             self.position.0 as f32 * chunk_world_size,
             self.position.1 as f32 * chunk_world_size,
@@ -420,7 +420,7 @@ impl SvoNode {
         radius: f32,
         results: &mut Vec<((i16, i16, i16), Option<Entity>)>,
     ) {
-        let chunk_world_size = SDF_VALUES_PER_CHUNK_DIM as f32 * VOXEL_SIZE;
+        let chunk_world_size = SAMPLES_PER_CHUNK_DIM as f32 * VOXEL_SIZE;
         let node_min = Vec3::new(
             self.position.0 as f32 * chunk_world_size,
             self.position.1 as f32 * chunk_world_size,

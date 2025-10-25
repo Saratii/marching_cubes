@@ -11,7 +11,10 @@ use bevy::{
 };
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
 use fastnoise2::{SafeNode, generator::GeneratorWrapper};
-use isomesh::marching_cubes::{color_provider::MaterialColorProvider, mc::{mc_mesh_generation, MeshBuffers}};
+use isomesh::marching_cubes::{
+    color_provider::MaterialColorProvider,
+    mc::{MeshBuffers, mc_mesh_generation},
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -25,17 +28,16 @@ use crate::{
     terrain::chunk_generator::{chunk_contains_surface, generate_densities},
 };
 
-pub const SDF_VALUES_PER_CHUNK_DIM: usize = 32; // Number of voxel sample points
-pub const VOXEL_SIZE: f32 = 0.1; // Size of each voxel in meters
-pub const CUBES_PER_CHUNK_DIM: usize = SDF_VALUES_PER_CHUNK_DIM - 1; // 63 cubes
-pub const CHUNK_SIZE: f32 = CUBES_PER_CHUNK_DIM as f32 * VOXEL_SIZE; // 7.875 meters
-pub const VOXELS_PER_CHUNK: usize =
-    SDF_VALUES_PER_CHUNK_DIM * SDF_VALUES_PER_CHUNK_DIM * SDF_VALUES_PER_CHUNK_DIM;
+pub const SAMPLES_PER_CHUNK_DIM: usize = 32; // Number of voxel sample points
+pub const CHUNK_SIZE: f32 = 8.0; //in world units
+pub const SAMPLES_PER_CHUNK: usize =
+    SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM;
 pub const HALF_CHUNK: f32 = CHUNK_SIZE / 2.0;
 pub const Z1_RADIUS: f32 = 10.0; //in world units. Distance where everything is loaded at all times and physically simulated.
 pub const Z1_RADIUS_SQUARED: f32 = Z1_RADIUS * Z1_RADIUS;
 pub const Z2_RADIUS: f32 = 90.0; //in world units. Distance where chunks are loaded but not physically simulated.
 pub const Z2_RADIUS_SQUARED: f32 = Z2_RADIUS * Z2_RADIUS;
+pub const VOXEL_SIZE: f32 = CHUNK_SIZE / (SAMPLES_PER_CHUNK_DIM - 1) as f32;
 
 #[derive(Component)]
 pub struct ChunkTag;
@@ -68,17 +70,17 @@ impl TerrainChunk {
     }
 
     pub fn set_density(&mut self, x: u32, y: u32, z: u32, density: i16) {
-        let index = flatten_index(x, y, z, SDF_VALUES_PER_CHUNK_DIM);
+        let index = flatten_index(x, y, z, SAMPLES_PER_CHUNK_DIM);
         self.densities[index as usize] = density;
     }
 
     pub fn get_density(&self, x: u32, y: u32, z: u32) -> i16 {
-        let index = flatten_index(x, y, z, SDF_VALUES_PER_CHUNK_DIM);
+        let index = flatten_index(x, y, z, SAMPLES_PER_CHUNK_DIM);
         self.densities[index as usize]
     }
 
     pub fn get_mut_density(&mut self, x: u32, y: u32, z: u32) -> &mut i16 {
-        let index = flatten_index(x, y, z, SDF_VALUES_PER_CHUNK_DIM);
+        let index = flatten_index(x, y, z, SAMPLES_PER_CHUNK_DIM);
         &mut self.densities[index as usize]
     }
 
@@ -166,11 +168,9 @@ pub fn spawn_initial_chunks(
                         &mut mesh_buffers,
                         &terrain_chunk.densities,
                         &terrain_chunk.materials,
-                        CUBES_PER_CHUNK_DIM,
-                        SDF_VALUES_PER_CHUNK_DIM,
+                        SAMPLES_PER_CHUNK_DIM,
                         &MaterialColorProvider,
                         HALF_CHUNK,
-                        VOXEL_SIZE,
                     );
                     let mesh = generate_bevy_mesh(mesh_buffers);
                     let transform =
