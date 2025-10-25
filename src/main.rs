@@ -30,8 +30,8 @@ use marching_cubes::sparse_voxel_octree::ChunkSvo;
 use marching_cubes::terrain::chunk_generator::{GenerateChunkEvent, LoadChunksEvent};
 use marching_cubes::terrain::lod_zones::z2_chunk_load;
 use marching_cubes::terrain::terrain::{
-    CUBES_PER_CHUNK_DIM, ChunkTag, HALF_CHUNK, SDF_VALUES_PER_CHUNK_DIM,
-    StandardTerrainMaterialHandle, VOXEL_SIZE, generate_bevy_mesh, setup_map, spawn_initial_chunks,
+    ChunkTag, HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, StandardTerrainMaterialHandle, generate_bevy_mesh,
+    setup_map, spawn_initial_chunks,
 };
 use rayon::ThreadPoolBuilder;
 
@@ -153,11 +153,9 @@ fn handle_digging_input(
                         &mut mesh_buffers,
                         &chunk.densities,
                         &chunk.materials,
-                        CUBES_PER_CHUNK_DIM,
-                        SDF_VALUES_PER_CHUNK_DIM,
+                        SAMPLES_PER_CHUNK_DIM,
                         &MaterialColorProvider,
                         HALF_CHUNK,
-                        VOXEL_SIZE,
                     );
                     let new_mesh = generate_bevy_mesh(mesh_buffers);
                     let vertex_count = new_mesh.count_vertices();

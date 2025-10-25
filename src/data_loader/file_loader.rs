@@ -1,4 +1,4 @@
-use crate::terrain::terrain::{NoiseFunction, TerrainChunk, VOXELS_PER_CHUNK};
+use crate::terrain::terrain::{NoiseFunction, SAMPLES_PER_CHUNK, TerrainChunk};
 use bevy::prelude::*;
 use fastnoise2::SafeNode;
 use fastnoise2::generator::simplex::opensimplex2;
@@ -9,7 +9,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex};
 
 const BYTES_PER_VOXEL: usize = std::mem::size_of::<i16>() + std::mem::size_of::<u8>();
-const CHUNK_SERIALIZED_SIZE: usize = VOXELS_PER_CHUNK * BYTES_PER_VOXEL;
+const CHUNK_SERIALIZED_SIZE: usize = SAMPLES_PER_CHUNK * BYTES_PER_VOXEL;
 
 #[derive(Resource)]
 pub struct ChunkIndexFile(pub Arc<Mutex<File>>);
@@ -39,9 +39,9 @@ fn serialize_chunk_data(chunk: &TerrainChunk) -> Vec<u8> {
 }
 
 pub fn deserialize_chunk_data(data: &[u8]) -> TerrainChunk {
-    let mut densities = Vec::with_capacity(VOXELS_PER_CHUNK);
-    let mut materials = Vec::with_capacity(VOXELS_PER_CHUNK);
-    let (sdf_bytes, material_bytes) = data.split_at(VOXELS_PER_CHUNK * 2);
+    let mut densities = Vec::with_capacity(SAMPLES_PER_CHUNK);
+    let mut materials = Vec::with_capacity(SAMPLES_PER_CHUNK);
+    let (sdf_bytes, material_bytes) = data.split_at(SAMPLES_PER_CHUNK * 2);
     for (sdf_chunk, &material) in sdf_bytes.chunks_exact(2).zip(material_bytes) {
         let density = i16::from_le_bytes([sdf_chunk[0], sdf_chunk[1]]);
         densities.push(density);
@@ -85,7 +85,7 @@ pub fn update_chunk_file_data(
 }
 
 pub fn load_chunk_data(data_file: &mut File, byte_offset: u64) -> TerrainChunk {
-    let total_size = VOXELS_PER_CHUNK * 2 + VOXELS_PER_CHUNK; // i16 sdfs (2 bytes) + u8 materials (1 byte)
+    let total_size = SAMPLES_PER_CHUNK * 2 + SAMPLES_PER_CHUNK; // i16 sdfs (2 bytes) + u8 materials (1 byte)
     data_file.seek(SeekFrom::Start(byte_offset)).unwrap();
     let mut buffer = vec![0u8; total_size];
     data_file.read_exact(&mut buffer).unwrap();
