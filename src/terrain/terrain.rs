@@ -11,10 +11,7 @@ use bevy::{
 };
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
 use fastnoise2::{SafeNode, generator::GeneratorWrapper};
-use isomesh::marching_cubes::{
-    color_provider::MaterialColorProvider,
-    mc::{MeshBuffers, mc_mesh_generation},
-};
+use isomesh::marching_cubes::mc::{MeshBuffers, mc_mesh_generation};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -169,7 +166,6 @@ pub fn spawn_initial_chunks(
                         &terrain_chunk.densities,
                         &terrain_chunk.materials,
                         SAMPLES_PER_CHUNK_DIM,
-                        &MaterialColorProvider,
                         HALF_CHUNK,
                     );
                     let mesh = generate_bevy_mesh(mesh_buffers);
@@ -257,13 +253,11 @@ pub fn generate_bevy_mesh(mesh_buffers: MeshBuffers) -> Mesh {
     let MeshBuffers {
         positions,
         normals,
-        colors,
         indices,
         uvs,
     } = mesh_buffers;
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
     mesh.insert_indices(Indices::U32(indices));
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
     mesh
