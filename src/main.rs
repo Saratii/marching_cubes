@@ -9,6 +9,7 @@ use bevy::render::view::NoFrustumCulling;
 use bevy::window::PresentMode;
 use bevy_rapier3d::plugin::{NoUserData, RapierPhysicsPlugin};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
+// use bevy_rapier3d::render::RapierDebugRenderPlugin;
 use isomesh::marching_cubes::mc::{MeshBuffers, mc_mesh_generation};
 use iyes_perf_ui::PerfUiPlugin;
 use iyes_perf_ui::prelude::PerfUiDefaultEntries;
@@ -27,7 +28,7 @@ use marching_cubes::player::player::{
 };
 use marching_cubes::sparse_voxel_octree::ChunkSvo;
 use marching_cubes::terrain::chunk_generator::{GenerateChunkEvent, LoadChunksEvent};
-use marching_cubes::terrain::lod_zones::z2_chunk_load;
+use marching_cubes::terrain::lod_zones::{z0_chunk_load, z2_chunk_load};
 use marching_cubes::terrain::terrain::{
     ChunkTag, HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainMaterialHandle, generate_bevy_mesh,
     setup_map, spawn_initial_chunks,
@@ -62,6 +63,7 @@ fn main() {
             PerfUiPlugin,
             RapierPhysicsPlugin::<NoUserData>::default(),
             MaterialPlugin::<TerrainMaterial>::default(),
+            // RapierDebugRenderPlugin::default(),
         ))
         .insert_resource(ClearColor(Color::srgb(0.0, 1.0, 1.0)))
         .add_systems(
@@ -87,6 +89,7 @@ fn main() {
                 cursor_grab,
                 camera_look,
                 player_movement,
+                z0_chunk_load,
                 z2_chunk_load,
                 chunk_reciever.after(z2_chunk_load),
                 validate_loading_queue.after(chunk_reciever),
@@ -148,7 +151,9 @@ fn handle_digging_input(
                     return;
                 }
                 for chunk_coord in modified_chunks {
-                    let (entity, chunk) = svo.root.get_mut(chunk_coord).unwrap();
+                    let (entity, chunk_option, _load_status) =
+                        svo.root.get_mut(chunk_coord).unwrap();
+                    let chunk = chunk_option.as_ref().unwrap();
                     let mut mesh_buffers = MeshBuffers::new();
                     mc_mesh_generation(
                         &mut mesh_buffers,
@@ -276,13 +281,17 @@ fn screen_to_world_ray(
     while distance_traveled < max_distance {
         let current_pos = ray_origin + ray_direction * distance_traveled;
         let chunk_coord = world_pos_to_chunk_coord(&current_pos);
-        let chunk = svo.root.get(chunk_coord).unwrap();
-        let voxel_idx = world_pos_to_voxel_index(&current_pos, &chunk_coord);
-        let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
-        if chunk.1.is_solid(voxel_idx.0, voxel_idx.1, voxel_idx.2) {
-            return Some((chunk.0, current_pos, chunk_world_pos, chunk_coord));
+        let (entity, chunk_option, _load_status) = svo.root.get(chunk_coord).unwrap();
+        if let Some(chunk) = chunk_option.as_ref() {
+            let voxel_idx = world_pos_to_voxel_index(&current_pos, &chunk_coord);
+            let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
+            if chunk.is_solid(voxel_idx.0, voxel_idx.1, voxel_idx.2) {
+                return Some((*entity, current_pos, chunk_world_pos, chunk_coord));
+            }
+            distance_traveled += step_size;
+        } else {
+            break;
         }
-        distance_traveled += step_size;
     }
     None
 }
