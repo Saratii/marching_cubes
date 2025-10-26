@@ -7,7 +7,10 @@ use crate::{
     data_loader::driver::{ChunkChannels, ChunkRequest, ChunksBeingLoaded},
     terrain::{
         chunk_generator::{dequantize_i16_to_f32, quantize_f32_to_i16},
-        terrain::{HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainChunk, VOXEL_SIZE},
+        terrain::{
+            HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainChunk, VOXEL_SIZE, Z1_RADIUS_SQUARED,
+            Z2_RADIUS_SQUARED,
+        },
     },
 };
 
@@ -34,7 +37,7 @@ pub struct SvoNode {
     pub position: (i16, i16, i16), // lower corner in chunk coordinates
     pub size: i16,                 // region size in chunks (power of 2)
     pub children: Option<Box<[Option<SvoNode>; 8]>>,
-    pub chunk: Option<(Option<Entity>, TerrainChunk)>,
+    pub chunk: Option<(Option<Entity>, Option<TerrainChunk>, u8)>,
 }
 
 impl SvoNode {
@@ -66,7 +69,10 @@ impl SvoNode {
         index
     }
 
-    pub fn get(&self, coord: (i16, i16, i16)) -> Option<&(Option<Entity>, TerrainChunk)> {
+    pub fn get(
+        &self,
+        coord: (i16, i16, i16),
+    ) -> Option<&(Option<Entity>, Option<TerrainChunk>, u8)> {
         if self.size == 1 {
             return self.chunk.as_ref();
         }
@@ -78,7 +84,7 @@ impl SvoNode {
     pub fn get_mut(
         &mut self,
         coord: (i16, i16, i16),
-    ) -> Option<&mut (Option<Entity>, TerrainChunk)> {
+    ) -> Option<&mut (Option<Entity>, Option<TerrainChunk>, u8)> {
         if self.size == 1 {
             return self.chunk.as_mut();
         }
@@ -87,25 +93,27 @@ impl SvoNode {
         children[idx].as_mut()?.get_mut(coord)
     }
 
-    pub fn insert(&mut self, coord: (i16, i16, i16), entity: Option<Entity>, chunk: TerrainChunk) {
+    pub fn insert(
+        &mut self,
+        coord: (i16, i16, i16),
+        entity: Option<Entity>,
+        chunk: Option<TerrainChunk>,
+        load_status: u8,
+    ) {
         if self.size == 1 {
             debug_assert!(
                 self.chunk.is_none(),
                 "Overwriting existing chunk at {:?}",
                 coord
             );
-            self.chunk = Some((entity, chunk));
+            self.chunk = Some((entity, chunk, load_status));
             return;
         }
-
         let index = self.child_index(&coord);
-
         if self.children.is_none() {
             self.children = Some(Box::new([None, None, None, None, None, None, None, None]));
         }
-
         let children = self.children.as_mut().unwrap();
-
         if children[index].is_none() {
             let half = self.size / 2;
             let child_pos = (
@@ -115,11 +123,10 @@ impl SvoNode {
             );
             children[index] = Some(SvoNode::new(child_pos, self.size / 2));
         }
-
         children[index]
             .as_mut()
             .unwrap()
-            .insert(coord, entity, chunk);
+            .insert(coord, entity, chunk, load_status);
     }
 
     pub fn contains(&self, chunk_coord: &(i16, i16, i16)) -> bool {
@@ -286,8 +293,8 @@ impl SvoNode {
             if self.chunk.is_none() {
                 return false;
             }
-            let (_entity, chunk) = self.chunk.as_mut().unwrap();
-
+            let (_entity, chunk_option, _load_status) = self.chunk.as_mut().unwrap();
+            let chunk = chunk_option.as_mut().unwrap();
             let chunk_center = chunk_coord_to_world_pos(&chunk_coord);
             let chunk_world_size = SAMPLES_PER_CHUNK_DIM as f32 * VOXEL_SIZE;
             let node_min = Vec3::new(
@@ -355,17 +362,32 @@ impl SvoNode {
             if intersects {
                 if self.chunk.is_none() && !chunks_being_loaded.0.contains_key(&chunk_coord) {
                     let canceled = Arc::new(AtomicBool::new(false));
-                    let req_id = chunks_being_loaded.1;
+                    let request_id = chunks_being_loaded.1;
                     chunks_being_loaded.1 = chunks_being_loaded.1.wrapping_add(1);
                     chunks_being_loaded
                         .0
-                        .insert(chunk_coord, (canceled.clone(), req_id));
-                    let _ = chunk_channels.requests.send(ChunkRequest {
-                        position: chunk_coord,
-                        level: 0,
-                        canceled,
-                        request_id: req_id,
-                    });
+                        .insert(chunk_coord, (canceled.clone(), request_id));
+                    let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
+                    let distance_squared = center.distance_squared(chunk_world_pos);
+                    if distance_squared <= Z1_RADIUS_SQUARED {
+                        let _ = chunk_channels.requests.send(ChunkRequest {
+                            position: chunk_coord,
+                            load_status: 1,
+                            canceled,
+                            request_id,
+                            upgrade: false,
+                            distance_squared: distance_squared.abs().round() as u32,
+                        });
+                    } else if distance_squared <= Z2_RADIUS_SQUARED {
+                        let _ = chunk_channels.requests.send(ChunkRequest {
+                            position: chunk_coord,
+                            load_status: 2,
+                            canceled,
+                            request_id,
+                            upgrade: false,
+                            distance_squared: distance_squared.abs().round() as u32,
+                        });
+                    }
                 }
             }
             return;
@@ -394,7 +416,6 @@ impl SvoNode {
                         let child_max = child_min + Vec3::splat(half as f32 * chunk_world_size);
                         let child_intersects =
                             sphere_intersects_aabb(center, radius, &child_min, &child_max);
-
                         if child_intersects {
                             children[i] = Some(SvoNode::new(child_pos, half));
                         }
@@ -430,7 +451,7 @@ impl SvoNode {
         let intersects = sphere_intersects_aabb(center, radius, &node_min, &node_max);
         if self.is_leaf() && self.size == 1 {
             if !intersects {
-                if let Some((entity, _)) = &self.chunk {
+                if let Some((entity, _, _)) = &self.chunk {
                     results.push((self.position, *entity));
                 }
             }
@@ -449,7 +470,7 @@ impl SvoNode {
 
     fn collect_all_chunks(&self, results: &mut Vec<((i16, i16, i16), Option<Entity>)>) {
         if self.is_leaf() && self.size == 1 {
-            if let Some((entity, _)) = &self.chunk {
+            if let Some((entity, _, _)) = &self.chunk {
                 results.push((self.position, *entity));
             }
             return;
