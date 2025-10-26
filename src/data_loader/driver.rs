@@ -27,8 +27,8 @@ use crate::{
     terrain::{
         chunk_generator::chunk_contains_surface,
         terrain::{
-            ChunkTag, HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, StandardTerrainMaterialHandle,
-            TerrainChunk, Z2_RADIUS_SQUARED, generate_bevy_mesh,
+            ChunkTag, HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainChunk, TerrainMaterialHandle,
+            Z2_RADIUS_SQUARED, generate_bevy_mesh,
         },
     },
 };
@@ -160,7 +160,7 @@ pub fn chunk_reciever(
     channels: Res<ChunkChannels>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    standard_material: Res<StandardTerrainMaterialHandle>,
+    standard_material: Res<TerrainMaterialHandle>,
     mut svo: ResMut<ChunkSvo>,
     mut chunks_being_loaded: ResMut<ChunksBeingLoaded>,
 ) {

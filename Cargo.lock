@@ -3348,7 +3348,7 @@ checksum = "7943c866cc5cd64cbc25b2e01621d07fa8eb2a1a23160ee81ce38704e97b8ecf"
 [[package]]
 name = "isomesh"
 version = "0.1.0"
-source = "git+https://github.com/Saratii/isomesh#c03c9d7acc3a6e1a2118cf522fafe7a4d39b7894"
+source = "git+https://github.com/Saratii/isomesh#6c4704b9be7cf9b804cbe25cb225bcf93882ee8b"
 dependencies = [
  "glam",
  "noise",

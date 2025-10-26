@@ -30,9 +30,10 @@ use marching_cubes::sparse_voxel_octree::ChunkSvo;
 use marching_cubes::terrain::chunk_generator::{GenerateChunkEvent, LoadChunksEvent};
 use marching_cubes::terrain::lod_zones::z2_chunk_load;
 use marching_cubes::terrain::terrain::{
-    ChunkTag, HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, StandardTerrainMaterialHandle, generate_bevy_mesh,
+    ChunkTag, HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainMaterialHandle, generate_bevy_mesh,
     setup_map, spawn_initial_chunks,
 };
+use marching_cubes::terrain::terrain_material::TerrainMaterial;
 use rayon::ThreadPoolBuilder;
 
 fn main() {
@@ -61,6 +62,7 @@ fn main() {
             SystemInformationDiagnosticsPlugin,
             PerfUiPlugin,
             RapierPhysicsPlugin::<NoUserData>::default(),
+            MaterialPlugin::<TerrainMaterial>::default(),
         ))
         .insert_resource(ClearColor(Color::srgb(0.0, 1.0, 1.0)))
         .add_systems(
@@ -117,7 +119,7 @@ fn handle_digging_input(
     time: Res<Time>,
     chunk_data_file: Res<ChunkDataFileReadWrite>,
     chunk_index_map: Res<ChunkIndexMap>,
-    material_handle: Res<StandardTerrainMaterialHandle>,
+    material_handle: Res<TerrainMaterialHandle>,
     mut solid_chunk_query: Query<(&mut Collider, &mut Mesh3d, Entity), With<ChunkTag>>,
     mut mesh_handles: ResMut<Assets<Mesh>>,
 ) {

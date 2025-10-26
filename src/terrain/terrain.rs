@@ -25,7 +25,10 @@ use crate::{
     },
     player::player::PLAYER_SPAWN,
     sparse_voxel_octree::ChunkSvo,
-    terrain::chunk_generator::{chunk_contains_surface, generate_densities},
+    terrain::{
+        chunk_generator::{chunk_contains_surface, generate_densities},
+        terrain_material::TerrainMaterial,
+    },
 };
 
 pub const SAMPLES_PER_CHUNK_DIM: usize = 32; // Number of voxel sample points
@@ -46,7 +49,7 @@ pub struct ChunkTag;
 pub struct NoiseFunction(pub Arc<GeneratorWrapper<SafeNode>>);
 
 #[derive(Resource)]
-pub struct StandardTerrainMaterialHandle(pub Handle<StandardMaterial>);
+pub struct TerrainMaterialHandle(pub Handle<TerrainMaterial>);
 
 #[derive(Resource)]
 pub struct TextureAtlasHandle(pub Handle<Image>);
@@ -91,7 +94,7 @@ impl TerrainChunk {
 
 pub fn setup_map(
     mut commands: Commands,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<TerrainMaterial>>,
     asset_server: Res<AssetServer>,
 ) {
     let atlas_texture_handle: Handle<Image> = asset_server
@@ -106,15 +109,12 @@ pub fn setup_map(
                 .into(),
             )
         });
-    let standard_terrain_material_handle = materials.add(StandardMaterial {
-        base_color_texture: Some(atlas_texture_handle.clone()),
-        perceptual_roughness: 0.6,
-        ..default()
+    let standard_terrain_material_handle = materials.add(TerrainMaterial {
+        texture: atlas_texture_handle.clone(),
+        scale: 0.05,
     });
     commands.insert_resource(ChunkSvo::new());
-    commands.insert_resource(StandardTerrainMaterialHandle(
-        standard_terrain_material_handle,
-    ));
+    commands.insert_resource(TerrainMaterialHandle(standard_terrain_material_handle));
     commands.insert_resource(TextureAtlasHandle(atlas_texture_handle));
 }
 
@@ -123,7 +123,7 @@ pub fn spawn_initial_chunks(
     chunk_index_map: Res<ChunkIndexMap>,
     mut svo: ResMut<ChunkSvo>,
     mut meshes: ResMut<Assets<Mesh>>,
-    standard_material: Res<StandardTerrainMaterialHandle>,
+    standard_material: Res<TerrainMaterialHandle>,
     fbm: Res<NoiseFunction>,
     index_file: ResMut<ChunkIndexFile>,
     chunk_data_file: Res<ChunkDataFileReadWrite>,
