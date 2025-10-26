@@ -113,7 +113,7 @@ fn fill_voxel_densities(
                     quantize_f32_to_i16((world_y - terrain_height).clamp(-10.0, 10.0));
                 densities[voxel_index] = distance_to_surface;
                 if distance_to_surface < 0 {
-                    if distance_to_surface < quantize_f32_to_i16(-VOXEL_SIZE * 2.0) {
+                    if distance_to_surface < quantize_f32_to_i16(-1.0) {
                         materials[voxel_index] = 1;
                     } else {
                         materials[voxel_index] = 2;

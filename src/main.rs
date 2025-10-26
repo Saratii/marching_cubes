@@ -9,7 +9,6 @@ use bevy::render::view::NoFrustumCulling;
 use bevy::window::PresentMode;
 use bevy_rapier3d::plugin::{NoUserData, RapierPhysicsPlugin};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
-use isomesh::marching_cubes::color_provider::MaterialColorProvider;
 use isomesh::marching_cubes::mc::{MeshBuffers, mc_mesh_generation};
 use iyes_perf_ui::PerfUiPlugin;
 use iyes_perf_ui::prelude::PerfUiDefaultEntries;
@@ -156,7 +155,6 @@ fn handle_digging_input(
                         &chunk.densities,
                         &chunk.materials,
                         SAMPLES_PER_CHUNK_DIM,
-                        &MaterialColorProvider,
                         HALF_CHUNK,
                     );
                     let new_mesh = generate_bevy_mesh(mesh_buffers);

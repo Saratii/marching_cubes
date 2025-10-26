@@ -14,10 +14,7 @@ use fastnoise2::{
     SafeNode,
     generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
 };
-use isomesh::marching_cubes::{
-    color_provider::MaterialColorProvider,
-    mc::{MeshBuffers, mc_mesh_generation},
-};
+use isomesh::marching_cubes::mc::{MeshBuffers, mc_mesh_generation};
 
 use crate::{
     conversions::chunk_coord_to_world_pos,
@@ -115,7 +112,6 @@ pub fn setup_loading_thread(mut commands: Commands, index_map: Res<ChunkIndexMap
                     &chunk_sdfs.densities,
                     &chunk_sdfs.materials,
                     SAMPLES_PER_CHUNK_DIM,
-                    &MaterialColorProvider,
                     HALF_CHUNK,
                 );
                 let mesh = generate_bevy_mesh(mesh_buffers);
