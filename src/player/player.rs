@@ -94,7 +94,7 @@ pub fn spawn_player(
     );
     let player_mesh_handle = meshes.add(player_mesh);
     let material: Handle<StandardMaterial> = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.8, 0.3, 0.3, 0.1),
+        base_color: Color::srgba(0.8, 0.3, 0.3, 1.0),
         alpha_mode: AlphaMode::Blend,
         ..default()
     });
@@ -117,6 +117,7 @@ pub fn spawn_player(
             MeshMaterial3d(material),
             PlayerTag,
             VerticalVelocity { y: 0.0 },
+            Visibility::Hidden,
         ))
         .with_child((
             Camera3d::default(),
@@ -161,15 +162,18 @@ pub fn toggle_camera(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut camera_transform: Single<&mut Transform, With<MainCameraTag>>,
     mut camera_controller: ResMut<CameraController>,
+    mut player_visibility: Single<&mut Visibility, With<PlayerTag>>,
 ) {
     if keyboard.just_pressed(KeyCode::KeyC) {
         if !camera_controller.is_first_person {
             camera_controller.is_first_person = true;
             camera_transform.translation = CAMERA_FIRST_PERSON_OFFSET;
             update_first_person_camera(&mut camera_transform, &camera_controller);
+            **player_visibility = Visibility::Hidden;
         } else {
             camera_controller.is_first_person = false;
             update_camera_position(&mut camera_transform, &camera_controller);
+            **player_visibility = Visibility::Visible;
         }
     }
 }
