@@ -110,7 +110,7 @@ pub fn setup_map(
         });
     let standard_terrain_material_handle = materials.add(TerrainMaterial {
         texture: atlas_texture_handle.clone(),
-        scale: 0.05,
+        scale: 0.5,
     });
     commands.insert_resource(ChunkSvo::new());
     commands.insert_resource(TerrainMaterialHandle(standard_terrain_material_handle));

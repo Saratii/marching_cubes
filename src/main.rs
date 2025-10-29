@@ -125,9 +125,9 @@ fn handle_digging_input(
     mut solid_chunk_query: Query<(&mut Collider, &mut Mesh3d, Entity), With<ChunkTag>>,
     mut mesh_handles: ResMut<Assets<Mesh>>,
 ) {
-    const DIG_STRENGTH: f32 = 0.3;
+    const DIG_STRENGTH: f32 = 0.5;
     const DIG_TIMER: f32 = 0.02; // seconds
-    const DIG_RADIUS: f32 = 0.5; // world space
+    const DIG_RADIUS: f32 = 0.8; // world space
     let should_dig = if mouse_input.pressed(MouseButton::Left) {
         *dig_timer += time.delta_secs();
         if *dig_timer >= DIG_TIMER {
