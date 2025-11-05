@@ -7,14 +7,13 @@ use crate::{
     data_loader::driver::{ChunkChannels, ChunkRequest, ChunksBeingLoaded},
     terrain::{
         chunk_generator::{dequantize_i16_to_f32, quantize_f32_to_i16},
-        terrain::{
-            HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainChunk, VOXEL_SIZE, Z1_RADIUS_SQUARED,
-            Z2_RADIUS_SQUARED,
-        },
+        lod_zones::Z2_RADIUS_SQUARED,
+        terrain::{HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainChunk, VOXEL_SIZE, Z1_RADIUS_SQUARED},
     },
 };
 
 const MAX_WORLD_SIZE: i16 = 2048;
+const CHUNK_WORLD_SIZE: f32 = SAMPLES_PER_CHUNK_DIM as f32 * VOXEL_SIZE;
 
 #[derive(Resource)]
 pub struct ChunkSvo {
@@ -38,15 +37,24 @@ pub struct SvoNode {
     pub size: i16,                 // region size in chunks (power of 2)
     pub children: Option<Box<[Option<SvoNode>; 8]>>,
     pub chunk: Option<(Option<Entity>, Option<TerrainChunk>, u8)>,
+    pub node_min: Vec3,
+    pub node_max: Vec3,
 }
 
 impl SvoNode {
     pub fn new(position: (i16, i16, i16), size: i16) -> Self {
+        let node_min = Vec3::new(
+            position.0 as f32 * CHUNK_WORLD_SIZE,
+            position.1 as f32 * CHUNK_WORLD_SIZE,
+            position.2 as f32 * CHUNK_WORLD_SIZE,
+        );
         Self {
             position,
             size,
             children: None,
             chunk: None,
+            node_min,
+            node_max: node_min + Vec3::splat(size as f32 * CHUNK_WORLD_SIZE),
         }
     }
 
@@ -349,26 +357,21 @@ impl SvoNode {
         chunks_being_loaded: &mut ChunksBeingLoaded,
         chunk_channels: &ChunkChannels,
     ) {
-        let chunk_world_size = SAMPLES_PER_CHUNK_DIM as f32 * VOXEL_SIZE;
-        let node_min = Vec3::new(
-            self.position.0 as f32 * chunk_world_size,
-            self.position.1 as f32 * chunk_world_size,
-            self.position.2 as f32 * chunk_world_size,
-        );
-        let node_max = node_min + Vec3::splat(self.size as f32 * chunk_world_size);
-        let intersects = sphere_intersects_aabb(center, radius, &node_min, &node_max);
-        if self.is_leaf() && self.size == 1 {
-            let chunk_coord = self.position;
-            if intersects {
+        if !sphere_intersects_aabb(center, radius, &self.node_min, &self.node_max) {
+            return;
+        }
+        if self.is_leaf() {
+            if self.size == 1 {
+                let chunk_coord = self.position;
                 if self.chunk.is_none() && !chunks_being_loaded.0.contains_key(&chunk_coord) {
                     let canceled = Arc::new(AtomicBool::new(false));
                     let request_id = chunks_being_loaded.1;
                     chunks_being_loaded.1 = chunks_being_loaded.1.wrapping_add(1);
                     chunks_being_loaded
                         .0
-                        .insert(chunk_coord, (canceled.clone(), request_id));
-                    let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
-                    let distance_squared = center.distance_squared(chunk_world_pos);
+                        .insert(chunk_coord, (Arc::clone(&canceled), request_id));
+                    let distance_squared =
+                        center.distance_squared(chunk_coord_to_world_pos(&chunk_coord));
                     if distance_squared <= Z1_RADIUS_SQUARED {
                         let _ = chunk_channels.requests.send(ChunkRequest {
                             position: chunk_coord,
@@ -376,7 +379,7 @@ impl SvoNode {
                             canceled,
                             request_id,
                             upgrade: false,
-                            distance_squared: distance_squared.abs().round() as u32,
+                            distance_squared: distance_squared as u32,
                         });
                     } else if distance_squared <= Z2_RADIUS_SQUARED {
                         let _ = chunk_channels.requests.send(ChunkRequest {
@@ -385,49 +388,43 @@ impl SvoNode {
                             canceled,
                             request_id,
                             upgrade: false,
-                            distance_squared: distance_squared.abs().round() as u32,
+                            distance_squared: distance_squared as u32,
                         });
                     }
                 }
+                return;
+            } else {
+                self.children = Some(Box::new([None, None, None, None, None, None, None, None]));
             }
-            return;
         }
-        if !intersects && self.children.is_none() {
-            return;
-        }
-        if self.is_leaf() && self.size > 1 && intersects {
-            self.children = Some(Box::new([None, None, None, None, None, None, None, None]));
-        }
-        if intersects {
-            if let Some(children) = &mut self.children {
-                let half = self.size / 2;
-                for i in 0..8 {
-                    let child_pos = (
-                        self.position.0 + if (i & 1) != 0 { half } else { 0 },
-                        self.position.1 + if (i & 2) != 0 { half } else { 0 },
-                        self.position.2 + if (i & 4) != 0 { half } else { 0 },
+        if let Some(children) = &mut self.children {
+            let half = self.size / 2;
+            for i in 0..8 {
+                let child_pos = (
+                    self.position.0 + if (i & 1) != 0 { half } else { 0 },
+                    self.position.1 + if (i & 2) != 0 { half } else { 0 },
+                    self.position.2 + if (i & 4) != 0 { half } else { 0 },
+                );
+                if children[i].is_none() {
+                    let child_min = Vec3::new(
+                        child_pos.0 as f32 * CHUNK_WORLD_SIZE,
+                        child_pos.1 as f32 * CHUNK_WORLD_SIZE,
+                        child_pos.2 as f32 * CHUNK_WORLD_SIZE,
                     );
-                    if children[i].is_none() {
-                        let child_min = Vec3::new(
-                            child_pos.0 as f32 * chunk_world_size,
-                            child_pos.1 as f32 * chunk_world_size,
-                            child_pos.2 as f32 * chunk_world_size,
-                        );
-                        let child_max = child_min + Vec3::splat(half as f32 * chunk_world_size);
-                        let child_intersects =
-                            sphere_intersects_aabb(center, radius, &child_min, &child_max);
-                        if child_intersects {
-                            children[i] = Some(SvoNode::new(child_pos, half));
-                        }
+                    let child_max = child_min + Vec3::splat(half as f32 * CHUNK_WORLD_SIZE);
+                    let child_intersects =
+                        sphere_intersects_aabb(center, radius, &child_min, &child_max);
+                    if child_intersects {
+                        children[i] = Some(SvoNode::new(child_pos, half));
                     }
-                    if let Some(child) = &mut children[i] {
-                        child.fill_missing_chunks_in_radius(
-                            center,
-                            radius,
-                            chunks_being_loaded,
-                            chunk_channels,
-                        );
-                    }
+                }
+                if let Some(child) = &mut children[i] {
+                    child.fill_missing_chunks_in_radius(
+                        center,
+                        radius,
+                        chunks_being_loaded,
+                        chunk_channels,
+                    );
                 }
             }
         }

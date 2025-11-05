@@ -20,8 +20,11 @@ use crate::{
     data_loader::driver::{ChunkChannels, ChunkRequest, ChunksBeingLoaded},
     player::player::{MainCameraTag, PlayerTag},
     sparse_voxel_octree::ChunkSvo,
-    terrain::terrain::{Z0_RADIUS, Z0_RADIUS_SQUARED, Z2_RADIUS},
+    terrain::terrain::{Z0_RADIUS, Z0_RADIUS_SQUARED},
 };
+
+pub const Z2_RADIUS: f32 = 500.0;
+pub const Z2_RADIUS_SQUARED: f32 = Z2_RADIUS * Z2_RADIUS;
 
 pub fn z2_chunk_load(
     mut svo: ResMut<ChunkSvo>,
@@ -32,12 +35,18 @@ pub fn z2_chunk_load(
 ) {
     #[cfg(feature = "timers")]
     let start = std::time::Instant::now();
+    let start = std::time::Instant::now();
     let mut chunks_to_deallocate: Vec<((i16, i16, i16), Option<Entity>)> = Vec::new();
     svo.root.query_chunks_outside_sphere(
         &player_transform.translation,
         Z2_RADIUS,
         &mut chunks_to_deallocate,
     );
+    println!(
+        "Time for query_chunks_outside_sphere: {:?}",
+        start.elapsed()
+    );
+    let start = std::time::Instant::now();
     for (chunk_coord, entity) in &chunks_to_deallocate {
         if let Some(canceled) = chunks_being_loaded.0.remove(chunk_coord) {
             canceled.0.store(true, Ordering::Relaxed);
@@ -47,11 +56,17 @@ pub fn z2_chunk_load(
             commands.entity(*entity).despawn();
         }
     }
+    println!("Time for deallocating chunks: {:?}", start.elapsed());
+    let start = std::time::Instant::now();
     svo.root.fill_missing_chunks_in_radius(
         &player_transform.translation,
         Z2_RADIUS,
         &mut chunks_being_loaded,
         &mut chunk_channels,
+    );
+    println!(
+        "Time for fill_missing_chunks_in_radius: {:?}",
+        start.elapsed()
     );
     #[cfg(feature = "timers")]
     {

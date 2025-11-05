@@ -37,8 +37,6 @@ pub const Z0_RADIUS: f32 = 15.0; //in world units. Distance where everything is 
 pub const Z0_RADIUS_SQUARED: f32 = Z0_RADIUS * Z0_RADIUS;
 pub const Z1_RADIUS: f32 = 90.0; //in world units. Distance where chunks are loaded but not physically simulated.
 pub const Z1_RADIUS_SQUARED: f32 = Z1_RADIUS * Z1_RADIUS;
-pub const Z2_RADIUS: f32 = 300.0;
-pub const Z2_RADIUS_SQUARED: f32 = Z2_RADIUS * Z2_RADIUS;
 pub const VOXEL_SIZE: f32 = CHUNK_SIZE / (SAMPLES_PER_CHUNK_DIM - 1) as f32;
 
 #[derive(Component)]

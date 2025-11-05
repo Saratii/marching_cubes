@@ -24,9 +24,10 @@ use crate::{
     sparse_voxel_octree::ChunkSvo,
     terrain::{
         chunk_generator::chunk_contains_surface,
+        lod_zones::Z2_RADIUS_SQUARED,
         terrain::{
             ChunkTag, HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainChunk, TerrainMaterialHandle,
-            Z2_RADIUS_SQUARED, generate_bevy_mesh,
+            generate_bevy_mesh,
         },
     },
 };
@@ -110,7 +111,12 @@ pub fn setup_loading_thread(mut commands: Commands, index_map: Res<ChunkIndexMap
             (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build()
         }();
         let mut priority_queue = BinaryHeap::new();
+        let mut i: u64 = 0;
         loop {
+            i += 1;
+            if i % 1000 == 0 {
+                println!("queue len: {}", priority_queue.len());
+            }
             while let Ok(req) = req_rx.try_recv() {
                 if !req.canceled.load(Ordering::Relaxed) {
                     priority_queue.push(req);
