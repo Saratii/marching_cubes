@@ -1,5 +1,3 @@
-use std::sync::{Arc, atomic::AtomicBool};
-
 use bevy::prelude::*;
 
 use crate::{
@@ -364,19 +362,15 @@ impl SvoNode {
             if self.size == 1 {
                 let chunk_coord = self.position;
                 if self.chunk.is_none() && !chunks_being_loaded.0.contains_key(&chunk_coord) {
-                    let canceled = Arc::new(AtomicBool::new(false));
                     let request_id = chunks_being_loaded.1;
                     chunks_being_loaded.1 = chunks_being_loaded.1.wrapping_add(1);
-                    chunks_being_loaded
-                        .0
-                        .insert(chunk_coord, (Arc::clone(&canceled), request_id));
+                    chunks_being_loaded.0.insert(chunk_coord, request_id);
                     let distance_squared =
                         center.distance_squared(chunk_coord_to_world_pos(&chunk_coord));
                     if distance_squared <= Z1_RADIUS_SQUARED {
                         let _ = chunk_channels.requests.send(ChunkRequest {
                             position: chunk_coord,
                             load_status: 1,
-                            canceled,
                             request_id,
                             upgrade: false,
                             distance_squared: distance_squared as u32,
@@ -385,7 +379,6 @@ impl SvoNode {
                         let _ = chunk_channels.requests.send(ChunkRequest {
                             position: chunk_coord,
                             load_status: 2,
-                            canceled,
                             request_id,
                             upgrade: false,
                             distance_squared: distance_squared as u32,

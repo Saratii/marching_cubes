@@ -1,10 +1,7 @@
 use std::{
     collections::{BinaryHeap, HashMap},
     fs::OpenOptions,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Mutex},
     thread,
 };
 
@@ -20,11 +17,9 @@ use isomesh::marching_cubes::mc::{MeshBuffers, mc_mesh_generation};
 use crate::{
     conversions::chunk_coord_to_world_pos,
     data_loader::file_loader::{ChunkIndexMap, create_chunk_file_data, load_chunk_data},
-    player::player::PlayerTag,
     sparse_voxel_octree::ChunkSvo,
     terrain::{
         chunk_generator::chunk_contains_surface,
-        lod_zones::Z2_RADIUS_SQUARED,
         terrain::{
             ChunkTag, HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainChunk, TerrainMaterialHandle,
             generate_bevy_mesh,
@@ -39,17 +34,13 @@ pub struct ChunkChannels {
 }
 
 #[derive(Resource)]
-pub struct ChunksBeingLoaded(
-    pub HashMap<(i16, i16, i16), (Arc<AtomicBool>, u64)>,
-    pub u64,
-);
+pub struct ChunksBeingLoaded(pub HashMap<(i16, i16, i16), u64>, pub u64);
 
 //level 0: full detail, returns TerrainChunk and collider
 //level n: full/(2^n) detail, no persistant data besides mesh
 pub struct ChunkRequest {
     pub position: (i16, i16, i16),
     pub load_status: u8,
-    pub canceled: Arc<AtomicBool>,
     pub request_id: u64,
     pub upgrade: bool,
     pub distance_squared: u32,
@@ -93,7 +84,7 @@ pub struct ChunkResult {
 pub fn setup_loading_thread(mut commands: Commands, index_map: Res<ChunkIndexMap>) {
     let (req_tx, req_rx) = unbounded::<ChunkRequest>();
     let (res_tx, res_rx) = unbounded::<ChunkResult>();
-    let index_map_arc: Arc<Mutex<std::collections::HashMap<(i16, i16, i16), u64>>> =
+    let index_map_arc: Arc<Mutex<HashMap<(i16, i16, i16), u64>>> =
         Arc::clone(&index_map.0);
     let chunks_being_loaded = HashMap::new();
     thread::spawn(move || {
@@ -111,21 +102,16 @@ pub fn setup_loading_thread(mut commands: Commands, index_map: Res<ChunkIndexMap
             (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build()
         }();
         let mut priority_queue = BinaryHeap::new();
-        let mut i: u64 = 0;
+        // let mut i: u64 = 0;
         loop {
-            i += 1;
-            if i % 1000 == 0 {
-                println!("queue len: {}", priority_queue.len());
-            }
+            // i += 1;
+            // if i % 1000 == 0 {
+            //     println!("queue len: {}", priority_queue.len());
+            // }
             while let Ok(req) = req_rx.try_recv() {
-                if !req.canceled.load(Ordering::Relaxed) {
-                    priority_queue.push(req);
-                }
+                priority_queue.push(req);
             }
             if let Some(req) = priority_queue.pop() {
-                if req.canceled.load(Ordering::Relaxed) {
-                    continue;
-                }
                 let chunk_coord = req.position;
                 let file_offset = {
                     let index_map_lock = index_map_arc.lock().unwrap();
@@ -189,9 +175,7 @@ pub fn setup_loading_thread(mut commands: Commands, index_map: Res<ChunkIndexMap
                 });
             } else {
                 if let Ok(req) = req_rx.recv() {
-                    if !req.canceled.load(Ordering::Relaxed) {
-                        priority_queue.push(req);
-                    }
+                    priority_queue.push(req);
                 } else {
                     break;
                 }
@@ -215,7 +199,7 @@ pub fn chunk_reciever(
 ) {
     while let Ok(result) = channels.results.try_recv() {
         match chunks_being_loaded.0.get(&result.chunk_coord) {
-            Some((_, expected_id)) if *expected_id == result.request_id => {
+            Some(expected_id) if *expected_id == result.request_id => {
                 match result.collider {
                     //if has collider
                     Some(collider) => {
@@ -348,20 +332,4 @@ pub fn chunk_reciever(
             }
         }
     }
-}
-
-pub fn validate_loading_queue(
-    mut chunks_being_loaded: ResMut<ChunksBeingLoaded>,
-    player_transform: Single<&Transform, With<PlayerTag>>,
-) {
-    let player_position = player_transform.translation;
-    chunks_being_loaded.0.retain(|chunk_coord, canceled| {
-        let chunk_world_pos = chunk_coord_to_world_pos(chunk_coord);
-        let distance_squared = player_position.distance_squared(chunk_world_pos);
-        if distance_squared > Z2_RADIUS_SQUARED {
-            canceled.0.store(true, Ordering::Relaxed);
-            return false;
-        }
-        true
-    });
 }

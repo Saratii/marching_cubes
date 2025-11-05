@@ -1,10 +1,5 @@
 //Zone 0: small circle around player with highest priority. Calculated outside of large traversal.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
-
 use bevy::{
     ecs::{
         entity::Entity,
@@ -48,9 +43,7 @@ pub fn z2_chunk_load(
     );
     let start = std::time::Instant::now();
     for (chunk_coord, entity) in &chunks_to_deallocate {
-        if let Some(canceled) = chunks_being_loaded.0.remove(chunk_coord) {
-            canceled.0.store(true, Ordering::Relaxed);
-        }
+        chunks_being_loaded.0.remove(chunk_coord);
         svo.root.delete(*chunk_coord);
         if let Some(entity) = entity {
             commands.entity(*entity).despawn();
@@ -103,56 +96,44 @@ pub fn z0_chunk_load(
                 if distance_squared <= Z0_RADIUS_SQUARED {
                     if !chunk_svo.root.contains(&chunk_coord) {
                         if !chunks_being_loaded.0.contains_key(&chunk_coord) {
-                            let canceled = Arc::new(AtomicBool::new(false));
                             let request_id = chunks_being_loaded.1;
                             chunks_being_loaded.1 = chunks_being_loaded.1.wrapping_add(1);
-                            chunks_being_loaded
-                                .0
-                                .insert(chunk_coord, (canceled.clone(), request_id));
+                            chunks_being_loaded.0.insert(chunk_coord, request_id);
                             let _ = chunk_channels.requests.send(ChunkRequest {
                                 position: chunk_coord,
                                 load_status: 0,
-                                canceled,
                                 request_id,
                                 upgrade: false,
-                                distance_squared: distance_squared.abs().round() as u32,
+                                distance_squared: distance_squared.round() as u32,
                             });
                         }
                     } else {
                         let load_status = chunk_svo.root.get(chunk_coord).unwrap().2;
                         if load_status == 1 {
                             if !chunks_being_loaded.0.contains_key(&chunk_coord) {
-                                let canceled = Arc::new(AtomicBool::new(false));
                                 let request_id = chunks_being_loaded.1;
                                 chunks_being_loaded.1 = chunks_being_loaded.1.wrapping_add(1);
-                                chunks_being_loaded
-                                    .0
-                                    .insert(chunk_coord, (canceled.clone(), request_id));
+                                chunks_being_loaded.0.insert(chunk_coord, request_id);
                                 let _ = chunk_channels.requests.send(ChunkRequest {
                                     position: chunk_coord,
                                     load_status: 0,
-                                    canceled,
                                     request_id,
                                     upgrade: true,
-                                    distance_squared: distance_squared.abs().round() as u32,
+                                    distance_squared: distance_squared as u32,
                                 });
                             }
                         } else if load_status == 2 {
                             //this may need to change
                             if !chunks_being_loaded.0.contains_key(&chunk_coord) {
-                                let canceled = Arc::new(AtomicBool::new(false));
                                 let request_id = chunks_being_loaded.1;
                                 chunks_being_loaded.1 = chunks_being_loaded.1.wrapping_add(1);
-                                chunks_being_loaded
-                                    .0
-                                    .insert(chunk_coord, (canceled.clone(), request_id));
+                                chunks_being_loaded.0.insert(chunk_coord, request_id);
                                 let _ = chunk_channels.requests.send(ChunkRequest {
                                     position: chunk_coord,
                                     load_status: 0,
-                                    canceled,
                                     request_id,
                                     upgrade: true,
-                                    distance_squared: distance_squared.abs().round() as u32,
+                                    distance_squared: distance_squared as u32,
                                 });
                             }
                         }
@@ -161,4 +142,16 @@ pub fn z0_chunk_load(
             }
         }
     }
+}
+
+pub fn validate_loading_queue(
+    mut chunks_being_loaded: ResMut<ChunksBeingLoaded>,
+    player_transform: Single<&Transform, With<PlayerTag>>,
+) {
+    let player_position = player_transform.translation;
+    chunks_being_loaded.0.retain(|chunk_coord, _request_id| {
+        let chunk_world_pos = chunk_coord_to_world_pos(chunk_coord);
+        let distance_squared = player_position.distance_squared(chunk_world_pos);
+        distance_squared <= Z2_RADIUS_SQUARED
+    });
 }
