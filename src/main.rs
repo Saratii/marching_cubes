@@ -16,9 +16,7 @@ use iyes_perf_ui::prelude::PerfUiDefaultEntries;
 use marching_cubes::conversions::{
     chunk_coord_to_world_pos, world_pos_to_chunk_coord, world_pos_to_voxel_index,
 };
-use marching_cubes::data_loader::driver::{
-    chunk_reciever, setup_loading_thread, validate_loading_queue,
-};
+use marching_cubes::data_loader::driver::{chunk_reciever, setup_loading_thread};
 use marching_cubes::data_loader::file_loader::{
     ChunkDataFileReadWrite, ChunkIndexMap, setup_chunk_loading, update_chunk_file_data,
 };
@@ -28,7 +26,7 @@ use marching_cubes::player::player::{
 };
 use marching_cubes::sparse_voxel_octree::ChunkSvo;
 use marching_cubes::terrain::chunk_generator::{GenerateChunkEvent, LoadChunksEvent};
-use marching_cubes::terrain::lod_zones::{z0_chunk_load, z2_chunk_load};
+use marching_cubes::terrain::lod_zones::{validate_loading_queue, z0_chunk_load, z2_chunk_load};
 use marching_cubes::terrain::terrain::{
     ChunkTag, HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainMaterialHandle, generate_bevy_mesh,
     setup_map, spawn_initial_chunks,
