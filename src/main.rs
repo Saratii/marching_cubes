@@ -1,3 +1,5 @@
+use std::sync::atomic::Ordering;
+
 use bevy::diagnostic::{
     EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin, SystemInformationDiagnosticsPlugin,
 };
@@ -16,20 +18,24 @@ use iyes_perf_ui::prelude::PerfUiDefaultEntries;
 use marching_cubes::conversions::{
     chunk_coord_to_world_pos, world_pos_to_chunk_coord, world_pos_to_voxel_index,
 };
-use marching_cubes::data_loader::driver::{chunk_reciever, setup_loading_thread};
+use marching_cubes::data_loader::driver::{
+    INITIAL_CHUNKS_LOADED, TerrainChunkMap, chunk_spawn_reciever, setup_chunk_driver,
+};
 use marching_cubes::data_loader::file_loader::{
-    ChunkDataFileReadWrite, ChunkIndexMap, setup_chunk_loading, update_chunk_file_data,
+    ChunkDataFileReadWrite, ChunkEntityMap, ChunkIndexMap, setup_chunk_loading,
+    update_chunk_file_data,
 };
 use marching_cubes::player::player::{
     CameraController, KeyBindings, MainCameraTag, camera_look, camera_zoom, cursor_grab,
-    initial_grab_cursor, player_movement, spawn_player, toggle_camera,
+    initial_grab_cursor, player_movement, spawn_player, sync_player_mutex, toggle_camera,
 };
-use marching_cubes::sparse_voxel_octree::ChunkSvo;
-use marching_cubes::terrain::chunk_generator::{GenerateChunkEvent, LoadChunksEvent};
-use marching_cubes::terrain::lod_zones::{validate_loading_queue, z0_chunk_load, z2_chunk_load};
+use marching_cubes::sparse_voxel_octree::sphere_intersects_aabb;
+use marching_cubes::terrain::chunk_generator::{
+    GenerateChunkEvent, LoadChunksEvent, dequantize_i16_to_f32, quantize_f32_to_i16,
+};
 use marching_cubes::terrain::terrain::{
-    ChunkTag, HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainMaterialHandle, generate_bevy_mesh,
-    setup_map, spawn_initial_chunks,
+    ChunkTag, HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainChunk, TerrainMaterialHandle, VOXEL_SIZE,
+    generate_bevy_mesh, setup_map,
 };
 use marching_cubes::terrain::terrain_material::TerrainMaterial;
 use rayon::ThreadPoolBuilder;
@@ -67,7 +73,7 @@ fn main() {
         .add_systems(
             Startup,
             (
-                setup_loading_thread.after(setup_chunk_loading),
+                setup_chunk_driver.after(setup_chunk_loading),
                 setup,
                 setup_chunk_loading,
                 // generate_large_map_utility.after(setup_chunk_loading),
@@ -75,7 +81,7 @@ fn main() {
                 setup_crosshair,
                 spawn_player,
                 initial_grab_cursor,
-                spawn_initial_chunks.after(setup_chunk_loading),
+                // spawn_initial_chunks.after(setup_chunk_loading),
             ),
         )
         .add_systems(
@@ -86,11 +92,13 @@ fn main() {
                 camera_zoom,
                 cursor_grab,
                 camera_look,
-                player_movement,
-                z0_chunk_load,
-                z2_chunk_load,
-                chunk_reciever.after(z2_chunk_load),
-                validate_loading_queue.after(chunk_reciever),
+                player_movement.run_if(|| INITIAL_CHUNKS_LOADED.load(Ordering::Relaxed)), //this feels wasteful
+                // z0_chunk_load,
+                // z2_chunk_load,
+                // chunk_reciever.after(z2_chunk_load),
+                // validate_loading_queue.after(chunk_reciever),
+                sync_player_mutex.after(player_movement),
+                chunk_spawn_reciever,
             ),
         )
         .run();
@@ -109,11 +117,83 @@ fn setup(mut commands: Commands) {
     ));
 }
 
+pub fn dig_sphere(
+    center: Vec3,
+    radius: f32,
+    strength: f32,
+    terrain_chunk_map: &mut TerrainChunkMap,
+) -> Vec<(i16, i16, i16)> {
+    let mut modified_chunks = Vec::new();
+    let min_world = center - Vec3::splat(radius);
+    let max_world = center + Vec3::splat(radius);
+    let min_chunk = world_pos_to_chunk_coord(&min_world);
+    let max_chunk = world_pos_to_chunk_coord(&max_world);
+    for chunk_x in min_chunk.0..=max_chunk.0 {
+        for chunk_y in min_chunk.1..=max_chunk.1 {
+            for chunk_z in min_chunk.2..=max_chunk.2 {
+                let chunk_coord = (chunk_x, chunk_y, chunk_z);
+                let mut terrain_chunk_map_lock = terrain_chunk_map.0.lock().unwrap();
+                let terrain_chunk = terrain_chunk_map_lock.get_mut(&chunk_coord).unwrap();
+                let chunk_modified =
+                    modify_chunk_voxels(terrain_chunk, chunk_coord, center, radius, strength);
+                if chunk_modified && !modified_chunks.contains(&chunk_coord) {
+                    modified_chunks.push(chunk_coord);
+                }
+            }
+        }
+    }
+    modified_chunks
+}
+
+pub fn modify_chunk_voxels(
+    terrain_chunk: &mut TerrainChunk,
+    chunk_coord: (i16, i16, i16),
+    dig_center: Vec3,
+    radius: f32,
+    strength: f32,
+) -> bool {
+    let chunk_center = chunk_coord_to_world_pos(&chunk_coord);
+    let chunk_world_size = SAMPLES_PER_CHUNK_DIM as f32 * VOXEL_SIZE;
+    let node_min = Vec3::new(
+        chunk_center.x - HALF_CHUNK,
+        chunk_center.y - HALF_CHUNK,
+        chunk_center.z - HALF_CHUNK,
+    );
+    let node_max = node_min + Vec3::splat(chunk_world_size);
+    if !sphere_intersects_aabb(&dig_center, radius, &node_min, &node_max) {
+        return false;
+    }
+    let mut chunk_modified = false;
+    for z in 0..SAMPLES_PER_CHUNK_DIM {
+        for y in 0..SAMPLES_PER_CHUNK_DIM {
+            for x in 0..SAMPLES_PER_CHUNK_DIM {
+                let world_x = chunk_center.x - HALF_CHUNK + x as f32 * VOXEL_SIZE;
+                let world_y = chunk_center.y - HALF_CHUNK + y as f32 * VOXEL_SIZE;
+                let world_z = chunk_center.z - HALF_CHUNK + z as f32 * VOXEL_SIZE;
+                let voxel_world_pos = Vec3::new(world_x, world_y, world_z);
+                let distance = voxel_world_pos.distance(dig_center);
+                if distance <= radius {
+                    let falloff = 1.0 - (distance / radius).clamp(0.0, 1.0);
+                    let dig_amount = strength * falloff;
+                    let current_density =
+                        terrain_chunk.get_mut_density(x as u32, y as u32, z as u32);
+                    if *current_density < 0 {
+                        let sdf_f32 = dequantize_i16_to_f32(*current_density);
+                        let new_sdf = (sdf_f32 + dig_amount).clamp(-10.0, 10.0);
+                        *current_density = quantize_f32_to_i16(new_sdf);
+                        chunk_modified = true;
+                    }
+                }
+            }
+        }
+    }
+    return chunk_modified;
+}
+
 fn handle_digging_input(
     mouse_input: Res<ButtonInput<MouseButton>>,
     camera_query: Query<(&Camera, &GlobalTransform), With<MainCameraTag>>,
     window: Single<&Window>,
-    mut svo: ResMut<ChunkSvo>,
     mut commands: Commands,
     mut dig_timer: Local<f32>,
     time: Res<Time>,
@@ -122,6 +202,8 @@ fn handle_digging_input(
     material_handle: Res<TerrainMaterialHandle>,
     mut solid_chunk_query: Query<(&mut Collider, &mut Mesh3d, Entity), With<ChunkTag>>,
     mut mesh_handles: ResMut<Assets<Mesh>>,
+    mut terrain_chunk_map: ResMut<TerrainChunkMap>,
+    mut chunk_entity_map: ResMut<ChunkEntityMap>,
 ) {
     const DIG_STRENGTH: f32 = 0.5;
     const DIG_TIMER: f32 = 0.02; // seconds
@@ -141,17 +223,19 @@ fn handle_digging_input(
     if should_dig {
         if let Some(cursor_pos) = window.cursor_position() {
             let (camera, camera_transform) = camera_query.single().unwrap();
-            if let Some((_, world_pos, _, _)) =
-                screen_to_world_ray(cursor_pos, camera, camera_transform, &svo)
+            if let Some((world_pos, _, _)) =
+                screen_to_world_ray(cursor_pos, camera, camera_transform, &terrain_chunk_map)
             {
-                let modified_chunks = svo.root.dig_sphere(world_pos, DIG_RADIUS, DIG_STRENGTH);
+                let modified_chunks =
+                    dig_sphere(world_pos, DIG_RADIUS, DIG_STRENGTH, &mut terrain_chunk_map);
                 if modified_chunks.is_empty() {
                     return;
                 }
                 for chunk_coord in modified_chunks {
-                    let (entity, chunk_option, _load_status) =
-                        svo.root.get_mut(chunk_coord).unwrap();
-                    let chunk = chunk_option.as_ref().unwrap();
+                    let entity = chunk_entity_map.0.get(&chunk_coord);
+                    let terrain_chunk_map_lock = terrain_chunk_map.0.lock().unwrap();
+                    let chunk = terrain_chunk_map_lock.get(&chunk_coord).unwrap().clone(); //clone instead of holding lock;
+                    drop(terrain_chunk_map_lock);
                     let mut mesh_buffers = MeshBuffers::new();
                     mc_mesh_generation(
                         &mut mesh_buffers,
@@ -196,7 +280,7 @@ fn handle_digging_input(
                                         )),
                                     ))
                                     .id();
-                                *entity = Some(new_entity);
+                                chunk_entity_map.0.insert(chunk_coord, new_entity);
                             }
                         }
                     } else {
@@ -204,7 +288,7 @@ fn handle_digging_input(
                         if let Some(entity) = entity {
                             commands.entity(*entity).despawn();
                         }
-                        *entity = None
+                        chunk_entity_map.0.remove(&chunk_coord);
                     }
                     let chunk_index_map = chunk_index_map.0.lock().unwrap();
                     let mut data_file = chunk_data_file.0.lock().unwrap();
@@ -266,8 +350,8 @@ fn screen_to_world_ray(
     cursor_pos: Vec2,
     camera: &Camera,
     camera_transform: &GlobalTransform,
-    svo: &ChunkSvo,
-) -> Option<(Option<Entity>, Vec3, Vec3, (i16, i16, i16))> {
+    terrain_chunk_map: &TerrainChunkMap,
+) -> Option<(Vec3, Vec3, (i16, i16, i16))> {
     let ray = camera
         .viewport_to_world(camera_transform, cursor_pos)
         .unwrap();
@@ -279,12 +363,11 @@ fn screen_to_world_ray(
     while distance_traveled < max_distance {
         let current_pos = ray_origin + ray_direction * distance_traveled;
         let chunk_coord = world_pos_to_chunk_coord(&current_pos);
-        let (entity, chunk_option, _load_status) = svo.root.get(chunk_coord).unwrap();
-        if let Some(chunk) = chunk_option.as_ref() {
+        if let Some(chunk_data) = terrain_chunk_map.0.lock().unwrap().get(&chunk_coord) {
             let voxel_idx = world_pos_to_voxel_index(&current_pos, &chunk_coord);
             let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
-            if chunk.is_solid(voxel_idx.0, voxel_idx.1, voxel_idx.2) {
-                return Some((*entity, current_pos, chunk_world_pos, chunk_coord));
+            if chunk_data.is_solid(voxel_idx.0, voxel_idx.1, voxel_idx.2) {
+                return Some((current_pos, chunk_world_pos, chunk_coord));
             }
             distance_traveled += step_size;
         } else {

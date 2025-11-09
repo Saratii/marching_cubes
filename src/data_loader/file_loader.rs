@@ -23,6 +23,9 @@ pub struct ChunkDataFileReadWrite(pub Arc<Mutex<File>>);
 #[derive(Resource)]
 pub struct ChunkIndexMap(pub Arc<Mutex<HashMap<(i16, i16, i16), u64>>>);
 
+#[derive(Resource)]
+pub struct ChunkEntityMap(pub HashMap<(i16, i16, i16), Entity>);
+
 // Binary format layout:
 // - SDF values: num_voxels * i16 (2 bytes each)
 // - Material values: num_voxels * u8 (1 byte each)
@@ -110,6 +113,9 @@ pub fn load_chunk_index_map(mut index_file: &File) -> HashMap<(i16, i16, i16), u
 }
 
 pub fn setup_chunk_loading(mut commands: Commands) {
+    commands.insert_resource(ChunkEntityMap {
+        0: HashMap::new(),
+    }); //store entities on the main thread
     let index_file = OpenOptions::new()
         .read(true)
         .write(true)
