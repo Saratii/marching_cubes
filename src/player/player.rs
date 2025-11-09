@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use bevy::{
     input::mouse::{MouseMotion, MouseWheel},
     prelude::*,
@@ -6,17 +8,19 @@ use bevy::{
 };
 use bevy_rapier3d::prelude::*;
 
+use crate::data_loader::driver::PlayerTranslationMutexHandle;
+
 const CAMERA_3RD_PERSON_OFFSET: Vec3 = Vec3 {
     x: 0.0,
     y: 5.0,
     z: 10.0,
 };
-const PLAYER_SPEED: f32 = 15.0;
+const PLAYER_SPEED: f32 = 5.0;
 pub const PLAYER_SPAWN: Vec3 = Vec3::new(0., 2., 0.);
 const PLAYER_CUBOID_SIZE: Vec3 = Vec3::new(0.5, 1.5, 0.5);
 const CAMERA_FIRST_PERSON_OFFSET: Vec3 = Vec3::new(0., 0.75 * PLAYER_CUBOID_SIZE.y, 0.);
 const MIN_ZOOM_DISTANCE: f32 = 4.0;
-const MAX_ZOOM_DISTANCE: f32 = 100.0;
+const MAX_ZOOM_DISTANCE: f32 = 200.0;
 const ZOOM_SPEED: f32 = 5.0;
 const MOUSE_SENSITIVITY: f32 = 0.002;
 const MIN_PITCH: f32 = -1.5;
@@ -87,6 +91,9 @@ pub fn spawn_player(
 ) {
     const MINIMAP_SIZE: u32 = 200;
     const BORDER_WIDTH: u32 = 3;
+    commands.insert_resource(PlayerTranslationMutexHandle(Arc::new(Mutex::new(
+        PLAYER_SPAWN,
+    ))));
     let player_mesh = Cuboid::new(
         PLAYER_CUBOID_SIZE.x,
         PLAYER_CUBOID_SIZE.y,
@@ -276,7 +283,7 @@ pub fn cursor_grab(
 
 pub fn player_movement(
     time: Res<Time>,
-    mut player_query: Query<
+    mut player: Single<
         (
             &mut KinematicCharacterController,
             &mut VerticalVelocity,
@@ -288,38 +295,44 @@ pub fn player_movement(
     key_bindings: Res<KeyBindings>,
     camera_controller: Res<CameraController>,
 ) {
-    for (mut controller, mut vertical_velocity, controller_output) in player_query.iter_mut() {
-        let is_grounded = controller_output.map_or(false, |output| output.grounded);
-        let mut movement_vec = Vec3::ZERO;
-        let yaw_rotation = Quat::from_rotation_y(camera_controller.yaw);
-        let forward = yaw_rotation * Vec3::NEG_Z;
-        let right = yaw_rotation * Vec3::X;
-        let mut horizontal_movement = Vec3::ZERO;
-        if keyboard.pressed(key_bindings.move_forward) {
-            horizontal_movement += forward;
-        }
-        if keyboard.pressed(key_bindings.move_backward) {
-            horizontal_movement -= forward;
-        }
-        if keyboard.pressed(key_bindings.move_left) {
-            horizontal_movement -= right;
-        }
-        if keyboard.pressed(key_bindings.move_right) {
-            horizontal_movement += right;
-        }
-        if horizontal_movement.length() > 0.0 {
-            horizontal_movement = horizontal_movement.normalize();
-            movement_vec += horizontal_movement * PLAYER_SPEED;
-        }
-        if keyboard.just_pressed(key_bindings.jump) && is_grounded {
-            vertical_velocity.y = JUMP_IMPULSE;
-        }
-        if !is_grounded {
-            vertical_velocity.y += GRAVITY * time.delta_secs();
-        } else if vertical_velocity.y < 0.0 {
-            vertical_velocity.y = 0.0;
-        }
-        movement_vec.y = vertical_velocity.y;
-        controller.translation = Some(movement_vec * time.delta_secs());
+    let is_grounded = player.2.map_or(false, |output| output.grounded);
+    let mut movement_vec = Vec3::ZERO;
+    let yaw_rotation = Quat::from_rotation_y(camera_controller.yaw);
+    let forward = yaw_rotation * Vec3::NEG_Z;
+    let right = yaw_rotation * Vec3::X;
+    let mut horizontal_movement = Vec3::ZERO;
+    if keyboard.pressed(key_bindings.move_forward) {
+        horizontal_movement += forward;
     }
+    if keyboard.pressed(key_bindings.move_backward) {
+        horizontal_movement -= forward;
+    }
+    if keyboard.pressed(key_bindings.move_left) {
+        horizontal_movement -= right;
+    }
+    if keyboard.pressed(key_bindings.move_right) {
+        horizontal_movement += right;
+    }
+    if horizontal_movement.length() > 0.0 {
+        horizontal_movement = horizontal_movement.normalize();
+        movement_vec += horizontal_movement * PLAYER_SPEED;
+    }
+    if keyboard.just_pressed(key_bindings.jump) && is_grounded {
+        player.1.y = JUMP_IMPULSE;
+    }
+    if !is_grounded {
+        player.1.y += GRAVITY * time.delta_secs();
+    } else if player.1.y < 0.0 {
+        player.1.y = 0.0;
+    }
+    movement_vec.y = player.1.y;
+    player.0.translation = Some(movement_vec * time.delta_secs());
+}
+
+pub fn sync_player_mutex(
+    player_transform_mutex_handle: ResMut<PlayerTranslationMutexHandle>,
+    player_transform: Single<&Transform, With<PlayerTag>>,
+) {
+    let mut player_transform_lock = player_transform_mutex_handle.0.lock().unwrap();
+    *player_transform_lock = player_transform.translation;
 }
