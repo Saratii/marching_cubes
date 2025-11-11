@@ -32,6 +32,10 @@ pub const Z0_RADIUS_SQUARED: f32 = Z0_RADIUS * Z0_RADIUS;
 pub const Z1_RADIUS: f32 = 100.0; //in world units. Distance where chunks are loaded but not physically simulated.
 pub const Z1_RADIUS_SQUARED: f32 = Z1_RADIUS * Z1_RADIUS;
 pub const VOXEL_SIZE: f32 = CHUNK_SIZE / (SAMPLES_PER_CHUNK_DIM - 1) as f32;
+pub const Z2_RADIUS: f32 = 400.0;
+pub const Z2_RADIUS_SQUARED: f32 = Z2_RADIUS * Z2_RADIUS;
+pub const MAX_RADIUS: f32 = Z0_RADIUS.max(Z1_RADIUS).max(Z2_RADIUS);
+pub const MAX_RADIUS_SQUARED: f32 = MAX_RADIUS * MAX_RADIUS;
 
 #[derive(Component)]
 pub struct ChunkTag;
@@ -45,22 +49,41 @@ pub struct TerrainMaterialHandle(pub Handle<TerrainMaterial>);
 #[derive(Resource)]
 pub struct TextureAtlasHandle(pub Handle<Image>);
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum UniformChunk {
+    NonUniform,
+    Dirt,
+    Air,
+}
+
 #[derive(Component, Serialize, Deserialize, Debug, Clone)]
 pub struct TerrainChunk {
     pub densities: Box<[i16]>,
     pub materials: Box<[u8]>,
+    pub is_uniform: UniformChunk,
 }
 
 impl TerrainChunk {
-    pub fn new(chunk_coord: (i16, i16, i16), fbm: &GeneratorWrapper<SafeNode>) -> (Self, bool) {
-        let (densities, materials, has_surface) = generate_densities(&chunk_coord, fbm);
-        (
-            Self {
-                densities,
-                materials,
-            },
-            has_surface,
-        )
+    pub fn new(chunk_coord: (i16, i16, i16), fbm: &GeneratorWrapper<SafeNode>) -> Self {
+        let (densities, materials, is_uniform) = generate_densities(&chunk_coord, fbm);
+        //if it does not have a surface it must be uniform dirt or air
+        let is_uniform = if !is_uniform {
+            UniformChunk::NonUniform
+        } else {
+            if materials[0] == 1 {
+                UniformChunk::Dirt
+            } else if materials[0] == 0 {
+                UniformChunk::Air
+            } else {
+                println!("materials[0]: {}", materials[0]);
+                panic!("Generated uniform chunk with unknown material type!");
+            }
+        };
+        Self {
+            densities,
+            materials,
+            is_uniform,
+        }
     }
 
     pub fn set_density(&mut self, x: u32, y: u32, z: u32, density: i16) {
@@ -197,8 +220,8 @@ pub fn setup_map(
 pub fn generate_large_map_utility(
     chunk_index_map: Res<ChunkIndexMap>,
     fbm: Res<NoiseFunction>,
-    index_file: ResMut<ChunkIndexFile>,
-    chunk_data_file: Res<ChunkDataFileReadWrite>,
+    mut chunk_index_file: ResMut<ChunkIndexFile>,
+    mut chunk_data_file: ResMut<ChunkDataFileReadWrite>,
 ) {
     const CREATION_RADIUS: f32 = 150.0;
     const CREATION_RADIUS_SQUARED: f32 = CREATION_RADIUS * CREATION_RADIUS;
@@ -221,18 +244,14 @@ pub fn generate_large_map_utility(
                 if chunk_world_pos.distance_squared(PLAYER_SPAWN) < CREATION_RADIUS_SQUARED {
                     let mut locked_index_map = chunk_index_map.0.lock().unwrap();
                     if !locked_index_map.contains_key(&chunk_coord) {
-                        let (chunk, _) = TerrainChunk::new(chunk_coord, &fbm.0);
-                        let mut data_file = chunk_data_file.0.lock().unwrap();
-                        let mut index_file = index_file.0.lock().unwrap();
+                        let chunk = TerrainChunk::new(chunk_coord, &fbm.0);
                         create_chunk_file_data(
                             &chunk,
                             &chunk_coord,
                             &mut locked_index_map,
-                            &mut data_file,
-                            &mut index_file,
+                            &mut chunk_data_file.0,
+                            &mut chunk_index_file.0,
                         );
-                        drop(data_file);
-                        drop(index_file);
                     };
                     drop(locked_index_map);
                 }

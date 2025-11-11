@@ -1,15 +1,11 @@
 use bevy::prelude::*;
 
 use crate::{
-    conversions::{chunk_coord_to_world_pos},
+    conversions::chunk_coord_to_world_pos,
     data_loader::driver::{ChunkRequest, ChunksBeingLoaded},
-    terrain::{
-        lod_zones::{MAX_RADIUS_SQUARED, Z2_RADIUS_SQUARED},
-        terrain::{
-            HALF_CHUNK, Z0_RADIUS_SQUARED,
-            Z1_RADIUS_SQUARED,
+    terrain::terrain::{
+            HALF_CHUNK, MAX_RADIUS_SQUARED, Z0_RADIUS_SQUARED, Z1_RADIUS_SQUARED, Z2_RADIUS_SQUARED
         },
-    },
 };
 
 const MAX_WORLD_SIZE: i16 = 512; //in chunks

@@ -22,8 +22,8 @@ use marching_cubes::data_loader::driver::{
     INITIAL_CHUNKS_LOADED, TerrainChunkMap, chunk_spawn_reciever, setup_chunk_driver,
 };
 use marching_cubes::data_loader::file_loader::{
-    ChunkDataFileReadWrite, ChunkEntityMap, ChunkIndexMap, setup_chunk_loading,
-    update_chunk_file_data,
+    ChunkDataFileReadWrite, ChunkEntityMap, ChunkIndexFile, ChunkIndexMap, create_chunk_file_data,
+    setup_chunk_loading, update_chunk_file_data,
 };
 use marching_cubes::player::player::{
     CameraController, KeyBindings, MainCameraTag, camera_look, camera_zoom, cursor_grab,
@@ -34,8 +34,8 @@ use marching_cubes::terrain::chunk_generator::{
     GenerateChunkEvent, LoadChunksEvent, dequantize_i16_to_f32, quantize_f32_to_i16,
 };
 use marching_cubes::terrain::terrain::{
-    ChunkTag, HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainChunk, TerrainMaterialHandle, VOXEL_SIZE,
-    generate_bevy_mesh, setup_map,
+    ChunkTag, HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainChunk, TerrainMaterialHandle, UniformChunk,
+    VOXEL_SIZE, generate_bevy_mesh, setup_map,
 };
 use marching_cubes::terrain::terrain_material::TerrainMaterial;
 use rayon::ThreadPoolBuilder;
@@ -197,8 +197,9 @@ fn handle_digging_input(
     mut commands: Commands,
     mut dig_timer: Local<f32>,
     time: Res<Time>,
-    chunk_data_file: Res<ChunkDataFileReadWrite>,
+    mut chunk_data_file: ResMut<ChunkDataFileReadWrite>,
     chunk_index_map: Res<ChunkIndexMap>,
+    chunk_index_file: Res<ChunkIndexFile>,
     material_handle: Res<TerrainMaterialHandle>,
     mut solid_chunk_query: Query<(&mut Collider, &mut Mesh3d, Entity), With<ChunkTag>>,
     mut mesh_handles: ResMut<Assets<Mesh>>,
@@ -233,20 +234,36 @@ fn handle_digging_input(
                 }
                 for chunk_coord in modified_chunks {
                     let entity = chunk_entity_map.0.get(&chunk_coord);
-                    let terrain_chunk_map_lock = terrain_chunk_map.0.lock().unwrap();
-                    let chunk = terrain_chunk_map_lock.get(&chunk_coord).unwrap().clone(); //clone instead of holding lock;
+                    let mut terrain_chunk_map_lock = terrain_chunk_map.0.lock().unwrap();
+                    let chunk = terrain_chunk_map_lock.get_mut(&chunk_coord).unwrap();
+                    match chunk.is_uniform {
+                        //this may need to also do the opposite, upgrading non-uniform to uniform
+                        UniformChunk::Air | UniformChunk::Dirt => {
+                            let mut chunk_index_map_lock = chunk_index_map.0.lock().unwrap();
+                            create_chunk_file_data(
+                                chunk,
+                                &chunk_coord,
+                                &mut chunk_index_map_lock,
+                                &chunk_data_file.0,
+                                &chunk_index_file.0,
+                            );
+                            drop(chunk_index_map_lock);
+                            chunk.is_uniform = UniformChunk::NonUniform;
+                        }
+                        UniformChunk::NonUniform => {}
+                    }
+                    let chunk_clone = chunk.clone(); //clone instead of holding lock
                     drop(terrain_chunk_map_lock);
                     let mut mesh_buffers = MeshBuffers::new();
                     mc_mesh_generation(
                         &mut mesh_buffers,
-                        &chunk.densities,
-                        &chunk.materials,
+                        &chunk_clone.densities,
+                        &chunk_clone.materials,
                         SAMPLES_PER_CHUNK_DIM,
                         HALF_CHUNK,
                     );
                     let new_mesh = generate_bevy_mesh(mesh_buffers);
-                    let vertex_count = new_mesh.count_vertices();
-                    if vertex_count > 0 {
+                    if new_mesh.count_vertices() > 0 {
                         let collider = Collider::from_bevy_mesh(
                             &new_mesh,
                             &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
@@ -291,10 +308,13 @@ fn handle_digging_input(
                         chunk_entity_map.0.remove(&chunk_coord);
                     }
                     let chunk_index_map = chunk_index_map.0.lock().unwrap();
-                    let mut data_file = chunk_data_file.0.lock().unwrap();
-                    update_chunk_file_data(&chunk_index_map, chunk_coord, &chunk, &mut data_file);
+                    update_chunk_file_data(
+                        &chunk_index_map,
+                        chunk_coord,
+                        &chunk_clone,
+                        &mut chunk_data_file.0,
+                    );
                     drop(chunk_index_map);
-                    drop(data_file);
                 }
             }
         }
