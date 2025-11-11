@@ -1,9 +1,9 @@
-use crate::terrain::terrain::{NoiseFunction, SAMPLES_PER_CHUNK, TerrainChunk};
+use crate::terrain::terrain::{NoiseFunction, SAMPLES_PER_CHUNK, TerrainChunk, UniformChunk};
 use bevy::prelude::*;
 use fastnoise2::SafeNode;
 use fastnoise2::generator::simplex::opensimplex2;
 use fastnoise2::generator::{Generator, GeneratorWrapper};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex};
@@ -12,13 +12,29 @@ const BYTES_PER_VOXEL: usize = std::mem::size_of::<i16>() + std::mem::size_of::<
 const CHUNK_SERIALIZED_SIZE: usize = SAMPLES_PER_CHUNK * BYTES_PER_VOXEL;
 
 #[derive(Resource)]
-pub struct ChunkIndexFile(pub Arc<Mutex<File>>);
+pub struct ChunkIndexFile(pub File);
 
 #[derive(Resource)]
-pub struct ChunkDataFileRead(pub Arc<Mutex<File>>);
+pub struct ChunkDataFileRead(pub File);
 
 #[derive(Resource)]
-pub struct ChunkDataFileReadWrite(pub Arc<Mutex<File>>);
+pub struct ChunkDataFileReadWrite(pub File);
+
+#[derive(Resource)]
+pub struct DirtCompressionFile(pub File);
+
+#[derive(Resource)]
+pub struct AirCompressionFile(pub File);
+
+//when a non-uniform chunk becomes uniform and is removed from the main data file, mark its spot as available to be reused
+#[derive(Resource)]
+pub struct StaleCompressionFile(pub Arc<Mutex<File>>);
+
+#[derive(Resource)]
+pub struct UniformChunkMap {
+    pub air_chunks: Arc<Mutex<(HashSet<(i16, i16, i16)>, VecDeque<u64>)>>,
+    pub dirt_chunks: Arc<Mutex<(HashSet<(i16, i16, i16)>, VecDeque<u64>)>>,
+}
 
 #[derive(Resource)]
 pub struct ChunkIndexMap(pub Arc<Mutex<HashMap<(i16, i16, i16), u64>>>);
@@ -53,45 +69,50 @@ pub fn deserialize_chunk_data(data: &[u8]) -> TerrainChunk {
     TerrainChunk {
         densities: densities.into_boxed_slice(),
         materials: materials.into_boxed_slice(),
+        is_uniform: UniformChunk::NonUniform,
     }
 }
 
 pub fn create_chunk_file_data(
     chunk: &TerrainChunk,
     chunk_coord: &(i16, i16, i16),
-    index_map: &mut HashMap<(i16, i16, i16), u64>,
-    mut data_file: &File,
-    mut index_file: &File,
+    chunk_index_map: &mut HashMap<(i16, i16, i16), u64>,
+    mut chunk_data_file: &File,
+    mut chunk_index_file: &File,
 ) {
-    let byte_offset = data_file.seek(SeekFrom::End(0)).unwrap();
+    let byte_offset = chunk_data_file.seek(SeekFrom::End(0)).unwrap();
     let buffer = serialize_chunk_data(chunk);
-    data_file.write_all(&buffer).unwrap();
+    chunk_data_file.write_all(&buffer).unwrap();
+    chunk_data_file.flush().unwrap();
+    chunk_index_file.seek(SeekFrom::End(0)).unwrap();
     let mut index_buffer = Vec::with_capacity(14); //sizeof (i16, i16, i16, u64)
     index_buffer.extend_from_slice(&chunk_coord.0.to_le_bytes());
     index_buffer.extend_from_slice(&chunk_coord.1.to_le_bytes());
     index_buffer.extend_from_slice(&chunk_coord.2.to_le_bytes());
     index_buffer.extend_from_slice(&byte_offset.to_le_bytes());
-    index_file.write_all(&index_buffer).unwrap();
-    index_map.insert(*chunk_coord, byte_offset);
+    chunk_index_file.write_all(&index_buffer).unwrap();
+    chunk_index_file.flush().unwrap();
+    chunk_index_map.insert(*chunk_coord, byte_offset);
 }
 
 pub fn update_chunk_file_data(
-    index_map: &HashMap<(i16, i16, i16), u64>,
+    chunk_index_map: &HashMap<(i16, i16, i16), u64>,
     chunk_coord: (i16, i16, i16),
     chunk: &TerrainChunk,
-    mut data_file: &File,
+    mut chunk_data_file: &File,
 ) {
-    let byte_offset = index_map.get(&chunk_coord).unwrap();
+    let byte_offset = chunk_index_map.get(&chunk_coord).unwrap();
     let buffer = serialize_chunk_data(chunk);
-    data_file.seek(SeekFrom::Start(*byte_offset)).unwrap();
-    data_file.write_all(&buffer).unwrap();
+    chunk_data_file.seek(SeekFrom::Start(*byte_offset)).unwrap();
+    chunk_data_file.write_all(&buffer).unwrap();
+    chunk_data_file.flush().unwrap();
 }
 
-pub fn load_chunk_data(data_file: &mut File, byte_offset: u64) -> TerrainChunk {
+pub fn load_chunk_data(chunk_data_file: &mut File, byte_offset: u64) -> TerrainChunk {
     let total_size = SAMPLES_PER_CHUNK * 2 + SAMPLES_PER_CHUNK; // i16 sdfs (2 bytes) + u8 materials (1 byte)
-    data_file.seek(SeekFrom::Start(byte_offset)).unwrap();
+    chunk_data_file.seek(SeekFrom::Start(byte_offset)).unwrap();
     let mut buffer = vec![0u8; total_size];
-    data_file.read_exact(&mut buffer).unwrap();
+    chunk_data_file.read_exact(&mut buffer).unwrap();
     deserialize_chunk_data(&buffer)
 }
 
@@ -113,9 +134,7 @@ pub fn load_chunk_index_map(mut index_file: &File) -> HashMap<(i16, i16, i16), u
 }
 
 pub fn setup_chunk_loading(mut commands: Commands) {
-    commands.insert_resource(ChunkEntityMap {
-        0: HashMap::new(),
-    }); //store entities on the main thread
+    commands.insert_resource(ChunkEntityMap { 0: HashMap::new() }); //store entities on the main thread
     let index_file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -132,13 +151,112 @@ pub fn setup_chunk_loading(mut commands: Commands) {
         .read(true)
         .open("data/chunk_data.txt")
         .unwrap();
-    commands.insert_resource(ChunkDataFileReadWrite(Arc::new(Mutex::new(data_file))));
-    commands.insert_resource(ChunkDataFileRead(Arc::new(Mutex::new(data_file_read))));
-    commands.insert_resource(ChunkIndexMap(Arc::new(Mutex::new(load_chunk_index_map(
-        &index_file,
-    )))));
-    commands.insert_resource(ChunkIndexFile(Arc::new(Mutex::new(index_file))));
+    let air_compression_file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open("data/air_compression_data.txt")
+        .unwrap();
+    let dirt_compression_file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open("data/dirt_compression_data.txt")
+        .unwrap();
+    #[allow(unused)]
+    let stale_chunks_file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open("data/stale_chunks.txt")
+        .unwrap();
+    commands.insert_resource(ChunkDataFileReadWrite(data_file));
+    commands.insert_resource(ChunkDataFileRead(data_file_read));
+    let uniform_air_chunks = load_uniform_chunks(&air_compression_file);
+    let uniform_dirt_chunks = load_uniform_chunks(&dirt_compression_file);
+    println!(
+        "Loaded {} compressed air chunks",
+        uniform_air_chunks.0.len()
+    );
+    println!(
+        "Loaded {} compressed dirt chunks",
+        uniform_dirt_chunks.0.len()
+    );
+    commands.insert_resource(UniformChunkMap {
+        air_chunks: Arc::new(Mutex::new(uniform_air_chunks)),
+        dirt_chunks: Arc::new(Mutex::new(uniform_dirt_chunks)),
+    });
+    commands.insert_resource(AirCompressionFile(air_compression_file));
+    commands.insert_resource(DirtCompressionFile(dirt_compression_file));
+    let index_map = load_chunk_index_map(&index_file);
+    println!("Loaded {} chunks into index map", index_map.len());
+    commands.insert_resource(ChunkIndexMap(Arc::new(Mutex::new(index_map))));
+    commands.insert_resource(ChunkIndexFile(index_file));
     let fbm =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
     commands.insert_resource(NoiseFunction(Arc::new(fbm)));
+}
+
+/// Load all chunk coords and track empty slots
+pub fn load_uniform_chunks(mut f: &File) -> (HashSet<(i16, i16, i16)>, VecDeque<u64>) {
+    let mut uniform_chunks = HashSet::new();
+    let mut free_slots = VecDeque::new();
+    f.seek(SeekFrom::Start(0)).unwrap();
+    let mut buffer = [0u8; 6];
+    let mut offset = 0u64;
+    while let Ok(_) = f.read_exact(&mut buffer) {
+        let x = i16::from_le_bytes([buffer[0], buffer[1]]);
+        let y = i16::from_le_bytes([buffer[2], buffer[3]]);
+        let z = i16::from_le_bytes([buffer[4], buffer[5]]);
+        if (x, y, z) == (0, 0, 0) {
+            // treat (0,0,0) as a deleted slot
+            free_slots.push_back(offset);
+        } else {
+            uniform_chunks.insert((x, y, z));
+        }
+        offset += 6;
+    }
+    (uniform_chunks, free_slots)
+}
+
+/// Write either into a free slot or append
+pub fn write_uniform_chunk(
+    chunk_coord: &(i16, i16, i16),
+    mut f: &File,
+    free_slots: &mut VecDeque<u64>,
+) {
+    let mut buffer = [0u8; 6];
+    buffer[..2].copy_from_slice(&chunk_coord.0.to_le_bytes());
+    buffer[2..4].copy_from_slice(&chunk_coord.1.to_le_bytes());
+    buffer[4..6].copy_from_slice(&chunk_coord.2.to_le_bytes());
+    if let Some(pos) = free_slots.pop_front() {
+        f.seek(SeekFrom::Start(pos)).unwrap();
+    } else {
+        f.seek(SeekFrom::End(0)).unwrap();
+    }
+    f.write_all(&buffer).unwrap();
+}
+
+/// Mark a chunk as deleted by overwriting with zeros
+pub fn remove_uniform_chunk(
+    chunk_coord: &(i16, i16, i16),
+    mut f: &File,
+    free_slots: &mut VecDeque<u64>,
+) {
+    let target = chunk_coord;
+    f.seek(SeekFrom::Start(0)).unwrap();
+    let mut buffer = [0u8; 6];
+    let mut offset = 0u64;
+    while let Ok(_) = f.read_exact(&mut buffer) {
+        let x = i16::from_le_bytes([buffer[0], buffer[1]]);
+        let y = i16::from_le_bytes([buffer[2], buffer[3]]);
+        let z = i16::from_le_bytes([buffer[4], buffer[5]]);
+        if (x, y, z) == *target {
+            f.seek(SeekFrom::Start(offset)).unwrap();
+            f.write_all(&[0; 6]).unwrap();
+            free_slots.push_back(offset);
+            break;
+        }
+        offset += 6;
+    }
 }

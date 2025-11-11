@@ -26,8 +26,7 @@ pub fn generate_densities(
     let mut materials = vec![0; SAMPLES_PER_CHUNK];
     let chunk_start = calculate_chunk_start(chunk_coord);
     let terrain_heights = generate_terrain_heights(&chunk_start, fbm);
-    let contains_surface = heights_contains_surface(&chunk_start, &terrain_heights);
-    fill_voxel_densities(
+    let is_uniform = fill_voxel_densities(
         &mut densities,
         &mut materials,
         &chunk_start,
@@ -36,7 +35,7 @@ pub fn generate_densities(
     (
         densities.try_into().unwrap(),
         materials.try_into().unwrap(),
-        contains_surface,
+        is_uniform,
     )
 }
 
@@ -99,7 +98,9 @@ fn fill_voxel_densities(
     materials: &mut [u8],
     chunk_start: &Vec3,
     terrain_heights: &[f32],
-) {
+) -> bool {
+    let mut is_uniform = true;
+    let mut initial: Option<(i16, u8)> = None;
     for z in 0..SAMPLES_PER_CHUNK_DIM {
         let height_base = z * SAMPLES_PER_CHUNK_DIM;
         for y in 0..SAMPLES_PER_CHUNK_DIM {
@@ -114,16 +115,26 @@ fn fill_voxel_densities(
                 densities[voxel_index] = distance_to_surface;
                 if distance_to_surface < 0 {
                     if distance_to_surface < quantize_f32_to_i16(-1.0) {
-                        materials[voxel_index] = 1;
+                        materials[voxel_index] = 1; //dirt
                     } else {
-                        materials[voxel_index] = 2;
+                        materials[voxel_index] = 2; //grass
                     }
                 } else {
-                    materials[voxel_index] = 0;
+                    materials[voxel_index] = 0; //air
+                }
+                if let Some((init_distance, init_mat)) = initial {
+                    if init_distance != distance_to_surface || init_mat != materials[voxel_index] {
+                        {
+                            is_uniform = false;
+                        }
+                    }
+                } else {
+                    initial = Some((distance_to_surface, materials[voxel_index]));
                 }
             }
         }
     }
+    is_uniform
 }
 
 #[inline]

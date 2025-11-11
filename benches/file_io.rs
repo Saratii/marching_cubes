@@ -9,7 +9,10 @@ use marching_cubes::{
     data_loader::file_loader::{
         create_chunk_file_data, load_chunk_data, load_chunk_index_map, update_chunk_file_data,
     },
-    terrain::{chunk_generator::generate_densities, terrain::TerrainChunk},
+    terrain::{
+        chunk_generator::generate_densities,
+        terrain::{TerrainChunk, UniformChunk},
+    },
 };
 
 fn benchmark_read_single_chunk(c: &mut Criterion) {
@@ -64,6 +67,7 @@ fn benchmark_write_single_new_chunk(c: &mut Criterion) {
     let terrain_chunk = TerrainChunk {
         densities,
         materials,
+        is_uniform: UniformChunk::NonUniform,
     };
     let chunk_coord = (1000, 1000, 1000);
     let mut index_map = HashMap::new();
@@ -129,6 +133,7 @@ fn benchmark_bulk_write_new_chunk(c: &mut Criterion) {
         let terrain_chunk = TerrainChunk {
             densities,
             materials,
+            is_uniform: UniformChunk::NonUniform,
         };
         chunks_data.push((terrain_chunk, chunk_coord));
     }
