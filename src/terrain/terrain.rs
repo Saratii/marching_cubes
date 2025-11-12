@@ -27,7 +27,7 @@ pub const CHUNK_SIZE: f32 = 8.0; //in world units
 pub const SAMPLES_PER_CHUNK: usize =
     SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM;
 pub const HALF_CHUNK: f32 = CHUNK_SIZE / 2.0;
-pub const Z0_RADIUS: f32 = 15.0; //in world units. Distance where everything is loaded at all times and physically simulated.
+pub const Z0_RADIUS: f32 = 20.0; //in world units. Distance where everything is loaded at all times and physically simulated.
 pub const Z0_RADIUS_SQUARED: f32 = Z0_RADIUS * Z0_RADIUS;
 pub const Z1_RADIUS: f32 = 100.0; //in world units. Distance where chunks are loaded but not physically simulated.
 pub const Z1_RADIUS_SQUARED: f32 = Z1_RADIUS * Z1_RADIUS;
@@ -49,7 +49,7 @@ pub struct TerrainMaterialHandle(pub Handle<TerrainMaterial>);
 #[derive(Resource)]
 pub struct TextureAtlasHandle(pub Handle<Image>);
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum UniformChunk {
     NonUniform,
     Dirt,
@@ -130,90 +130,6 @@ pub fn setup_map(
     commands.insert_resource(TerrainMaterialHandle(standard_terrain_material_handle));
     commands.insert_resource(TextureAtlasHandle(atlas_texture_handle));
 }
-
-// pub fn spawn_initial_chunks(
-//     mut commands: Commands,
-//     chunk_index_map: Res<ChunkIndexMap>,
-//     mut svo: ResMut<ChunkSvo>,
-//     mut meshes: ResMut<Assets<Mesh>>,
-//     standard_material: Res<TerrainMaterialHandle>,
-//     fbm: Res<NoiseFunction>,
-//     index_file: ResMut<ChunkIndexFile>,
-//     chunk_data_file: Res<ChunkDataFileReadWrite>,
-// ) {
-//     let player_chunk = world_pos_to_chunk_coord(&PLAYER_SPAWN);
-//     let min_chunk = (
-//         player_chunk.0 - Z0_RADIUS as i16,
-//         player_chunk.1 - Z0_RADIUS as i16,
-//         player_chunk.2 - Z0_RADIUS as i16,
-//     );
-//     let max_chunk = (
-//         player_chunk.0 + Z0_RADIUS as i16,
-//         player_chunk.1 + Z0_RADIUS as i16,
-//         player_chunk.2 + Z0_RADIUS as i16,
-//     );
-//     let mut index_map_lock = chunk_index_map.0.lock().unwrap();
-//     let mut data_file_lock = chunk_data_file.0.lock().unwrap();
-//     let mut index_file_lock = index_file.0.lock().unwrap();
-//     for chunk_x in min_chunk.0..=max_chunk.0 {
-//         for chunk_z in min_chunk.2..=max_chunk.2 {
-//             for chunk_y in min_chunk.1..=max_chunk.1 {
-//                 let chunk_coord = (chunk_x, chunk_y, chunk_z);
-//                 let distance_squared =
-//                     chunk_coord_to_world_pos(&chunk_coord).distance_squared(PLAYER_SPAWN);
-//                 if distance_squared < Z0_RADIUS_SQUARED {
-//                     let file_offset = index_map_lock.get(&chunk_coord);
-//                     let (terrain_chunk, contains_surface) = if let Some(offset) = file_offset {
-//                         let chunk = load_chunk_data(&mut data_file_lock, *offset);
-//                         let contains_surface = chunk_contains_surface(&chunk);
-//                         (chunk, contains_surface)
-//                     } else {
-//                         let (chunk, contains_surface) = TerrainChunk::new(chunk_coord, &fbm.0);
-//                         create_chunk_file_data(
-//                             &chunk,
-//                             &chunk_coord,
-//                             &mut index_map_lock,
-//                             &mut data_file_lock,
-//                             &mut index_file_lock,
-//                         );
-//                         (chunk, contains_surface)
-//                     };
-//                     if contains_surface {
-//                         let mut mesh_buffers = MeshBuffers::new();
-//                         mc_mesh_generation(
-//                             &mut mesh_buffers,
-//                             &terrain_chunk.densities,
-//                             &terrain_chunk.materials,
-//                             SAMPLES_PER_CHUNK_DIM,
-//                             HALF_CHUNK,
-//                         );
-//                         let mesh = generate_bevy_mesh(mesh_buffers);
-//                         let transform =
-//                             Transform::from_translation(chunk_coord_to_world_pos(&chunk_coord));
-//                         let collider = Collider::from_bevy_mesh(
-//                             &mesh,
-//                             &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
-//                         )
-//                         .unwrap();
-//                         let id = commands
-//                             .spawn((
-//                                 Mesh3d(meshes.add(mesh)),
-//                                 MeshMaterial3d(standard_material.0.clone()),
-//                                 ChunkTag,
-//                                 transform,
-//                                 collider,
-//                             ))
-//                             .id();
-//                         svo.root
-//                             .insert(chunk_coord, Some(id), Some(Mutex::new(terrain_chunk)), 0);
-//                     } else {
-//                         svo.root.insert(chunk_coord, None, Some(Mutex::new(terrain_chunk)), 0);
-//                     }
-//                 }
-//             }
-//         }
-//     }
-// }
 
 //writes data to disk for a large amount of chunks without saving to memory
 // 900GB written in 8 minutes HEHE

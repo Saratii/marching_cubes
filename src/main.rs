@@ -22,8 +22,9 @@ use marching_cubes::data_loader::driver::{
     INITIAL_CHUNKS_LOADED, TerrainChunkMap, chunk_spawn_reciever, setup_chunk_driver,
 };
 use marching_cubes::data_loader::file_loader::{
-    ChunkDataFileReadWrite, ChunkEntityMap, ChunkIndexFile, ChunkIndexMap, create_chunk_file_data,
-    setup_chunk_loading, update_chunk_file_data,
+    ChunkDataFileReadWrite, ChunkEntityMap, ChunkIndexFile, ChunkIndexMap, CompressionFileHandles,
+    UniformChunkMap, create_chunk_file_data, remove_uniform_chunk, setup_chunk_loading,
+    update_chunk_file_data,
 };
 use marching_cubes::player::player::{
     CameraController, KeyBindings, MainCameraTag, camera_look, camera_zoom, cursor_grab,
@@ -192,7 +193,7 @@ pub fn modify_chunk_voxels(
 
 fn handle_digging_input(
     mouse_input: Res<ButtonInput<MouseButton>>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<MainCameraTag>>,
+    camera: Single<(&Camera, &GlobalTransform), With<MainCameraTag>>,
     window: Single<&Window>,
     mut commands: Commands,
     mut dig_timer: Local<f32>,
@@ -205,10 +206,12 @@ fn handle_digging_input(
     mut mesh_handles: ResMut<Assets<Mesh>>,
     mut terrain_chunk_map: ResMut<TerrainChunkMap>,
     mut chunk_entity_map: ResMut<ChunkEntityMap>,
+    mut compression_file_handles: ResMut<CompressionFileHandles>,
+    uniform_chunks_map: ResMut<UniformChunkMap>,
 ) {
     const DIG_STRENGTH: f32 = 0.5;
     const DIG_TIMER: f32 = 0.02; // seconds
-    const DIG_RADIUS: f32 = 0.8; // world space
+    const DIG_RADIUS: f32 = 1.8; // world space
     let should_dig = if mouse_input.pressed(MouseButton::Left) {
         *dig_timer += time.delta_secs();
         if *dig_timer >= DIG_TIMER {
@@ -223,9 +226,8 @@ fn handle_digging_input(
     };
     if should_dig {
         if let Some(cursor_pos) = window.cursor_position() {
-            let (camera, camera_transform) = camera_query.single().unwrap();
             if let Some((world_pos, _, _)) =
-                screen_to_world_ray(cursor_pos, camera, camera_transform, &terrain_chunk_map)
+                screen_to_world_ray(cursor_pos, camera.0, camera.1, &terrain_chunk_map)
             {
                 let modified_chunks =
                     dig_sphere(world_pos, DIG_RADIUS, DIG_STRENGTH, &mut terrain_chunk_map);
@@ -236,24 +238,45 @@ fn handle_digging_input(
                     let entity = chunk_entity_map.0.get(&chunk_coord);
                     let mut terrain_chunk_map_lock = terrain_chunk_map.0.lock().unwrap();
                     let chunk = terrain_chunk_map_lock.get_mut(&chunk_coord).unwrap();
-                    match chunk.is_uniform {
+                    let chunk_clone = chunk.clone(); //clone instead of holding lock
+                    match chunk_clone.is_uniform {
                         //this may need to also do the opposite, upgrading non-uniform to uniform
                         UniformChunk::Air | UniformChunk::Dirt => {
+                            chunk.is_uniform = UniformChunk::NonUniform;
+                            drop(terrain_chunk_map_lock);
                             let mut chunk_index_map_lock = chunk_index_map.0.lock().unwrap();
                             create_chunk_file_data(
-                                chunk,
+                                &chunk_clone,
                                 &chunk_coord,
                                 &mut chunk_index_map_lock,
                                 &chunk_data_file.0,
                                 &chunk_index_file.0,
                             );
+                            if chunk_clone.is_uniform == UniformChunk::Air {
+                                let mut uniform_chunks_map_lock =
+                                    uniform_chunks_map.air_chunks.lock().unwrap();
+                                remove_uniform_chunk(
+                                    &chunk_coord,
+                                    &mut compression_file_handles.air_file,
+                                    &mut uniform_chunks_map_lock.1,
+                                );
+                                drop(uniform_chunks_map_lock);
+                            } else if chunk_clone.is_uniform == UniformChunk::Dirt {
+                                let mut uniform_chunks_map_lock =
+                                    uniform_chunks_map.dirt_chunks.lock().unwrap();
+                                remove_uniform_chunk(
+                                    &chunk_coord,
+                                    &mut compression_file_handles.dirt_file,
+                                    &mut uniform_chunks_map_lock.1,
+                                );
+                                drop(uniform_chunks_map_lock);
+                            }
                             drop(chunk_index_map_lock);
-                            chunk.is_uniform = UniformChunk::NonUniform;
                         }
-                        UniformChunk::NonUniform => {}
+                        UniformChunk::NonUniform => {
+                            drop(terrain_chunk_map_lock);
+                        }
                     }
-                    let chunk_clone = chunk.clone(); //clone instead of holding lock
-                    drop(terrain_chunk_map_lock);
                     let mut mesh_buffers = MeshBuffers::new();
                     mc_mesh_generation(
                         &mut mesh_buffers,
