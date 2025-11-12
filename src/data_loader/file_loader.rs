@@ -21,10 +21,10 @@ pub struct ChunkDataFileRead(pub File);
 pub struct ChunkDataFileReadWrite(pub File);
 
 #[derive(Resource)]
-pub struct DirtCompressionFile(pub File);
-
-#[derive(Resource)]
-pub struct AirCompressionFile(pub File);
+pub struct CompressionFileHandles {
+    pub dirt_file: File,
+    pub air_file: File,
+}
 
 //when a non-uniform chunk becomes uniform and is removed from the main data file, mark its spot as available to be reused
 #[derive(Resource)]
@@ -186,8 +186,10 @@ pub fn setup_chunk_loading(mut commands: Commands) {
         air_chunks: Arc::new(Mutex::new(uniform_air_chunks)),
         dirt_chunks: Arc::new(Mutex::new(uniform_dirt_chunks)),
     });
-    commands.insert_resource(AirCompressionFile(air_compression_file));
-    commands.insert_resource(DirtCompressionFile(dirt_compression_file));
+    commands.insert_resource(CompressionFileHandles {
+        dirt_file: dirt_compression_file,
+        air_file: air_compression_file,
+    });
     let index_map = load_chunk_index_map(&index_file);
     println!("Loaded {} chunks into index map", index_map.len());
     commands.insert_resource(ChunkIndexMap(Arc::new(Mutex::new(index_map))));
@@ -197,7 +199,7 @@ pub fn setup_chunk_loading(mut commands: Commands) {
     commands.insert_resource(NoiseFunction(Arc::new(fbm)));
 }
 
-/// Load all chunk coords and track empty slots
+// Load all chunk coords and track empty slots
 pub fn load_uniform_chunks(mut f: &File) -> (HashSet<(i16, i16, i16)>, VecDeque<u64>) {
     let mut uniform_chunks = HashSet::new();
     let mut free_slots = VecDeque::new();
@@ -219,7 +221,7 @@ pub fn load_uniform_chunks(mut f: &File) -> (HashSet<(i16, i16, i16)>, VecDeque<
     (uniform_chunks, free_slots)
 }
 
-/// Write either into a free slot or append
+// Write either into a free slot or append
 pub fn write_uniform_chunk(
     chunk_coord: &(i16, i16, i16),
     mut f: &File,
@@ -237,11 +239,11 @@ pub fn write_uniform_chunk(
     f.write_all(&buffer).unwrap();
 }
 
-/// Mark a chunk as deleted by overwriting with zeros
+// Mark a chunk as deleted by overwriting with zeros
 pub fn remove_uniform_chunk(
     chunk_coord: &(i16, i16, i16),
     mut f: &File,
-    free_slots: &mut VecDeque<u64>,
+    free_uniform_slots: &mut VecDeque<u64>,
 ) {
     let target = chunk_coord;
     f.seek(SeekFrom::Start(0)).unwrap();
@@ -254,7 +256,7 @@ pub fn remove_uniform_chunk(
         if (x, y, z) == *target {
             f.seek(SeekFrom::Start(offset)).unwrap();
             f.write_all(&[0; 6]).unwrap();
-            free_slots.push_back(offset);
+            free_uniform_slots.push_back(offset);
             break;
         }
         offset += 6;
