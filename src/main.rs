@@ -6,8 +6,7 @@ use bevy::diagnostic::{
 use bevy::pbr::PbrPlugin;
 use bevy::prelude::*;
 use bevy::render::diagnostic::RenderDiagnosticsPlugin;
-use bevy::render::primitives::Aabb;
-use bevy::render::view::NoFrustumCulling;
+use bevy::render::mesh::MeshAabb;
 use bevy::window::PresentMode;
 use bevy_rapier3d::plugin::{NoUserData, RapierPhysicsPlugin};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
@@ -299,8 +298,10 @@ fn handle_digging_input(
                                     solid_chunk_query.get_mut(*entity).unwrap();
                                 *collider_component = collider;
                                 mesh_handles.remove(&mesh_handle.0);
+                                if let Some(aabb) = new_mesh.compute_aabb() {
+                                    commands.entity(*entity).insert(aabb);
+                                }
                                 *mesh_handle = Mesh3d(mesh_handles.add(new_mesh));
-                                commands.entity(*entity).insert(NoFrustumCulling); //this is bad
                             }
                             //entity did not already exist
                             None => {
@@ -309,11 +310,6 @@ fn handle_digging_input(
                                         collider,
                                         Mesh3d(mesh_handles.add(new_mesh)),
                                         MeshMaterial3d(material_handle.0.clone()),
-                                        Aabb {
-                                            center: chunk_coord_to_world_pos(&chunk_coord).into(),
-                                            half_extents: Vec3A::splat(HALF_CHUNK),
-                                        },
-                                        NoFrustumCulling, //this is bad
                                         ChunkTag,
                                         Transform::from_translation(chunk_coord_to_world_pos(
                                             &chunk_coord,
