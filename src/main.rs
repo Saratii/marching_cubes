@@ -197,7 +197,7 @@ fn handle_digging_input(
     mut commands: Commands,
     mut dig_timer: Local<f32>,
     time: Res<Time>,
-    mut chunk_data_file: ResMut<ChunkDataFileReadWrite>,
+    chunk_data_file: ResMut<ChunkDataFileReadWrite>,
     chunk_index_map: Res<ChunkIndexMap>,
     chunk_index_file: Res<ChunkIndexFile>,
     material_handle: Res<TerrainMaterialHandle>,
@@ -205,7 +205,7 @@ fn handle_digging_input(
     mut mesh_handles: ResMut<Assets<Mesh>>,
     mut terrain_chunk_map: ResMut<TerrainChunkMap>,
     mut chunk_entity_map: ResMut<ChunkEntityMap>,
-    mut compression_file_handles: ResMut<CompressionFileHandles>,
+    compression_file_handles: ResMut<CompressionFileHandles>,
     uniform_chunks_map: ResMut<UniformChunkMap>,
 ) {
     const DIG_STRENGTH: f32 = 0.5;
@@ -244,30 +244,40 @@ fn handle_digging_input(
                             chunk.is_uniform = UniformChunk::NonUniform;
                             drop(terrain_chunk_map_lock);
                             let mut chunk_index_map_lock = chunk_index_map.0.lock().unwrap();
+                            let mut chunk_data_file_locked = chunk_data_file.0.lock().unwrap();
+                            let mut chunk_index_file_locked = chunk_index_file.0.lock().unwrap();
                             create_chunk_file_data(
                                 &chunk_clone,
                                 &chunk_coord,
                                 &mut chunk_index_map_lock,
-                                &chunk_data_file.0,
-                                &chunk_index_file.0,
+                                &mut chunk_data_file_locked,
+                                &mut chunk_index_file_locked,
                             );
+                            drop(chunk_index_file_locked);
+                            drop(chunk_data_file_locked);
                             if chunk_clone.is_uniform == UniformChunk::Air {
                                 let mut uniform_chunks_map_lock =
                                     uniform_chunks_map.air_chunks.lock().unwrap();
+                                let mut air_file_lock =
+                                    compression_file_handles.air_file.lock().unwrap();
                                 remove_uniform_chunk(
                                     &chunk_coord,
-                                    &mut compression_file_handles.air_file,
+                                    &mut air_file_lock,
                                     &mut uniform_chunks_map_lock.1,
                                 );
                                 drop(uniform_chunks_map_lock);
+                                drop(air_file_lock);
                             } else if chunk_clone.is_uniform == UniformChunk::Dirt {
                                 let mut uniform_chunks_map_lock =
                                     uniform_chunks_map.dirt_chunks.lock().unwrap();
+                                let mut dirt_file_lock =
+                                    compression_file_handles.dirt_file.lock().unwrap();
                                 remove_uniform_chunk(
                                     &chunk_coord,
-                                    &mut compression_file_handles.dirt_file,
+                                    &mut dirt_file_lock,
                                     &mut uniform_chunks_map_lock.1,
                                 );
+                                drop(dirt_file_lock);
                                 drop(uniform_chunks_map_lock);
                             }
                             drop(chunk_index_map_lock);
@@ -327,13 +337,15 @@ fn handle_digging_input(
                         chunk_entity_map.0.remove(&chunk_coord);
                     }
                     let chunk_index_map = chunk_index_map.0.lock().unwrap();
+                    let mut chunk_data_file_locked = chunk_data_file.0.lock().unwrap();
                     update_chunk_file_data(
                         &chunk_index_map,
                         chunk_coord,
                         &chunk_clone,
-                        &mut chunk_data_file.0,
+                        &mut chunk_data_file_locked,
                     );
                     drop(chunk_index_map);
+                    drop(chunk_data_file_locked);
                 }
             }
         }
@@ -396,7 +408,7 @@ fn screen_to_world_ray(
         .unwrap();
     let ray_origin = ray.origin;
     let ray_direction = ray.direction;
-    let max_distance = 10.0;
+    let max_distance = 8.0;
     let step_size = 0.05;
     let mut distance_traveled = 0.0;
     while distance_traveled < max_distance {
