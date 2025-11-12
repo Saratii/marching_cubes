@@ -12,18 +12,18 @@ const BYTES_PER_VOXEL: usize = std::mem::size_of::<i16>() + std::mem::size_of::<
 const CHUNK_SERIALIZED_SIZE: usize = SAMPLES_PER_CHUNK * BYTES_PER_VOXEL;
 
 #[derive(Resource)]
-pub struct ChunkIndexFile(pub File);
+pub struct ChunkIndexFile(pub Arc<Mutex<File>>);
 
 #[derive(Resource)]
-pub struct ChunkDataFileRead(pub File);
+pub struct ChunkDataFileRead(pub Arc<Mutex<File>>);
 
 #[derive(Resource)]
-pub struct ChunkDataFileReadWrite(pub File);
+pub struct ChunkDataFileReadWrite(pub Arc<Mutex<File>>);
 
 #[derive(Resource)]
 pub struct CompressionFileHandles {
-    pub dirt_file: File,
-    pub air_file: File,
+    pub dirt_file: Arc<Mutex<File>>,
+    pub air_file: Arc<Mutex<File>>,
 }
 
 //when a non-uniform chunk becomes uniform and is removed from the main data file, mark its spot as available to be reused
@@ -77,8 +77,8 @@ pub fn create_chunk_file_data(
     chunk: &TerrainChunk,
     chunk_coord: &(i16, i16, i16),
     chunk_index_map: &mut HashMap<(i16, i16, i16), u64>,
-    mut chunk_data_file: &File,
-    mut chunk_index_file: &File,
+    chunk_data_file: &mut File,
+    chunk_index_file: &mut File,
 ) {
     let byte_offset = chunk_data_file.seek(SeekFrom::End(0)).unwrap();
     let buffer = serialize_chunk_data(chunk);
@@ -99,7 +99,7 @@ pub fn update_chunk_file_data(
     chunk_index_map: &HashMap<(i16, i16, i16), u64>,
     chunk_coord: (i16, i16, i16),
     chunk: &TerrainChunk,
-    mut chunk_data_file: &File,
+    chunk_data_file: &mut File,
 ) {
     let byte_offset = chunk_index_map.get(&chunk_coord).unwrap();
     let buffer = serialize_chunk_data(chunk);
@@ -116,7 +116,7 @@ pub fn load_chunk_data(chunk_data_file: &mut File, byte_offset: u64) -> TerrainC
     deserialize_chunk_data(&buffer)
 }
 
-pub fn load_chunk_index_map(mut index_file: &File) -> HashMap<(i16, i16, i16), u64> {
+pub fn load_chunk_index_map(index_file: &mut File) -> HashMap<(i16, i16, i16), u64> {
     let mut index_map = HashMap::new();
     index_file.seek(SeekFrom::Start(0)).unwrap();
     let mut buffer = [0u8; 14]; // sizeof (i16, i16, i16, u64)
@@ -135,7 +135,7 @@ pub fn load_chunk_index_map(mut index_file: &File) -> HashMap<(i16, i16, i16), u
 
 pub fn setup_chunk_loading(mut commands: Commands) {
     commands.insert_resource(ChunkEntityMap { 0: HashMap::new() }); //store entities on the main thread
-    let index_file = OpenOptions::new()
+    let mut index_file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
@@ -151,13 +151,13 @@ pub fn setup_chunk_loading(mut commands: Commands) {
         .read(true)
         .open("data/chunk_data.txt")
         .unwrap();
-    let air_compression_file = OpenOptions::new()
+    let mut air_compression_file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .open("data/air_compression_data.txt")
         .unwrap();
-    let dirt_compression_file = OpenOptions::new()
+    let mut dirt_compression_file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
@@ -170,10 +170,10 @@ pub fn setup_chunk_loading(mut commands: Commands) {
         .create(true)
         .open("data/stale_chunks.txt")
         .unwrap();
-    commands.insert_resource(ChunkDataFileReadWrite(data_file));
-    commands.insert_resource(ChunkDataFileRead(data_file_read));
-    let uniform_air_chunks = load_uniform_chunks(&air_compression_file);
-    let uniform_dirt_chunks = load_uniform_chunks(&dirt_compression_file);
+    commands.insert_resource(ChunkDataFileReadWrite(Arc::new(Mutex::new(data_file))));
+    commands.insert_resource(ChunkDataFileRead(Arc::new(Mutex::new(data_file_read))));
+    let uniform_air_chunks = load_uniform_chunks(&mut air_compression_file);
+    let uniform_dirt_chunks = load_uniform_chunks(&mut dirt_compression_file);
     println!(
         "Loaded {} compressed air chunks",
         uniform_air_chunks.0.len()
@@ -187,20 +187,20 @@ pub fn setup_chunk_loading(mut commands: Commands) {
         dirt_chunks: Arc::new(Mutex::new(uniform_dirt_chunks)),
     });
     commands.insert_resource(CompressionFileHandles {
-        dirt_file: dirt_compression_file,
-        air_file: air_compression_file,
+        dirt_file: Arc::new(Mutex::new(dirt_compression_file)),
+        air_file: Arc::new(Mutex::new(air_compression_file)),
     });
-    let index_map = load_chunk_index_map(&index_file);
+    let index_map = load_chunk_index_map(&mut index_file);
     println!("Loaded {} chunks into index map", index_map.len());
     commands.insert_resource(ChunkIndexMap(Arc::new(Mutex::new(index_map))));
-    commands.insert_resource(ChunkIndexFile(index_file));
+    commands.insert_resource(ChunkIndexFile(Arc::new(Mutex::new(index_file))));
     let fbm =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
     commands.insert_resource(NoiseFunction(Arc::new(fbm)));
 }
 
 // Load all chunk coords and track empty slots
-pub fn load_uniform_chunks(mut f: &File) -> (HashSet<(i16, i16, i16)>, VecDeque<u64>) {
+pub fn load_uniform_chunks(f: &mut File) -> (HashSet<(i16, i16, i16)>, VecDeque<u64>) {
     let mut uniform_chunks = HashSet::new();
     let mut free_slots = VecDeque::new();
     f.seek(SeekFrom::Start(0)).unwrap();
@@ -224,7 +224,7 @@ pub fn load_uniform_chunks(mut f: &File) -> (HashSet<(i16, i16, i16)>, VecDeque<
 // Write either into a free slot or append
 pub fn write_uniform_chunk(
     chunk_coord: &(i16, i16, i16),
-    mut f: &File,
+    f: &mut File,
     free_slots: &mut VecDeque<u64>,
 ) {
     let mut buffer = [0u8; 6];
@@ -237,12 +237,13 @@ pub fn write_uniform_chunk(
         f.seek(SeekFrom::End(0)).unwrap();
     }
     f.write_all(&buffer).unwrap();
+    f.flush().unwrap();
 }
 
 // Mark a chunk as deleted by overwriting with zeros
 pub fn remove_uniform_chunk(
     chunk_coord: &(i16, i16, i16),
-    mut f: &File,
+    f: &mut File,
     free_uniform_slots: &mut VecDeque<u64>,
 ) {
     let target = chunk_coord;
@@ -261,4 +262,5 @@ pub fn remove_uniform_chunk(
         }
         offset += 6;
     }
+    f.flush().unwrap();
 }

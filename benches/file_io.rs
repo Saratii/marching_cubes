@@ -16,7 +16,7 @@ use marching_cubes::{
 };
 
 fn benchmark_read_single_chunk(c: &mut Criterion) {
-    let index_file = OpenOptions::new()
+    let mut index_file = OpenOptions::new()
         .read(true)
         .open("data/chunk_index_data.txt")
         .unwrap();
@@ -24,7 +24,7 @@ fn benchmark_read_single_chunk(c: &mut Criterion) {
         .read(true)
         .open("data/chunk_data.txt")
         .unwrap();
-    let index_map = load_chunk_index_map(&index_file);
+    let index_map = load_chunk_index_map(&mut index_file);
     let offset = index_map.get(&(0, 0, 0)).unwrap();
     c.bench_function("read_single_chunk", |b| {
         b.iter(|| {
@@ -35,7 +35,7 @@ fn benchmark_read_single_chunk(c: &mut Criterion) {
 }
 
 fn benchmark_write_single_existing_chunk(c: &mut Criterion) {
-    let index_file = OpenOptions::new()
+    let mut index_file = OpenOptions::new()
         .read(true)
         .open("data/chunk_index_data.txt")
         .unwrap();
@@ -44,7 +44,7 @@ fn benchmark_write_single_existing_chunk(c: &mut Criterion) {
         .write(true)
         .open("data/chunk_data.txt")
         .unwrap();
-    let index_map = load_chunk_index_map(&index_file);
+    let index_map = load_chunk_index_map(&mut index_file);
     let first_chunk_coord = *index_map.keys().next().unwrap();
     let file_offset = index_map.get(&first_chunk_coord).unwrap();
     let chunk = load_chunk_data(&mut data_file, *file_offset);
@@ -54,7 +54,7 @@ fn benchmark_write_single_existing_chunk(c: &mut Criterion) {
                 black_box(&index_map),
                 black_box(first_chunk_coord),
                 black_box(&chunk),
-                black_box(&data_file),
+                black_box(&mut data_file),
             );
         })
     });
@@ -71,13 +71,13 @@ fn benchmark_write_single_new_chunk(c: &mut Criterion) {
     };
     let chunk_coord = (1000, 1000, 1000);
     let mut index_map = HashMap::new();
-    let data_file = OpenOptions::new()
+    let mut data_file = OpenOptions::new()
         .create(true)
         .write(true)
         .append(true)
         .open("data/benchmark_chunk_data.txt")
         .unwrap();
-    let index_file = OpenOptions::new()
+    let mut index_file = OpenOptions::new()
         .create(true)
         .write(true)
         .append(true)
@@ -89,15 +89,15 @@ fn benchmark_write_single_new_chunk(c: &mut Criterion) {
                 black_box(&terrain_chunk),
                 black_box(&chunk_coord),
                 black_box(&mut index_map),
-                black_box(&data_file),
-                black_box(&index_file),
+                black_box(&mut data_file),
+                black_box(&mut index_file),
             );
         })
     });
 }
 
 fn benchmark_bulk_read_chunks(c: &mut Criterion) {
-    let index_file = OpenOptions::new()
+    let mut index_file = OpenOptions::new()
         .read(true)
         .open("data/chunk_index_data.txt")
         .unwrap();
@@ -105,7 +105,7 @@ fn benchmark_bulk_read_chunks(c: &mut Criterion) {
         .read(true)
         .open("data/chunk_data.txt")
         .unwrap();
-    let index_map = load_chunk_index_map(&index_file);
+    let index_map = load_chunk_index_map(&mut index_file);
     let chunk_coords: Vec<_> = index_map.keys().take(100).cloned().collect();
     let offsets: Vec<_> = chunk_coords
         .iter()
@@ -140,13 +140,13 @@ fn benchmark_bulk_write_new_chunk(c: &mut Criterion) {
     c.bench_function("bulk_write_new_chunks", |b| {
         b.iter(|| {
             let mut index_map = HashMap::new();
-            let data_file = OpenOptions::new()
+            let mut data_file = OpenOptions::new()
                 .create(true)
                 .write(true)
                 .truncate(true)
                 .open("data/benchmark_chunk_data.txt")
                 .unwrap();
-            let index_file = OpenOptions::new()
+            let mut index_file = OpenOptions::new()
                 .create(true)
                 .write(true)
                 .truncate(true)
@@ -157,8 +157,8 @@ fn benchmark_bulk_write_new_chunk(c: &mut Criterion) {
                     black_box(terrain_chunk),
                     black_box(chunk_coord),
                     black_box(&mut index_map),
-                    black_box(&data_file),
-                    black_box(&index_file),
+                    black_box(&mut data_file),
+                    black_box(&mut index_file),
                 );
             }
         })

@@ -136,8 +136,8 @@ pub fn setup_map(
 pub fn generate_large_map_utility(
     chunk_index_map: Res<ChunkIndexMap>,
     fbm: Res<NoiseFunction>,
-    mut chunk_index_file: ResMut<ChunkIndexFile>,
-    mut chunk_data_file: ResMut<ChunkDataFileReadWrite>,
+    chunk_index_file: ResMut<ChunkIndexFile>,
+    chunk_data_file: ResMut<ChunkDataFileReadWrite>,
 ) {
     const CREATION_RADIUS: f32 = 150.0;
     const CREATION_RADIUS_SQUARED: f32 = CREATION_RADIUS * CREATION_RADIUS;
@@ -161,13 +161,17 @@ pub fn generate_large_map_utility(
                     let mut locked_index_map = chunk_index_map.0.lock().unwrap();
                     if !locked_index_map.contains_key(&chunk_coord) {
                         let chunk = TerrainChunk::new(chunk_coord, &fbm.0);
+                        let mut chunk_data_file_locked = chunk_data_file.0.lock().unwrap();
+                        let mut chunk_index_file_locked = chunk_index_file.0.lock().unwrap();
                         create_chunk_file_data(
                             &chunk,
                             &chunk_coord,
                             &mut locked_index_map,
-                            &mut chunk_data_file.0,
-                            &mut chunk_index_file.0,
+                            &mut chunk_data_file_locked,
+                            &mut chunk_index_file_locked,
                         );
+                        drop(chunk_index_file_locked);
+                        drop(chunk_data_file_locked);
                     };
                     drop(locked_index_map);
                 }
