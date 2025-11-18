@@ -38,6 +38,8 @@ use marching_cubes::terrain::terrain::{
     VOXEL_SIZE, generate_bevy_mesh, setup_map,
 };
 use marching_cubes::terrain::terrain_material::TerrainMaterial;
+use marching_cubes::ui::crosshair::spawn_crosshair;
+use marching_cubes::ui::minimap::spawn_minimap;
 use rayon::ThreadPoolBuilder;
 
 fn main() {
@@ -78,8 +80,9 @@ fn main() {
                 setup_chunk_loading,
                 // generate_large_map_utility.after(setup_chunk_loading),
                 setup_map,
-                setup_crosshair,
+                spawn_crosshair,
                 spawn_player,
+                spawn_minimap.after(spawn_player),
                 initial_grab_cursor,
                 // spawn_initial_chunks.after(setup_chunk_loading),
             ),
@@ -350,51 +353,6 @@ fn handle_digging_input(
             }
         }
     }
-}
-
-fn setup_crosshair(mut commands: Commands) {
-    commands
-        .spawn(Node {
-            width: Val::Percent(100.0),
-            height: Val::Percent(100.0),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            position_type: PositionType::Absolute,
-            ..default()
-        })
-        .with_children(|parent| {
-            parent
-                .spawn(Node {
-                    width: Val::Px(20.0),
-                    height: Val::Px(20.0),
-                    position_type: PositionType::Relative,
-                    ..default()
-                })
-                .with_children(|crosshair| {
-                    crosshair.spawn((
-                        Node {
-                            width: Val::Px(20.0),
-                            height: Val::Px(2.0),
-                            position_type: PositionType::Absolute,
-                            left: Val::Px(0.0),
-                            top: Val::Px(9.0),
-                            ..default()
-                        },
-                        BackgroundColor(Color::WHITE),
-                    ));
-                    crosshair.spawn((
-                        Node {
-                            width: Val::Px(2.0),
-                            height: Val::Px(20.0),
-                            position_type: PositionType::Absolute,
-                            left: Val::Px(9.0),
-                            top: Val::Px(0.0),
-                            ..default()
-                        },
-                        BackgroundColor(Color::WHITE),
-                    ));
-                });
-        });
 }
 
 fn screen_to_world_ray(

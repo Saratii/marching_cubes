@@ -3,7 +3,6 @@ use std::sync::{Arc, Mutex};
 use bevy::{
     input::mouse::{MouseMotion, MouseWheel},
     prelude::*,
-    render::camera::Viewport,
     window::{CursorGrabMode, PrimaryWindow},
 };
 use bevy_rapier3d::prelude::*;
@@ -89,8 +88,6 @@ pub fn spawn_player(
     mut materials: ResMut<Assets<StandardMaterial>>,
     camera_controller: Res<CameraController>,
 ) {
-    const MINIMAP_SIZE: u32 = 200;
-    const BORDER_WIDTH: u32 = 3;
     commands.insert_resource(PlayerTranslationMutexHandle(Arc::new(Mutex::new(
         PLAYER_SPAWN,
     ))));
@@ -136,33 +133,7 @@ pub fn spawn_player(
             Camera { ..default() },
             IsDefaultUiCamera,
             MainCameraTag,
-        ))
-        .with_child((
-            Camera3d { ..default() },
-            Transform::from_translation(Vec3::new(0., 150., 0.))
-                .looking_at(Vec3::new(0., 0., 0.), Vec3::Y),
-            Camera {
-                order: 1,
-                viewport: Some(Viewport {
-                    physical_position: UVec2::new(5, 5),
-                    physical_size: UVec2::new(MINIMAP_SIZE, MINIMAP_SIZE),
-                    ..default()
-                }),
-                ..default()
-            },
         ));
-    commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            left: Val::Px(5.0),
-            top: Val::Px(5.0),
-            width: Val::Px((MINIMAP_SIZE + BORDER_WIDTH * 2) as f32),
-            height: Val::Px((MINIMAP_SIZE + BORDER_WIDTH * 2) as f32),
-            border: UiRect::all(Val::Px(BORDER_WIDTH as f32)),
-            ..default()
-        })
-        .insert(BorderColor(Color::BLACK))
-        .insert(BackgroundColor(Color::srgba(0.2, 0.2, 0.2, 0.5)));
 }
 
 pub fn toggle_camera(
