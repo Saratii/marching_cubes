@@ -25,12 +25,13 @@ use crate::{
         CompressionFileHandles, UniformChunkMap, create_chunk_file_data, load_chunk_data,
         write_uniform_chunk,
     },
+    player::player::PLAYER_SPAWN,
     sparse_voxel_octree::ChunkSvo,
     terrain::{
         chunk_generator::chunk_contains_surface,
         terrain::{
             ChunkTag, HALF_CHUNK, MAX_RADIUS, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_DIM,
-            TerrainChunk, TerrainMaterialHandle, UniformChunk, generate_bevy_mesh,
+            TerrainChunk, TerrainMaterialHandle, UniformChunk, Z0_RADIUS, generate_bevy_mesh,
         },
     },
 };
@@ -114,7 +115,10 @@ pub fn setup_chunk_driver(
     let (req_tx, req_rx) = unbounded::<ChunkRequest>();
     let (res_tx, res_rx) = unbounded::<ChunkResult>();
     let index_map_arc = Arc::clone(&index_map.0);
-    let chunks_being_loaded = Arc::new(Mutex::new(ChunksBeingLoaded{chunks: HashMap::new(), request_id: 1}));
+    let chunks_being_loaded = Arc::new(Mutex::new(ChunksBeingLoaded {
+        chunks: HashMap::new(),
+        request_id: 1,
+    }));
     let player_translation_arc = Arc::clone(&player_translation_mutex_handle.0);
     let (chunk_spawn_sender, chunk_spawn_reciever) = unbounded::<ChunkSpawnResult>();
     let terrain_chunk_map = Arc::new(Mutex::new(HashMap::new()));
@@ -333,15 +337,14 @@ fn svo_manager_thread(
 ) {
     let mut svo = ChunkSvo::new();
     let mut request_buffer = Vec::new();
-    //do initial traversal so player can start moving
+    //do initial z0 load so player can start moving
     let mut chunks_being_loaded_lock = chunks_being_loaded.lock().unwrap();
     let player_translation_lock = player_translation.lock().unwrap();
-    let player_translation_initial = player_translation_lock.clone();
     drop(player_translation_lock);
     let start = Instant::now();
     svo.root.fill_missing_chunks_in_radius(
-        &player_translation_initial,
-        MAX_RADIUS,
+        &PLAYER_SPAWN,
+        Z0_RADIUS,
         &mut chunks_being_loaded_lock,
         &mut request_buffer,
     );
