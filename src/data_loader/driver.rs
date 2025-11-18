@@ -53,7 +53,10 @@ struct ChunkSpawnResult {
 #[derive(Resource)]
 pub struct ChunkSpawnReciever(Receiver<ChunkSpawnResult>);
 
-pub struct ChunksBeingLoaded(pub HashMap<(i16, i16, i16), u16>, pub u16);
+pub struct ChunksBeingLoaded {
+    pub chunks: HashMap<(i16, i16, i16), u16>,
+    pub request_id: u16,
+}
 
 //level 0: full detail, returns TerrainChunk and collider
 //level n: full/(2^n) detail, no persistant data besides mesh
@@ -111,7 +114,7 @@ pub fn setup_chunk_driver(
     let (req_tx, req_rx) = unbounded::<ChunkRequest>();
     let (res_tx, res_rx) = unbounded::<ChunkResult>();
     let index_map_arc = Arc::clone(&index_map.0);
-    let chunks_being_loaded = Arc::new(Mutex::new(ChunksBeingLoaded(HashMap::new(), 1)));
+    let chunks_being_loaded = Arc::new(Mutex::new(ChunksBeingLoaded{chunks: HashMap::new(), request_id: 1}));
     let player_translation_arc = Arc::clone(&player_translation_mutex_handle.0);
     let (chunk_spawn_sender, chunk_spawn_reciever) = unbounded::<ChunkSpawnResult>();
     let terrain_chunk_map = Arc::new(Mutex::new(HashMap::new()));
@@ -370,7 +373,7 @@ fn svo_manager_thread(
             if *has_entity {
                 chunks_to_despawn.push((*chunk_coord, *has_entity));
             }
-            chunks_being_loaded.0.remove(chunk_coord);
+            chunks_being_loaded.chunks.remove(chunk_coord);
             svo.root.delete(*chunk_coord);
         }
         svo.root.fill_missing_chunks_in_radius(
@@ -404,7 +407,7 @@ fn recieve_loaded_chunks(
         return chunks_to_spawn;
     }
     while let Ok(result) = results_channel.try_recv() {
-        match chunks_being_loaded.0.get(&result.chunk_coord) {
+        match chunks_being_loaded.chunks.get(&result.chunk_coord) {
             Some(expected_id) if *expected_id == result.request_id => {
                 match result.collider {
                     //if has collider
@@ -524,7 +527,7 @@ fn recieve_loaded_chunks(
                         },
                     },
                 }
-                chunks_being_loaded.0.remove(&result.chunk_coord);
+                chunks_being_loaded.chunks.remove(&result.chunk_coord);
             }
             _ => {
                 panic!("what happened here");
