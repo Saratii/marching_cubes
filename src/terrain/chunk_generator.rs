@@ -1,4 +1,4 @@
-use bevy::{ecs::event::Event, math::Vec3};
+use bevy::{ecs::message::Message, math::Vec3};
 use fastnoise2::{SafeNode, generator::GeneratorWrapper};
 
 use crate::terrain::terrain::{
@@ -8,12 +8,12 @@ use crate::terrain::terrain::{
 pub const NOISE_SEED: u32 = 100; // Seed for noise generation
 pub const NOISE_FREQUENCY: f32 = 0.02; // Frequency of the noise
 
-#[derive(Event)]
+#[derive(Message)]
 pub struct GenerateChunkEvent {
     pub chunk_coords: Vec<(i16, i16, i16)>,
 }
 
-#[derive(Event)]
+#[derive(Message)]
 pub struct LoadChunksEvent {
     pub chunk_coords: Vec<(i16, i16, i16)>,
 }

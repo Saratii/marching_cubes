@@ -4,22 +4,18 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = "0.16.1"
-iyes_perf_ui = "0.5.0"
-rand = "0.9.1"
-criterion = "0.6.0"
-fastnoise2 = "0.3.1"
-mimalloc = "0.1.47"
-bevy_rapier3d = { version = "0.30.0", features = [ "simd-stable", "debug-render-3d" ] }
-rayon = "1.10.0"
-serde_json = "1.0.143"
-serde = "1.0.219"
-flamegraph = "0.6.9"
+iyes_perf_ui = { git = "https://github.com/Saratii/iyes_perf_ui", branch = "bevy-0.17" }
+rand = "0.9.2"
+criterion = "0.7.0"
+fastnoise2 = "0.3.2"
+mimalloc = "0.1.48"
+bevy_rapier3d = { git = "https://github.com/Deniskore/bevy_rapier", branch = "bevy-0.17", features = [ "simd-stable", "debug-render" ] }
+rayon = "1.11.0"
+serde_json = "1.0.145"
+serde = "1.0.228"
+flamegraph = "0.6.10"
 crossbeam-channel = "0.5.15"
-isomesh = {git = "https://github.com/Saratii/isomesh" }
-
-[patch.crates-io]
-bevy = { git = "https://github.com/Saratii/bevy", branch = "release-0.16.1" }
+bevy = "0.17.3"
 
 [[bench]]
 name = "chunk_generation"

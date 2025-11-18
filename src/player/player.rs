@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use bevy::{
     input::mouse::{MouseMotion, MouseWheel},
     prelude::*,
-    window::{CursorGrabMode, PrimaryWindow},
+    window::{CursorGrabMode, CursorOptions, PrimaryWindow},
 };
 use bevy_rapier3d::prelude::*;
 
@@ -157,7 +157,7 @@ pub fn toggle_camera(
 }
 
 pub fn camera_zoom(
-    mut scroll_events: EventReader<MouseWheel>,
+    mut scroll_events: MessageReader<MouseWheel>,
     mut camera_transform: Single<&mut Transform, With<MainCameraTag>>,
     mut camera_controller: ResMut<CameraController>,
 ) {
@@ -177,7 +177,7 @@ pub fn camera_zoom(
 }
 
 pub fn camera_look(
-    mut mouse_motion: EventReader<MouseMotion>,
+    mut mouse_motion: MessageReader<MouseMotion>,
     mut camera_transform: Single<&mut Transform, With<MainCameraTag>>,
     mut camera_controller: ResMut<CameraController>,
 ) {
@@ -219,36 +219,39 @@ fn update_first_person_camera(camera_transform: &mut Transform, controller: &Cam
     camera_transform.rotation = rotation;
 }
 
-fn toggle_grab_cursor(window: &mut Window, camera_controller: &mut CameraController) {
-    match window.cursor_options.grab_mode {
+fn toggle_grab_cursor(
+    primary_cursor_options: &mut CursorOptions,
+    camera_controller: &mut CameraController,
+) {
+    match primary_cursor_options.grab_mode {
         CursorGrabMode::None => {
-            window.cursor_options.grab_mode = CursorGrabMode::Confined;
-            window.cursor_options.visible = false;
+            primary_cursor_options.grab_mode = CursorGrabMode::Confined;
+            primary_cursor_options.visible = false;
             camera_controller.is_cursor_grabbed = true;
         }
         _ => {
-            window.cursor_options.grab_mode = CursorGrabMode::None;
-            window.cursor_options.visible = true;
+            primary_cursor_options.grab_mode = CursorGrabMode::None;
+            primary_cursor_options.visible = true;
             camera_controller.is_cursor_grabbed = false;
         }
     }
 }
 
 pub fn initial_grab_cursor(
-    mut primary_window: Single<&mut Window, With<PrimaryWindow>>,
+    mut primary_cursor_options: Single<&mut CursorOptions, With<PrimaryWindow>>,
     mut camera_controller: ResMut<CameraController>,
 ) {
-    toggle_grab_cursor(&mut primary_window, &mut camera_controller);
+    toggle_grab_cursor(&mut primary_cursor_options, &mut camera_controller);
 }
 
 pub fn cursor_grab(
     keys: Res<ButtonInput<KeyCode>>,
     key_bindings: Res<KeyBindings>,
-    mut primary_window: Single<&mut Window, With<PrimaryWindow>>,
+    mut primary_cursor_options: Single<&mut CursorOptions, With<PrimaryWindow>>,
     mut camera_controller: ResMut<CameraController>,
 ) {
     if keys.just_pressed(key_bindings.toggle_grab_cursor) {
-        toggle_grab_cursor(&mut primary_window, &mut camera_controller);
+        toggle_grab_cursor(&mut primary_cursor_options, &mut camera_controller);
     }
 }
 

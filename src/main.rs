@@ -1,5 +1,6 @@
 use std::sync::atomic::Ordering;
 
+use bevy::camera::primitives::MeshAabb;
 use bevy::diagnostic::{
     EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin, SystemInformationDiagnosticsPlugin,
 };
@@ -7,12 +8,10 @@ use bevy::image::ImageSamplerDescriptor;
 use bevy::pbr::PbrPlugin;
 use bevy::prelude::*;
 use bevy::render::diagnostic::RenderDiagnosticsPlugin;
-use bevy::render::mesh::MeshAabb;
 use bevy::window::PresentMode;
 use bevy_rapier3d::plugin::{NoUserData, RapierPhysicsPlugin};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
 // use bevy_rapier3d::render::RapierDebugRenderPlugin;
-use isomesh::marching_cubes::mc::{MeshBuffers, mc_mesh_generation};
 use iyes_perf_ui::PerfUiPlugin;
 use iyes_perf_ui::prelude::PerfUiDefaultEntries;
 use marching_cubes::conversions::{
@@ -26,6 +25,7 @@ use marching_cubes::data_loader::file_loader::{
     UniformChunkMap, create_chunk_file_data, remove_uniform_chunk, setup_chunk_loading,
     update_chunk_file_data,
 };
+use marching_cubes::marching_cubes::mc::{MeshBuffers, mc_mesh_generation};
 use marching_cubes::player::player::{
     CameraController, KeyBindings, MainCameraTag, camera_look, camera_zoom, cursor_grab,
     initial_grab_cursor, player_movement, spawn_player, sync_player_mutex, toggle_camera,
@@ -51,8 +51,8 @@ fn main() {
     App::new()
         .insert_resource(KeyBindings::default())
         .insert_resource(CameraController::default())
-        .add_event::<LoadChunksEvent>()
-        .add_event::<GenerateChunkEvent>()
+        .add_message::<LoadChunksEvent>()
+        .add_message::<GenerateChunkEvent>()
         .add_plugins((
             DefaultPlugins
                 .set(WindowPlugin {
@@ -70,7 +70,7 @@ fn main() {
                 })
                 .set(PbrPlugin { ..default() }),
             FrameTimeDiagnosticsPlugin::default(),
-            EntityCountDiagnosticsPlugin,
+            EntityCountDiagnosticsPlugin::default(),
             RenderDiagnosticsPlugin,
             SystemInformationDiagnosticsPlugin,
             PerfUiPlugin,

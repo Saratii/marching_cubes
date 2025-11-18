@@ -16,24 +16,19 @@ use fastnoise2::{
     SafeNode,
     generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
 };
-use isomesh::marching_cubes::mc::{MeshBuffers, mc_mesh_generation};
 
 use crate::{
-    conversions::chunk_coord_to_world_pos,
-    data_loader::file_loader::{
+    conversions::chunk_coord_to_world_pos, data_loader::file_loader::{
         ChunkDataFileReadWrite, ChunkEntityMap, ChunkIndexFile, ChunkIndexMap,
         CompressionFileHandles, UniformChunkMap, create_chunk_file_data, load_chunk_data,
         write_uniform_chunk,
-    },
-    player::player::PLAYER_SPAWN,
-    sparse_voxel_octree::ChunkSvo,
-    terrain::{
+    }, marching_cubes::mc::{MeshBuffers, mc_mesh_generation}, player::player::PLAYER_SPAWN, sparse_voxel_octree::ChunkSvo, terrain::{
         chunk_generator::chunk_contains_surface,
         terrain::{
             ChunkTag, HALF_CHUNK, MAX_RADIUS, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_DIM,
             TerrainChunk, TerrainMaterialHandle, UniformChunk, Z0_RADIUS, generate_bevy_mesh,
         },
-    },
+    }
 };
 
 //I dont like this but, block player movement until first chunk load happens

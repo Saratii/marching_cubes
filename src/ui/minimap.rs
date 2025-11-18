@@ -1,12 +1,7 @@
 use bevy::{
-    math::FloatOrd,
-    prelude::*,
-    render::{
-        camera::{ImageRenderTarget, RenderTarget},
-        render_resource::{
+    camera::{ImageRenderTarget, RenderTarget}, math::FloatOrd, prelude::*, render::render_resource::{
             Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
-        },
-    },
+        }
 };
 
 use crate::player::player::PlayerTag;
@@ -55,7 +50,7 @@ pub fn spawn_minimap(
             overflow: Overflow::clip(),
             ..default()
         })
-        .insert(BorderColor(BORDER_COLOR))
+        .insert(BorderColor::all(BORDER_COLOR))
         .insert(BackgroundColor(Color::NONE))
         .insert(BorderRadius::all(Val::Percent(50.0)))
         .insert(BackgroundColor(BORDER_COLOR))

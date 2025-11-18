@@ -7,3 +7,4 @@ pub mod terrain;
 pub mod data_loader;
 pub mod sparse_voxel_octree;
 pub mod ui;
+pub mod marching_cubes;
