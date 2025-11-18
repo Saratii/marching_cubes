@@ -4,8 +4,8 @@ use crate::{
     conversions::chunk_coord_to_world_pos,
     data_loader::driver::{ChunkRequest, ChunksBeingLoaded},
     terrain::terrain::{
-            HALF_CHUNK, MAX_RADIUS_SQUARED, Z0_RADIUS_SQUARED, Z1_RADIUS_SQUARED, Z2_RADIUS_SQUARED
-        },
+        HALF_CHUNK, MAX_RADIUS_SQUARED, Z0_RADIUS_SQUARED, Z1_RADIUS_SQUARED, Z2_RADIUS_SQUARED,
+    },
 };
 
 const MAX_WORLD_SIZE: i16 = 512; //in chunks
@@ -28,7 +28,7 @@ impl ChunkSvo {
 #[derive(Debug)]
 pub struct SvoNode {
     pub lower_chunk_coord: (i16, i16, i16), // chunk coord of lower corner
-    pub size: i16,                 // region size in chunks (power of 2)
+    pub size: i16,                          // region size in chunks (power of 2)
     pub children: Option<Box<[Option<SvoNode>; 8]>>,
     pub chunk: Option<(bool, u8)>, // (has_entity, chunk data, load status)
     pub node_min: Vec3,
@@ -78,10 +78,7 @@ impl SvoNode {
         children[idx].as_ref()?.get(coord)
     }
 
-    pub fn get_mut(
-        &mut self,
-        coord: (i16, i16, i16),
-    ) -> Option<&mut (bool, u8)> {
+    pub fn get_mut(&mut self, coord: (i16, i16, i16)) -> Option<&mut (bool, u8)> {
         if self.size == 1 {
             return self.chunk.as_mut();
         }
@@ -90,12 +87,7 @@ impl SvoNode {
         children[idx].as_mut()?.get_mut(coord)
     }
 
-    pub fn insert(
-        &mut self,
-        coord: (i16, i16, i16),
-        load_status: u8,
-        has_entity: bool,
-    ) {
+    pub fn insert(&mut self, coord: (i16, i16, i16), load_status: u8, has_entity: bool) {
         if self.size == 1 {
             debug_assert!(
                 self.chunk.is_none(),
@@ -257,25 +249,16 @@ impl SvoNode {
         if self.is_leaf() {
             if self.size == 1 {
                 let chunk_coord = self.lower_chunk_coord;
-                if self.chunk.is_none() && !chunks_being_loaded.0.contains_key(&chunk_coord) {
+                if self.chunk.is_none() && !chunks_being_loaded.chunks.contains_key(&chunk_coord) {
                     let distance_squared =
                         center.distance_squared(chunk_coord_to_world_pos(&chunk_coord));
                     if distance_squared > MAX_RADIUS_SQUARED {
-                        return; //skip chunks where the sphere intersects but chunk cenbter is outside max radius
+                        return; //skip chunks where the sphere intersects but chunk center is outside max radius
                     }
-                    let request_id = chunks_being_loaded.1;
-                    chunks_being_loaded.1 = chunks_being_loaded.1.wrapping_add(1);
-                    chunks_being_loaded.0.insert(chunk_coord, request_id);
+                    let request_id = chunks_being_loaded.request_id;
+                    chunks_being_loaded.request_id = chunks_being_loaded.request_id.wrapping_add(1);
+                    chunks_being_loaded.chunks.insert(chunk_coord, request_id);
                     let load_priority = get_load_priority(distance_squared);
-                    if request_buffer.contains(&ChunkRequest {
-                        position: chunk_coord,
-                        load_status: load_priority,
-                        request_id,
-                        upgrade: false,
-                        distance_squared: distance_squared.round() as u32,
-                    }) {
-                        panic!("Duplicate chunk load request for chunk {:?}", chunk_coord);
-                    }
                     request_buffer.push(ChunkRequest {
                         position: chunk_coord,
                         load_status: load_priority,
@@ -283,24 +266,16 @@ impl SvoNode {
                         upgrade: false,
                         distance_squared: distance_squared.round() as u32,
                     });
-                } else if !chunks_being_loaded.0.contains_key(&chunk_coord) {
+                } else if !chunks_being_loaded.chunks.contains_key(&chunk_coord) {
                     let current_load_status = self.chunk.as_ref().unwrap().1;
                     let distance_squared =
                         center.distance_squared(chunk_coord_to_world_pos(&chunk_coord));
                     let desired_load_status = get_load_priority(distance_squared);
                     if desired_load_status < current_load_status {
-                        let request_id = chunks_being_loaded.1;
-                        chunks_being_loaded.1 = chunks_being_loaded.1.wrapping_add(1);
-                        chunks_being_loaded.0.insert(chunk_coord, request_id);
-                        if request_buffer.contains(&ChunkRequest {
-                            position: chunk_coord,
-                            load_status: desired_load_status,
-                            request_id,
-                            upgrade: true,
-                            distance_squared: distance_squared.round() as u32,
-                        }) {
-                            panic!("Duplicate chunk load request for chunk {:?}", chunk_coord);
-                        }
+                        let request_id = chunks_being_loaded.request_id;
+                        chunks_being_loaded.request_id =
+                            chunks_being_loaded.request_id.wrapping_add(1);
+                        chunks_being_loaded.chunks.insert(chunk_coord, request_id);
                         request_buffer.push(ChunkRequest {
                             position: chunk_coord,
                             load_status: desired_load_status,

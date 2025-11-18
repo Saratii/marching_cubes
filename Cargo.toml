@@ -29,6 +29,12 @@ harness = false
 name = "file_io"
 harness = false
 
+[[bench]]
+name = "svo_bench"
+harness = false
+
+#cargo bench --bench chunk_generation -- deserialize_chunk_data
+
 [profile.release]
 debug = true
 
