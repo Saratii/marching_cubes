@@ -220,7 +220,7 @@ fn handle_digging_input(
 ) {
     const DIG_STRENGTH: f32 = 0.5;
     const DIG_TIMER: f32 = 0.02; // seconds
-    const DIG_RADIUS: f32 = 1.8; // world space
+    const DIG_RADIUS: f32 = 1.0; // world space
     let should_dig = if mouse_input.pressed(MouseButton::Left) {
         *dig_timer += time.delta_secs();
         if *dig_timer >= DIG_TIMER {
