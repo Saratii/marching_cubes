@@ -1,15 +1,23 @@
 use std::{process::exit, sync::Arc};
 
 use bevy::{
-    asset::RenderAssetUsages, image::{ImageLoaderSettings, ImageSampler}, mesh::{Indices, PrimitiveTopology}, prelude::*, render::render_resource::{AddressMode, SamplerDescriptor}
+    asset::RenderAssetUsages,
+    image::{ImageLoaderSettings, ImageSampler},
+    mesh::{Indices, PrimitiveTopology},
+    prelude::*,
+    render::render_resource::{AddressMode, SamplerDescriptor},
 };
 use fastnoise2::{SafeNode, generator::GeneratorWrapper};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    conversions::{chunk_coord_to_world_pos, flatten_index, world_pos_to_chunk_coord}, data_loader::file_loader::{
+    conversions::{chunk_coord_to_world_pos, flatten_index, world_pos_to_chunk_coord},
+    data_loader::file_loader::{
         ChunkDataFileReadWrite, ChunkIndexFile, ChunkIndexMap, create_chunk_file_data,
-    }, marching_cubes::mc::MeshBuffers, player::player::PLAYER_SPAWN, terrain::{chunk_generator::generate_densities, terrain_material::TerrainMaterial}
+    },
+    marching_cubes::mc::MeshBuffers,
+    player::player::PLAYER_SPAWN,
+    terrain::{chunk_generator::generate_densities, terrain_material::TerrainMaterial},
 };
 
 pub const SAMPLES_PER_CHUNK_DIM: usize = 32; // Number of voxel sample points
@@ -102,16 +110,18 @@ pub fn setup_map(
     asset_server: Res<AssetServer>,
 ) {
     let atlas_texture_handle: Handle<Image> = asset_server
-        .load_with_settings::<Image, ImageLoaderSettings>("texture_atlas.png", |settings| {
+        .load_with_settings::<Image, ImageLoaderSettings>("texture_atlas.ktx2", |settings| {
             settings.sampler = ImageSampler::Descriptor(
                 SamplerDescriptor {
-                    address_mode_u: AddressMode::MirrorRepeat,
-                    address_mode_v: AddressMode::MirrorRepeat,
-                    address_mode_w: AddressMode::MirrorRepeat,
+                    address_mode_u: AddressMode::ClampToEdge,
+                    address_mode_v: AddressMode::ClampToEdge,
+                    address_mode_w: AddressMode::ClampToEdge,
+                    lod_min_clamp: 0.0,
+                    lod_max_clamp: 5.0,
                     ..Default::default()
                 }
                 .into(),
-            )
+            );
         });
     let standard_terrain_material_handle = materials.add(TerrainMaterial {
         texture: atlas_texture_handle.clone(),
