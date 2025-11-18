@@ -3,6 +3,7 @@ use std::sync::atomic::Ordering;
 use bevy::diagnostic::{
     EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin, SystemInformationDiagnosticsPlugin,
 };
+use bevy::image::ImageSamplerDescriptor;
 use bevy::pbr::PbrPlugin;
 use bevy::prelude::*;
 use bevy::render::diagnostic::RenderDiagnosticsPlugin;
@@ -60,6 +61,12 @@ fn main() {
                         ..default()
                     }),
                     ..default()
+                })
+                .set(ImagePlugin {
+                    default_sampler: ImageSamplerDescriptor {
+                        anisotropy_clamp: 16,
+                        ..ImageSamplerDescriptor::linear()
+                    },
                 })
                 .set(PbrPlugin { ..default() }),
             FrameTimeDiagnosticsPlugin::default(),
