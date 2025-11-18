@@ -3,9 +3,9 @@
     forward_io::VertexOutput,
 }
 
-@group(2) @binding(0) var base_texture: texture_2d<f32>;
-@group(2) @binding(1) var base_sampler: sampler;
-@group(2) @binding(2) var<uniform> scale: f32;
+@group(3) @binding(3) var base_texture: texture_2d<f32>;
+@group(3) @binding(4) var base_sampler: sampler;
+@group(3) @binding(5) var<uniform> scale: f32;
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {

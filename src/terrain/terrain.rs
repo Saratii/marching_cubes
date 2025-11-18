@@ -1,25 +1,15 @@
 use std::{process::exit, sync::Arc};
 
 use bevy::{
-    asset::RenderAssetUsages,
-    image::{ImageLoaderSettings, ImageSampler},
-    prelude::*,
-    render::{
-        mesh::{Indices, PrimitiveTopology},
-        render_resource::{AddressMode, SamplerDescriptor},
-    },
+    asset::RenderAssetUsages, image::{ImageLoaderSettings, ImageSampler}, mesh::{Indices, PrimitiveTopology}, prelude::*, render::render_resource::{AddressMode, SamplerDescriptor}
 };
 use fastnoise2::{SafeNode, generator::GeneratorWrapper};
-use isomesh::marching_cubes::mc::MeshBuffers;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    conversions::{chunk_coord_to_world_pos, flatten_index, world_pos_to_chunk_coord},
-    data_loader::file_loader::{
+    conversions::{chunk_coord_to_world_pos, flatten_index, world_pos_to_chunk_coord}, data_loader::file_loader::{
         ChunkDataFileReadWrite, ChunkIndexFile, ChunkIndexMap, create_chunk_file_data,
-    },
-    player::player::PLAYER_SPAWN,
-    terrain::{chunk_generator::generate_densities, terrain_material::TerrainMaterial},
+    }, marching_cubes::mc::MeshBuffers, player::player::PLAYER_SPAWN, terrain::{chunk_generator::generate_densities, terrain_material::TerrainMaterial}
 };
 
 pub const SAMPLES_PER_CHUNK_DIM: usize = 32; // Number of voxel sample points
