@@ -1,4 +1,5 @@
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use bevy::camera::primitives::MeshAabb;
 use bevy::diagnostic::{
@@ -9,6 +10,7 @@ use bevy::pbr::PbrPlugin;
 use bevy::prelude::*;
 use bevy::render::diagnostic::RenderDiagnosticsPlugin;
 use bevy::window::PresentMode;
+use bevy::winit::WinitSettings;
 use bevy_rapier3d::plugin::{NoUserData, RapierPhysicsPlugin};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
 // use bevy_rapier3d::render::RapierDebugRenderPlugin;
@@ -53,6 +55,14 @@ fn main() {
         .insert_resource(CameraController::default())
         .add_message::<LoadChunksEvent>()
         .add_message::<GenerateChunkEvent>()
+        .insert_resource(WinitSettings {
+            focused_mode: bevy::winit::UpdateMode::reactive_low_power(Duration::from_secs_f64(
+                1.0 / 240.0,
+            )),
+            unfocused_mode: bevy::winit::UpdateMode::reactive_low_power(Duration::from_secs_f64(
+                1.0 / 240.0,
+            )),
+        })
         .add_plugins((
             DefaultPlugins
                 .set(WindowPlugin {
