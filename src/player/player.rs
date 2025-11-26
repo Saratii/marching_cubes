@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, atomic::Ordering};
 
 use bevy::{
     input::mouse::{MouseMotion, MouseWheel},
@@ -7,7 +7,7 @@ use bevy::{
 };
 use bevy_rapier3d::prelude::*;
 
-use crate::data_loader::driver::PlayerTranslationMutexHandle;
+use crate::data_loader::driver::{INITIAL_CHUNKS_LOADED, PlayerTranslationMutexHandle};
 
 const CAMERA_3RD_PERSON_OFFSET: Vec3 = Vec3 {
     x: 0.0,
@@ -24,7 +24,7 @@ const ZOOM_SPEED: f32 = 8.0;
 const MOUSE_SENSITIVITY: f32 = 0.002;
 const MIN_PITCH: f32 = -1.5;
 const MAX_PITCH: f32 = 1.5;
-const GRAVITY: f32 = -9.81;
+const BASE_GRAVITY: f32 = -9.81;
 const JUMP_IMPULSE: f32 = 7.0;
 
 #[derive(Component)]
@@ -295,7 +295,9 @@ pub fn player_movement(
         player.1.y = JUMP_IMPULSE;
     }
     if !is_grounded {
-        player.1.y += GRAVITY * time.delta_secs();
+        player.1.y += BASE_GRAVITY
+            * time.delta_secs()
+            * INITIAL_CHUNKS_LOADED.load(Ordering::Relaxed) as u8 as f32;
     } else if player.1.y < 0.0 {
         player.1.y = 0.0;
     }

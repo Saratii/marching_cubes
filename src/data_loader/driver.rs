@@ -18,17 +18,22 @@ use fastnoise2::{
 };
 
 use crate::{
-    conversions::chunk_coord_to_world_pos, data_loader::file_loader::{
+    conversions::chunk_coord_to_world_pos,
+    data_loader::file_loader::{
         ChunkDataFileReadWrite, ChunkEntityMap, ChunkIndexFile, ChunkIndexMap,
         CompressionFileHandles, UniformChunkMap, create_chunk_file_data, load_chunk_data,
         write_uniform_chunk,
-    }, marching_cubes::mc::{MeshBuffers, mc_mesh_generation}, player::player::PLAYER_SPAWN, sparse_voxel_octree::ChunkSvo, terrain::{
+    },
+    marching_cubes::mc::{MeshBuffers, mc_mesh_generation},
+    player::player::PLAYER_SPAWN,
+    sparse_voxel_octree::ChunkSvo,
+    terrain::{
         chunk_generator::chunk_contains_surface,
         terrain::{
             ChunkTag, HALF_CHUNK, MAX_RADIUS, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_DIM,
             TerrainChunk, TerrainMaterialHandle, UniformChunk, Z0_RADIUS, generate_bevy_mesh,
         },
-    }
+    },
 };
 
 //I dont like this but, block player movement until first chunk load happens
@@ -347,7 +352,6 @@ fn svo_manager_thread(
     for request in request_buffer.drain(..) {
         let _ = load_request_channel.send(request);
     }
-    INITIAL_CHUNKS_LOADED.store(true, Ordering::Relaxed);
     println!(
         "Loaded octree: {:?} ms",
         Instant::now().duration_since(start).as_millis()
@@ -545,6 +549,7 @@ pub fn chunk_spawn_reciever(
     terrain_chunk_map: Res<TerrainChunkMap>,
 ) {
     while let Ok(req) = req_rx.0.try_recv() {
+        INITIAL_CHUNKS_LOADED.store(true, Ordering::Relaxed); //wasteful
         for (chunk, collider_opt, mesh_opt, spawn) in req.to_spawn {
             if spawn {
                 let entity = match collider_opt {
@@ -566,10 +571,7 @@ pub fn chunk_spawn_reciever(
                         ))
                         .id(),
                 };
-                let a = chunk_entity_map.0.insert(chunk, entity);
-                if a.is_some() {
-                    panic!("chunk entity map insertion overwrote existing entry");
-                }
+                chunk_entity_map.0.insert(chunk, entity);
             } else {
                 let entity = chunk_entity_map.0.get(&chunk).unwrap();
                 commands.entity(*entity).insert(collider_opt.unwrap());
@@ -578,8 +580,9 @@ pub fn chunk_spawn_reciever(
         let mut terrain_chunk_map_lock = terrain_chunk_map.0.lock().unwrap();
         for (chunk_coord, has_entity) in req.to_despawn {
             if has_entity {
-                let entity = chunk_entity_map.0.remove(&chunk_coord).unwrap();
-                commands.entity(entity).despawn();
+                commands
+                    .entity(chunk_entity_map.0.remove(&chunk_coord).unwrap())
+                    .despawn();
                 terrain_chunk_map_lock.remove(&chunk_coord);
             }
         }
