@@ -25,7 +25,7 @@ pub const CHUNK_SIZE: f32 = 8.0; //in world units
 pub const SAMPLES_PER_CHUNK: usize =
     SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM;
 pub const HALF_CHUNK: f32 = CHUNK_SIZE / 2.0;
-pub const Z0_RADIUS: f32 = 20.0; //in world units. Distance where everything is loaded at all times and physically simulated.
+pub const Z0_RADIUS: f32 = 25.0; //in world units. Distance where everything is loaded at all times and physically simulated.
 pub const Z0_RADIUS_SQUARED: f32 = Z0_RADIUS * Z0_RADIUS;
 pub const Z1_RADIUS: f32 = 100.0; //in world units. Distance where chunks are loaded at full res but not stored in memory.
 pub const Z1_RADIUS_SQUARED: f32 = Z1_RADIUS * Z1_RADIUS;
