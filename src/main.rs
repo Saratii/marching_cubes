@@ -127,7 +127,10 @@ fn main() {
 fn setup(mut commands: Commands) {
     commands.spawn(PerfUiDefaultEntries::default());
     commands.spawn((
-        DirectionalLight { ..default() },
+        DirectionalLight {
+            shadows_enabled: true,
+            ..default()
+        },
         Transform::from_rotation(Quat::from_euler(
             EulerRot::ZYX,
             0.0,
