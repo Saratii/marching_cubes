@@ -6,7 +6,7 @@ use bevy::diagnostic::{
     EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin, SystemInformationDiagnosticsPlugin,
 };
 use bevy::image::ImageSamplerDescriptor;
-use bevy::pbr::PbrPlugin;
+use bevy::pbr::{ExtendedMaterial, PbrPlugin};
 use bevy::prelude::*;
 use bevy::render::diagnostic::RenderDiagnosticsPlugin;
 use bevy::window::PresentMode;
@@ -85,7 +85,7 @@ fn main() {
             SystemInformationDiagnosticsPlugin,
             PerfUiPlugin,
             RapierPhysicsPlugin::<NoUserData>::default(),
-            MaterialPlugin::<TerrainMaterial>::default(),
+            MaterialPlugin::<ExtendedMaterial<StandardMaterial, TerrainMaterial>>::default(),
             // RapierDebugRenderPlugin::default(),
         ))
         .insert_resource(ClearColor(Color::srgb(0.0, 1.0, 1.0)))
