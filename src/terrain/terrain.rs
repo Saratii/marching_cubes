@@ -4,6 +4,7 @@ use bevy::{
     asset::RenderAssetUsages,
     image::{ImageLoaderSettings, ImageSampler},
     mesh::{Indices, PrimitiveTopology},
+    pbr::ExtendedMaterial,
     prelude::*,
     render::render_resource::{AddressMode, SamplerDescriptor},
 };
@@ -42,7 +43,7 @@ pub struct ChunkTag;
 pub struct NoiseFunction(pub Arc<GeneratorWrapper<SafeNode>>);
 
 #[derive(Resource)]
-pub struct TerrainMaterialHandle(pub Handle<TerrainMaterial>);
+pub struct TerrainMaterialHandle(pub Handle<ExtendedMaterial<StandardMaterial, TerrainMaterial>>);
 
 #[derive(Resource)]
 pub struct TextureAtlasHandle(pub Handle<Image>);
@@ -106,7 +107,7 @@ impl TerrainChunk {
 
 pub fn setup_map(
     mut commands: Commands,
-    mut materials: ResMut<Assets<TerrainMaterial>>,
+    mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, TerrainMaterial>>>,
     asset_server: Res<AssetServer>,
 ) {
     let atlas_texture_handle: Handle<Image> = asset_server
@@ -123,9 +124,15 @@ pub fn setup_map(
                 .into(),
             );
         });
-    let standard_terrain_material_handle = materials.add(TerrainMaterial {
-        texture: atlas_texture_handle.clone(),
-        scale: 0.5,
+    let standard_terrain_material_handle = materials.add(ExtendedMaterial {
+        base: StandardMaterial {
+            perceptual_roughness: 0.8,
+            ..Default::default()
+        },
+        extension: TerrainMaterial {
+            texture: atlas_texture_handle.clone(),
+            scale: 0.5,
+        },
     });
     commands.insert_resource(TerrainMaterialHandle(standard_terrain_material_handle));
     commands.insert_resource(TextureAtlasHandle(atlas_texture_handle));

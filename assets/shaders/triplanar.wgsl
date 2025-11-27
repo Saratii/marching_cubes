@@ -1,14 +1,21 @@
 #import bevy_pbr::{
-    mesh_view_bindings::view,
-    forward_io::VertexOutput,
+    pbr_fragment::pbr_input_from_standard_material,
+    pbr_functions::alpha_discard,
+    forward_io::{VertexOutput, FragmentOutput},
+    pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
 }
 
-@group(3) @binding(3) var base_texture: texture_2d<f32>;
-@group(3) @binding(4) var base_sampler: sampler;
-@group(3) @binding(5) var<uniform> scale: f32;
+@group(3) @binding(103) var base_texture: texture_2d<f32>;
+@group(3) @binding(104) var base_sampler: sampler;
+@group(3) @binding(105) var<uniform> scale: f32;
 
 @fragment
-fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fragment(
+    in: VertexOutput,
+    @builtin(front_facing) is_front: bool,
+) -> FragmentOutput {
+    var pbr_input = pbr_input_from_standard_material(in, is_front);
+
     let world_pos = in.world_position.xyz;
     let world_normal = normalize(in.world_normal);
     var blend = abs(world_normal);
@@ -26,5 +33,10 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let color_y = textureSample(base_texture, base_sampler, atlas_uv_y).rgb;
     let color_z = textureSample(base_texture, base_sampler, atlas_uv_z).rgb;
     let final_color = color_x * blend.x + color_y * blend.y + color_z * blend.z;
-    return vec4<f32>(final_color, 1.0);
+    pbr_input.material.base_color = vec4<f32>(final_color, 1.0);
+    pbr_input.material.base_color = alpha_discard(pbr_input.material, pbr_input.material.base_color);
+    var out: FragmentOutput;
+    out.color = apply_pbr_lighting(pbr_input);
+    out.color = main_pass_post_lighting_processing(pbr_input, out.color);
+    return out;
 }
