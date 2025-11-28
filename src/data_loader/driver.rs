@@ -40,6 +40,9 @@ use crate::{
 pub static INITIAL_CHUNKS_LOADED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Resource)]
+pub struct LogicalProcesors(pub usize);
+
+#[derive(Resource)]
 pub struct PlayerTranslationMutexHandle(pub Arc<Mutex<Vec3>>);
 
 //stores the data for all chunks in Z0 radius on the bevy thread. Chunk loader can write to the mutex and bevy can modify it for digging operations.
@@ -112,9 +115,9 @@ pub fn setup_chunk_driver(
     chunk_index_file: Res<ChunkIndexFile>,
     compression_files: Res<CompressionFileHandles>,
 ) {
-    let (req_tx, req_rx) = unbounded::<ChunkRequest>();
-    let (res_tx, res_rx) = unbounded::<ChunkResult>();
-    let index_map_arc = Arc::clone(&index_map.0);
+    let num_processors = thread::available_parallelism().unwrap().get();
+    info!("Number of Available Processors: {}", num_processors);
+    commands.insert_resource(LogicalProcesors(num_processors));
     let chunks_being_loaded = Arc::new(Mutex::new(ChunksBeingLoaded {
         chunks: HashMap::new(),
         request_id: 1,
@@ -123,27 +126,35 @@ pub fn setup_chunk_driver(
     let (chunk_spawn_sender, chunk_spawn_reciever) = unbounded::<ChunkSpawnResult>();
     let terrain_chunk_map = Arc::new(Mutex::new(HashMap::new()));
     let terrain_chunk_map_arc = Arc::clone(&terrain_chunk_map);
-    let uniform_air_chunks_arc = Arc::clone(&uniform_chunks_map.air_chunks);
-    let uniform_dirt_chunks_arc = Arc::clone(&uniform_chunks_map.dirt_chunks);
-    let chunk_data_file_arc = Arc::clone(&chunk_data_file.0);
-    let chunk_index_file_arc = Arc::clone(&chunk_index_file.0);
-    let air_compression_file_arc = Arc::clone(&compression_files.air_file);
-    let dirt_compression_file_arc = Arc::clone(&compression_files.dirt_file);
+    let (req_tx, req_rx) = unbounded::<ChunkRequest>();
+    let (res_tx, res_rx) = unbounded::<ChunkResult>();
     commands.insert_resource(TerrainChunkMap(terrain_chunk_map));
     commands.insert_resource(ChunkSpawnReciever(chunk_spawn_reciever));
-    thread::spawn(move || {
-        chunk_loader_thread(
-            req_rx,
-            res_tx,
-            index_map_arc,
-            uniform_air_chunks_arc,
-            uniform_dirt_chunks_arc,
-            chunk_data_file_arc,
-            chunk_index_file_arc,
-            air_compression_file_arc,
-            dirt_compression_file_arc,
-        );
-    });
+    for _ in 0..1.max(num_processors - 2) {
+        //leave one processor free for main thread and one for svo manager <- might be wrong
+        let index_map_arc = Arc::clone(&index_map.0);
+        let uniform_air_chunks_arc = Arc::clone(&uniform_chunks_map.air_chunks);
+        let uniform_dirt_chunks_arc = Arc::clone(&uniform_chunks_map.dirt_chunks);
+        let chunk_data_file_arc = Arc::clone(&chunk_data_file.0);
+        let chunk_index_file_arc = Arc::clone(&chunk_index_file.0);
+        let air_compression_file_arc = Arc::clone(&compression_files.air_file);
+        let dirt_compression_file_arc = Arc::clone(&compression_files.dirt_file);
+        let req_rx_clone = req_rx.clone();
+        let res_tx_clone = res_tx.clone();
+        thread::spawn(move || {
+            chunk_loader_thread(
+                req_rx_clone,
+                res_tx_clone,
+                index_map_arc,
+                uniform_air_chunks_arc,
+                uniform_dirt_chunks_arc,
+                chunk_data_file_arc,
+                chunk_index_file_arc,
+                air_compression_file_arc,
+                dirt_compression_file_arc,
+            );
+        });
+    }
     thread::spawn(move || {
         svo_manager_thread(
             res_rx,
@@ -154,7 +165,6 @@ pub fn setup_chunk_driver(
             terrain_chunk_map_arc,
         );
     });
-    // commands.insert_resource(ChunksBeingLoaded(chunks_being_loaded, 1));
 }
 
 //compute thread for loading chunks from disk
@@ -173,7 +183,16 @@ fn chunk_loader_thread(
     let fbm =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
     let mut priority_queue = BinaryHeap::new();
+    #[cfg(feature = "timers")]
+    let mut chunks_generated = 0;
+    #[cfg(feature = "timers")]
+    let mut last_debug_print_time = Instant::now();
+    #[cfg(feature = "timers")]
+    let mut uniform_chunks_generated = 0;
     loop {
+        if priority_queue.is_empty() {
+            priority_queue.push(req_rx.recv().expect("channel closed"));
+        }
         while let Ok(req) = req_rx.try_recv() {
             priority_queue.push(req);
         }
@@ -200,6 +219,10 @@ fn chunk_loader_thread(
                     load_status: req.load_status,
                     upgrade: req.upgrade,
                 });
+                #[cfg(feature = "timers")]
+                {
+                    uniform_chunks_generated += 1;
+                }
                 continue;
             } else if uniform_dirt_chunks_lock.0.contains(&chunk_coord) {
                 let data = if req.load_status == 0 {
@@ -220,6 +243,10 @@ fn chunk_loader_thread(
                     load_status: req.load_status,
                     upgrade: req.upgrade,
                 });
+                #[cfg(feature = "timers")]
+                {
+                    uniform_chunks_generated += 1;
+                }
                 continue;
             }
             drop(uniform_air_chunks_lock);
@@ -319,6 +346,28 @@ fn chunk_loader_thread(
                 load_status: req.load_status,
                 upgrade: req.upgrade,
             });
+            #[cfg(feature = "timers")]
+            {
+                chunks_generated += 1;
+                if Instant::now()
+                    .duration_since(last_debug_print_time)
+                    .as_secs()
+                    >= 1
+                {
+                    println!(
+                        "Took {:?} ms to load {} chunks and {} uniform chunks. Priority Queue Size: {}",
+                        Instant::now()
+                            .duration_since(last_debug_print_time)
+                            .as_millis(),
+                        chunks_generated,
+                        uniform_chunks_generated,
+                        priority_queue.len()
+                    );
+                    chunks_generated = 0;
+                    last_debug_print_time = Instant::now();
+                    uniform_chunks_generated = 0;
+                }
+            }
         }
     }
 }
