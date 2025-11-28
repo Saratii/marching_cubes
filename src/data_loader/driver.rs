@@ -51,7 +51,7 @@ pub struct TerrainChunkMap(pub Arc<Mutex<HashMap<(i16, i16, i16), TerrainChunk>>
 
 struct ChunkSpawnResult {
     to_spawn: Vec<((i16, i16, i16), Option<Collider>, Option<Mesh>, bool)>, //bool indicates if spawning new mesh (true) or just inserting collider
-    to_despawn: Vec<((i16, i16, i16), bool)>,
+    to_despawn: Vec<(i16, i16, i16)>,
 }
 
 #[derive(Resource)]
@@ -352,10 +352,10 @@ fn chunk_loader_thread(
                 if Instant::now()
                     .duration_since(last_debug_print_time)
                     .as_secs()
-                    >= 1
+                    >= 10
                 {
                     println!(
-                        "Took {:?} ms to load {} chunks and {} uniform chunks. Priority Queue Size: {}",
+                        "Chunk Loader Time: {:?} ms -> {} chunks and {} uniform chunks. Priority Queue Size: {}",
                         Instant::now()
                             .duration_since(last_debug_print_time)
                             .as_millis(),
@@ -413,7 +413,7 @@ fn svo_manager_thread(
             &mut chunks_being_loaded,
             &mut terrain_chunk_map,
         );
-        let mut chunks_to_despawn = Vec::new();
+        let mut to_despawn = Vec::new();
         let player_translation_lock = player_translation.lock().unwrap();
         let player_translation = player_translation_lock.clone();
         drop(player_translation_lock);
@@ -422,7 +422,7 @@ fn svo_manager_thread(
             .query_chunks_outside_sphere(&player_translation, &mut chunks_to_deallocate);
         for (chunk_coord, has_entity) in &chunks_to_deallocate {
             if *has_entity {
-                chunks_to_despawn.push((*chunk_coord, *has_entity));
+                to_despawn.push(*chunk_coord);
             }
             chunks_being_loaded.chunks.remove(chunk_coord);
             svo.root.delete(*chunk_coord);
@@ -434,10 +434,10 @@ fn svo_manager_thread(
             &mut request_buffer,
         );
         drop(chunks_being_loaded);
-        if !to_spawn.is_empty() || !chunks_to_despawn.is_empty() {
+        if !to_spawn.is_empty() || !to_despawn.is_empty() {
             let response = ChunkSpawnResult {
                 to_spawn,
-                to_despawn: chunks_to_despawn,
+                to_despawn,
             };
             let _ = chunk_spawn_channel.send(response);
         }
@@ -598,7 +598,11 @@ pub fn chunk_spawn_reciever(
     terrain_chunk_map: Res<TerrainChunkMap>,
 ) {
     while let Ok(req) = req_rx.0.try_recv() {
-        INITIAL_CHUNKS_LOADED.store(true, Ordering::Relaxed); //wasteful
+        #[cfg(feature = "timers")]
+        let t0 = Instant::now();
+        if !INITIAL_CHUNKS_LOADED.load(Ordering::Relaxed) {
+            INITIAL_CHUNKS_LOADED.store(true, Ordering::Relaxed);
+        } //wasteful
         for (chunk, collider_opt, mesh_opt, spawn) in req.to_spawn {
             if spawn {
                 let entity = match collider_opt {
@@ -626,15 +630,22 @@ pub fn chunk_spawn_reciever(
                 commands.entity(*entity).insert(collider_opt.unwrap());
             }
         }
-        let mut terrain_chunk_map_lock = terrain_chunk_map.0.lock().unwrap();
-        for (chunk_coord, has_entity) in req.to_despawn {
-            if has_entity {
+        if !req.to_despawn.is_empty() {
+            let mut terrain_chunk_map_lock = terrain_chunk_map.0.lock().unwrap();
+            for chunk_coord in req.to_despawn {
                 commands
                     .entity(chunk_entity_map.0.remove(&chunk_coord).unwrap())
                     .despawn();
                 terrain_chunk_map_lock.remove(&chunk_coord);
             }
+            drop(terrain_chunk_map_lock);
         }
-        drop(terrain_chunk_map_lock);
+        #[cfg(feature = "timers")]
+        {
+            println!(
+                "chunk_spawn_reciever {:?} ms",
+                Instant::now().duration_since(t0).as_millis()
+            );
+        }
     }
 }
