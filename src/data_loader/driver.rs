@@ -50,8 +50,9 @@ pub struct PlayerTranslationMutexHandle(pub Arc<Mutex<Vec3>>);
 pub struct TerrainChunkMap(pub Arc<Mutex<HashMap<(i16, i16, i16), TerrainChunk>>>);
 
 struct ChunkSpawnResult {
-    to_spawn: Vec<((i16, i16, i16), Option<Collider>, Option<Mesh>, bool)>, //bool indicates if spawning new mesh (true) or just inserting collider
+    to_spawn: Vec<((i16, i16, i16), Option<Collider>, Mesh)>,
     to_despawn: Vec<(i16, i16, i16)>,
+    to_give_collider: Vec<((i16, i16, i16), Collider)>,
 }
 
 #[derive(Resource)]
@@ -407,7 +408,7 @@ fn svo_manager_thread(
     );
     loop {
         let mut chunks_being_loaded = chunks_being_loaded.lock().unwrap();
-        let to_spawn = recieve_loaded_chunks(
+        let (to_spawn, to_give_collider) = recieve_loaded_chunks(
             &results_channel,
             &mut svo,
             &mut chunks_being_loaded,
@@ -438,6 +439,7 @@ fn svo_manager_thread(
             let response = ChunkSpawnResult {
                 to_spawn,
                 to_despawn,
+                to_give_collider,
             };
             let _ = chunk_spawn_channel.send(response);
         }
@@ -452,10 +454,15 @@ fn recieve_loaded_chunks(
     svo: &mut ChunkSvo,
     chunks_being_loaded: &mut ChunksBeingLoaded,
     terrain_chunk_map: &mut Arc<Mutex<HashMap<(i16, i16, i16), TerrainChunk>>>,
-) -> Vec<((i16, i16, i16), Option<Collider>, Option<Mesh>, bool)> {
+) -> (
+    Vec<((i16, i16, i16), Option<Collider>, Mesh)>,
+    Vec<((i16, i16, i16), Collider)>,
+) {
     let mut chunks_to_spawn = Vec::new();
+    let mut to_give_collider = Vec::new();
     if results_channel.is_empty() {
-        return chunks_to_spawn;
+        //this branch might be redundant
+        return (chunks_to_spawn, to_give_collider);
     }
     while let Ok(result) = results_channel.try_recv() {
         match chunks_being_loaded.chunks.get(&result.chunk_coord) {
@@ -467,12 +474,7 @@ fn recieve_loaded_chunks(
                             //if upgrading
                             true => {
                                 //insert collider
-                                chunks_to_spawn.push((
-                                    result.chunk_coord,
-                                    Some(collider),
-                                    None,
-                                    false,
-                                ));
+                                to_give_collider.push((result.chunk_coord, collider));
                                 //update data and load status
                                 let (_has_entity, load_status) =
                                     svo.root.get_mut(result.chunk_coord).unwrap();
@@ -495,8 +497,7 @@ fn recieve_loaded_chunks(
                                 chunks_to_spawn.push((
                                     result.chunk_coord,
                                     Some(collider),
-                                    result.mesh,
-                                    true,
+                                    result.mesh.unwrap(),
                                 ));
                             }
                         }
@@ -537,21 +538,11 @@ fn recieve_loaded_chunks(
                                     terrain_chunk_map_lock
                                         .insert(result.chunk_coord, result.data.unwrap());
                                     drop(terrain_chunk_map_lock);
-                                    chunks_to_spawn.push((
-                                        result.chunk_coord,
-                                        None,
-                                        Some(mesh),
-                                        true,
-                                    ));
+                                    chunks_to_spawn.push((result.chunk_coord, None, mesh));
                                 }
                                 //if load status not 0 spawn and insert no data
                                 _ => {
-                                    chunks_to_spawn.push((
-                                        result.chunk_coord,
-                                        None,
-                                        Some(mesh),
-                                        true,
-                                    ));
+                                    chunks_to_spawn.push((result.chunk_coord, None, mesh));
                                     svo.root
                                         .insert(result.chunk_coord, result.load_status, true);
                                 }
@@ -585,7 +576,7 @@ fn recieve_loaded_chunks(
             }
         }
     }
-    chunks_to_spawn
+    (chunks_to_spawn, to_give_collider)
 }
 
 //recieves chunks that were loaded and need spawning from the manager
@@ -603,32 +594,31 @@ pub fn chunk_spawn_reciever(
         if !INITIAL_CHUNKS_LOADED.load(Ordering::Relaxed) {
             INITIAL_CHUNKS_LOADED.store(true, Ordering::Relaxed);
         } //wasteful
-        for (chunk, collider_opt, mesh_opt, spawn) in req.to_spawn {
-            if spawn {
-                let entity = match collider_opt {
-                    Some(collider) => commands
-                        .spawn((
-                            Mesh3d(meshes.add(mesh_opt.unwrap())),
-                            collider,
-                            ChunkTag,
-                            Transform::from_translation(chunk_coord_to_world_pos(&chunk)),
-                            MeshMaterial3d(standard_material.0.clone()),
-                        ))
-                        .id(),
-                    None => commands
-                        .spawn((
-                            Mesh3d(meshes.add(mesh_opt.unwrap())),
-                            ChunkTag,
-                            Transform::from_translation(chunk_coord_to_world_pos(&chunk)),
-                            MeshMaterial3d(standard_material.0.clone()),
-                        ))
-                        .id(),
-                };
-                chunk_entity_map.0.insert(chunk, entity);
-            } else {
-                let entity = chunk_entity_map.0.get(&chunk).unwrap();
-                commands.entity(*entity).insert(collider_opt.unwrap());
-            }
+        for (chunk, collider_opt, mesh) in req.to_spawn {
+            let entity = match collider_opt {
+                Some(collider) => commands
+                    .spawn((
+                        Mesh3d(meshes.add(mesh)),
+                        collider,
+                        ChunkTag,
+                        Transform::from_translation(chunk_coord_to_world_pos(&chunk)),
+                        MeshMaterial3d(standard_material.0.clone()),
+                    ))
+                    .id(),
+                None => commands
+                    .spawn((
+                        Mesh3d(meshes.add(mesh)),
+                        ChunkTag,
+                        Transform::from_translation(chunk_coord_to_world_pos(&chunk)),
+                        MeshMaterial3d(standard_material.0.clone()),
+                    ))
+                    .id(),
+            };
+            chunk_entity_map.0.insert(chunk, entity);
+        }
+        for (chunk, collider) in req.to_give_collider {
+            let entity = chunk_entity_map.0.get(&chunk).unwrap();
+            commands.entity(*entity).insert(collider);
         }
         if !req.to_despawn.is_empty() {
             let mut terrain_chunk_map_lock = terrain_chunk_map.0.lock().unwrap();
