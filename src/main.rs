@@ -8,12 +8,11 @@ use bevy::diagnostic::{
 use bevy::image::ImageSamplerDescriptor;
 use bevy::pbr::{ExtendedMaterial, PbrPlugin};
 use bevy::prelude::*;
-use bevy::render::diagnostic::RenderDiagnosticsPlugin;
 use bevy::window::PresentMode;
 use bevy::winit::WinitSettings;
 use bevy_rapier3d::plugin::{NoUserData, RapierPhysicsPlugin};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
-// use bevy_rapier3d::render::RapierDebugRenderPlugin;
+use bevy_rapier3d::render::RapierDebugRenderPlugin;
 use iyes_perf_ui::PerfUiPlugin;
 use iyes_perf_ui::prelude::PerfUiDefaultEntries;
 use marching_cubes::conversions::{
@@ -81,12 +80,11 @@ fn main() {
                 .set(PbrPlugin { ..default() }),
             FrameTimeDiagnosticsPlugin::default(),
             EntityCountDiagnosticsPlugin::default(),
-            RenderDiagnosticsPlugin,
             SystemInformationDiagnosticsPlugin,
             PerfUiPlugin,
             RapierPhysicsPlugin::<NoUserData>::default(),
             MaterialPlugin::<ExtendedMaterial<StandardMaterial, TerrainMaterial>>::default(),
-            // RapierDebugRenderPlugin::default(),
+            RapierDebugRenderPlugin::default(),
         ))
         .insert_resource(ClearColor(Color::srgb(0.0, 1.0, 1.0)))
         .add_systems(

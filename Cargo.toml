@@ -15,8 +15,7 @@ serde_json = "1.0.145"
 serde = "1.0.228"
 flamegraph = "0.6.10"
 crossbeam-channel = "0.5.15"
-bevy = "0.17.3"
-
+bevy = { version="0.17.3", features=["trace_tracy"] }
 [[bench]]
 name = "chunk_generation"
 harness = false
