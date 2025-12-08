@@ -138,6 +138,7 @@ pub fn setup_chunk_driver(
         let req_rx_clone = req_rx.clone();
         let res_tx_clone = res_tx.clone();
         let terrain_chunk_map_arc = Arc::clone(&terrain_chunk_map_arc);
+        let svo_arc = Arc::clone(&svo);
         thread::spawn(move || {
             chunk_loader_thread(
                 req_rx_clone,
@@ -150,6 +151,7 @@ pub fn setup_chunk_driver(
                 air_compression_file_arc,
                 dirt_compression_file_arc,
                 terrain_chunk_map_arc,
+                svo_arc,
             );
         });
     }
@@ -178,6 +180,7 @@ fn chunk_loader_thread(
     air_compression_file: Arc<Mutex<File>>,
     dirt_compression_file: Arc<Mutex<File>>,
     terrain_chunk_map: Arc<Mutex<HashMap<(i16, i16, i16), TerrainChunk>>>,
+    svo: Arc<Mutex<ChunkSvo>>,
 ) {
     let fbm =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
@@ -334,6 +337,14 @@ fn chunk_loader_thread(
                 terrain_chunk_map_lock.insert(chunk_coord, chunk_sdfs);
                 drop(terrain_chunk_map_lock);
             }
+            if collider.is_some() {
+                if req.upgrade {
+                    let mut svo_lock = svo.lock().unwrap();
+                    let (_has_entity, load_status) = svo_lock.root.get_mut(chunk_coord).unwrap();
+                    *load_status = req.load_status;
+                    drop(svo_lock);
+                }
+            }
             let _ = res_tx.send(ChunkResult {
                 mesh,
                 collider,
@@ -463,11 +474,6 @@ fn recieve_loaded_chunks(
                             )))
                             .unwrap();
                         //update data and load status
-                        let mut svo_lock = svo.lock().unwrap();
-                        let (_has_entity, load_status) =
-                            svo_lock.root.get_mut(result.chunk_coord).unwrap();
-                        *load_status = result.load_status;
-                        drop(svo_lock);
                     }
                     //if not upgrading
                     false => {
@@ -492,73 +498,33 @@ fn recieve_loaded_chunks(
             None => match result.upgrade {
                 //if upgrading
                 true => {
-                    match result.load_status {
-                        //if loading status 0
-                        0 => {
-                            let mut svo_lock = svo.lock().unwrap();
-                            svo_lock
-                                .root
-                                .insert(result.chunk_coord, result.load_status, false);
-                            drop(svo_lock);
-                        }
-                        //if load status not 0
-                        _ => {
-                            let mut svo_lock = svo.lock().unwrap();
-                            svo_lock
-                                .root
-                                .insert(result.chunk_coord, result.load_status, false);
-                            drop(svo_lock);
-                        }
-                    }
+                    let mut svo_lock = svo.lock().unwrap();
+                    svo_lock
+                        .root
+                        .insert(result.chunk_coord, result.load_status, false);
+                    drop(svo_lock);
                 }
                 //if not upgrading
                 false => match result.mesh {
                     //if has mesh
-                    Some(mesh) => match result.load_status {
-                        //if has mesh
-                        0 => {
-                            //if load status 0 spawn and insert data
-                            let mut svo_lock = svo.lock().unwrap();
-                            svo_lock
-                                .root
-                                .insert(result.chunk_coord, result.load_status, true);
-                            drop(svo_lock);
-                            chunk_spawn_channel
-                                .send(ChunkSpawnResult::ToSpawn((result.chunk_coord, None, mesh)))
-                                .unwrap();
-                        }
-                        //if load status not 0 spawn and insert no data
-                        _ => {
-                            chunk_spawn_channel
-                                .send(ChunkSpawnResult::ToSpawn((result.chunk_coord, None, mesh)))
-                                .unwrap();
-                            let mut svo_lock = svo.lock().unwrap();
-                            svo_lock
-                                .root
-                                .insert(result.chunk_coord, result.load_status, true);
-                            drop(svo_lock);
-                        }
-                    },
+                    Some(mesh) => {
+                        let mut svo_lock = svo.lock().unwrap();
+                        svo_lock
+                            .root
+                            .insert(result.chunk_coord, result.load_status, true);
+                        drop(svo_lock);
+                        chunk_spawn_channel
+                            .send(ChunkSpawnResult::ToSpawn((result.chunk_coord, None, mesh)))
+                            .unwrap();
+                    }
                     //if no mesh
-                    None => match result.load_status {
-                        //if has mesh
-                        0 => {
-                            //if load status 0insert data
-                            let mut svo_lock = svo.lock().unwrap();
-                            svo_lock
-                                .root
-                                .insert(result.chunk_coord, result.load_status, false);
-                            drop(svo_lock);
-                        }
-                        //if load status not 0 insert no data
-                        _ => {
-                            let mut svo_lock = svo.lock().unwrap();
-                            svo_lock
-                                .root
-                                .insert(result.chunk_coord, result.load_status, false);
-                            drop(svo_lock);
-                        }
-                    },
+                    None => {
+                        let mut svo_lock = svo.lock().unwrap();
+                        svo_lock
+                            .root
+                            .insert(result.chunk_coord, result.load_status, false);
+                        drop(svo_lock);
+                    }
                 },
             },
         }
