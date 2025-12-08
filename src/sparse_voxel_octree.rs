@@ -249,37 +249,30 @@ impl SvoNode {
         if self.is_leaf() {
             if self.size == 1 {
                 let chunk_coord = self.lower_chunk_coord;
-                if self.chunk.is_none() && !chunks_being_loaded.chunks.contains_key(&chunk_coord) {
+                if self.chunk.is_none() && !chunks_being_loaded.chunks.contains(&chunk_coord) {
                     let distance_squared =
                         center.distance_squared(chunk_coord_to_world_pos(&chunk_coord));
                     if distance_squared > MAX_RADIUS_SQUARED {
                         return; //skip chunks where the sphere intersects but chunk center is outside max radius
                     }
-                    let request_id = chunks_being_loaded.request_id;
-                    chunks_being_loaded.request_id = chunks_being_loaded.request_id.wrapping_add(1);
-                    chunks_being_loaded.chunks.insert(chunk_coord, request_id);
+                    chunks_being_loaded.chunks.insert(chunk_coord);
                     let load_priority = get_load_priority(distance_squared);
                     request_buffer.push(ChunkRequest {
                         position: chunk_coord,
                         load_status: load_priority,
-                        request_id,
                         upgrade: false,
                         distance_squared: distance_squared.round() as u32,
                     });
-                } else if !chunks_being_loaded.chunks.contains_key(&chunk_coord) {
+                } else if !chunks_being_loaded.chunks.contains(&chunk_coord) {
                     let current_load_status = self.chunk.as_ref().unwrap().1;
                     let distance_squared =
                         center.distance_squared(chunk_coord_to_world_pos(&chunk_coord));
                     let desired_load_status = get_load_priority(distance_squared);
                     if desired_load_status < current_load_status {
-                        let request_id = chunks_being_loaded.request_id;
-                        chunks_being_loaded.request_id =
-                            chunks_being_loaded.request_id.wrapping_add(1);
-                        chunks_being_loaded.chunks.insert(chunk_coord, request_id);
+                        chunks_being_loaded.chunks.insert(chunk_coord);
                         request_buffer.push(ChunkRequest {
                             position: chunk_coord,
                             load_status: desired_load_status,
-                            request_id,
                             upgrade: true,
                             distance_squared: distance_squared.round() as u32,
                         });

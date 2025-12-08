@@ -1,4 +1,4 @@
-use std::{collections::HashMap, hint::black_box};
+use std::{collections::HashSet, hint::black_box};
 
 use bevy::math::Vec3;
 use criterion::{Criterion, criterion_group, criterion_main};
@@ -15,8 +15,7 @@ fn benchmark_svo_first_traversal(c: &mut Criterion) {
                 &Vec3::ZERO,
                 MAX_RADIUS,
                 &mut ChunksBeingLoaded {
-                    chunks: HashMap::new(),
-                    request_id: 1,
+                    chunks: HashSet::new(),
                 },
                 &mut Vec::new(),
             );
