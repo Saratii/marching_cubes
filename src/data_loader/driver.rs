@@ -327,14 +327,9 @@ fn chunk_loader_thread(
             } else {
                 (None, None)
             };
-            let data = if req.load_status == 0 {
-                Some(chunk_sdfs)
-            } else {
-                None
-            };
             if req.load_status == 0 {
                 let mut terrain_chunk_map_lock = terrain_chunk_map.lock().unwrap();
-                terrain_chunk_map_lock.insert(chunk_coord, data.clone().unwrap());
+                terrain_chunk_map_lock.insert(chunk_coord, chunk_sdfs);
                 drop(terrain_chunk_map_lock);
             }
             let _ = res_tx.send(ChunkResult {
