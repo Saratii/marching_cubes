@@ -123,6 +123,7 @@ pub fn setup_chunk_driver(
     let terrain_chunk_map_arc = Arc::clone(&terrain_chunk_map);
     let (req_tx, req_rx) = unbounded::<ChunkRequest>();
     let (res_tx, res_rx) = unbounded::<ChunkResult>();
+    let svo = Arc::new(Mutex::new(ChunkSvo::new()));
     commands.insert_resource(TerrainChunkMap(terrain_chunk_map));
     commands.insert_resource(ChunkSpawnReciever(chunk_spawn_reciever));
     for _ in 0..1.max(num_processors - 2) {
@@ -159,6 +160,7 @@ pub fn setup_chunk_driver(
             player_translation_arc,
             chunk_spawn_sender,
             req_tx,
+            svo,
         );
     });
 }
@@ -375,20 +377,22 @@ fn svo_manager_thread(
     player_translation: Arc<Mutex<Vec3>>,
     chunk_spawn_channel: Sender<ChunkSpawnResult>,
     load_request_channel: Sender<ChunkRequest>,
+    svo: Arc<Mutex<ChunkSvo>>,
 ) {
-    let mut svo = ChunkSvo::new();
     let mut request_buffer = Vec::new();
     //do initial z0 load so player can start moving
     let mut chunks_being_loaded_lock = chunks_being_loaded.lock().unwrap();
     let player_translation_lock = player_translation.lock().unwrap();
     drop(player_translation_lock);
     let start = Instant::now();
-    svo.root.fill_missing_chunks_in_radius(
+    let mut svo_lock = svo.lock().unwrap();
+    svo_lock.root.fill_missing_chunks_in_radius(
         &PLAYER_SPAWN,
         Z0_RADIUS,
         &mut chunks_being_loaded_lock,
         &mut request_buffer,
     );
+    drop(svo_lock);
     drop(chunks_being_loaded_lock);
     for request in request_buffer.drain(..) {
         let _ = load_request_channel.send(request);
@@ -401,7 +405,7 @@ fn svo_manager_thread(
         let mut chunks_being_loaded = chunks_being_loaded.lock().unwrap();
         recieve_loaded_chunks(
             &results_channel,
-            &mut svo,
+            &svo,
             &mut chunks_being_loaded,
             &chunk_spawn_channel,
         );
@@ -410,7 +414,9 @@ fn svo_manager_thread(
         let player_translation = player_translation_lock.clone();
         drop(player_translation_lock);
         let mut chunks_to_deallocate: Vec<((i16, i16, i16), bool)> = Vec::new();
-        svo.root
+        let mut svo_lock = svo.lock().unwrap();
+        svo_lock
+            .root
             .query_chunks_outside_sphere(&player_translation, &mut chunks_to_deallocate);
         for (chunk_coord, has_entity) in &chunks_to_deallocate {
             if *has_entity {
@@ -420,14 +426,15 @@ fn svo_manager_thread(
                     .unwrap();
             }
             chunks_being_loaded.chunks.remove(chunk_coord);
-            svo.root.delete(*chunk_coord);
+            svo_lock.root.delete(*chunk_coord);
         }
-        svo.root.fill_missing_chunks_in_radius(
+        svo_lock.root.fill_missing_chunks_in_radius(
             &player_translation,
             MAX_RADIUS,
             &mut chunks_being_loaded,
             &mut request_buffer,
         );
+        drop(svo_lock);
         drop(chunks_being_loaded);
         for request in request_buffer.drain(..) {
             let _ = load_request_channel.send(request);
@@ -437,7 +444,7 @@ fn svo_manager_thread(
 
 fn recieve_loaded_chunks(
     results_channel: &Receiver<ChunkResult>,
-    svo: &mut ChunkSvo,
+    svo: &Arc<Mutex<ChunkSvo>>,
     chunks_being_loaded: &mut ChunksBeingLoaded,
     chunk_spawn_channel: &Sender<ChunkSpawnResult>,
 ) {
@@ -456,16 +463,21 @@ fn recieve_loaded_chunks(
                             )))
                             .unwrap();
                         //update data and load status
+                        let mut svo_lock = svo.lock().unwrap();
                         let (_has_entity, load_status) =
-                            svo.root.get_mut(result.chunk_coord).unwrap();
+                            svo_lock.root.get_mut(result.chunk_coord).unwrap();
                         *load_status = result.load_status;
+                        drop(svo_lock);
                     }
                     //if not upgrading
                     false => {
                         //spawn it with collider
                         //insert into svo
-                        svo.root
+                        let mut svo_lock = svo.lock().unwrap();
+                        svo_lock
+                            .root
                             .insert(result.chunk_coord, result.load_status, true);
+                        drop(svo_lock);
                         chunk_spawn_channel
                             .send(ChunkSpawnResult::ToSpawn((
                                 result.chunk_coord,
@@ -483,13 +495,19 @@ fn recieve_loaded_chunks(
                     match result.load_status {
                         //if loading status 0
                         0 => {
-                            svo.root
+                            let mut svo_lock = svo.lock().unwrap();
+                            svo_lock
+                                .root
                                 .insert(result.chunk_coord, result.load_status, false);
+                            drop(svo_lock);
                         }
                         //if load status not 0
                         _ => {
-                            svo.root
+                            let mut svo_lock = svo.lock().unwrap();
+                            svo_lock
+                                .root
                                 .insert(result.chunk_coord, result.load_status, false);
+                            drop(svo_lock);
                         }
                     }
                 }
@@ -500,8 +518,11 @@ fn recieve_loaded_chunks(
                         //if has mesh
                         0 => {
                             //if load status 0 spawn and insert data
-                            svo.root
+                            let mut svo_lock = svo.lock().unwrap();
+                            svo_lock
+                                .root
                                 .insert(result.chunk_coord, result.load_status, true);
+                            drop(svo_lock);
                             chunk_spawn_channel
                                 .send(ChunkSpawnResult::ToSpawn((result.chunk_coord, None, mesh)))
                                 .unwrap();
@@ -511,8 +532,11 @@ fn recieve_loaded_chunks(
                             chunk_spawn_channel
                                 .send(ChunkSpawnResult::ToSpawn((result.chunk_coord, None, mesh)))
                                 .unwrap();
-                            svo.root
+                            let mut svo_lock = svo.lock().unwrap();
+                            svo_lock
+                                .root
                                 .insert(result.chunk_coord, result.load_status, true);
+                            drop(svo_lock);
                         }
                     },
                     //if no mesh
@@ -520,13 +544,19 @@ fn recieve_loaded_chunks(
                         //if has mesh
                         0 => {
                             //if load status 0insert data
-                            svo.root
+                            let mut svo_lock = svo.lock().unwrap();
+                            svo_lock
+                                .root
                                 .insert(result.chunk_coord, result.load_status, false);
+                            drop(svo_lock);
                         }
                         //if load status not 0 insert no data
                         _ => {
-                            svo.root
+                            let mut svo_lock = svo.lock().unwrap();
+                            svo_lock
+                                .root
                                 .insert(result.chunk_coord, result.load_status, false);
+                            drop(svo_lock);
                         }
                     },
                 },
