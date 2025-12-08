@@ -59,8 +59,7 @@ struct ChunkSpawnResult {
 pub struct ChunkSpawnReciever(Receiver<ChunkSpawnResult>);
 
 pub struct ChunksBeingLoaded {
-    pub chunks: HashMap<(i16, i16, i16), u16>,
-    pub request_id: u16,
+    pub chunks: HashSet<(i16, i16, i16)>,
 }
 
 //level 0: full detail, returns TerrainChunk and collider
@@ -68,7 +67,6 @@ pub struct ChunksBeingLoaded {
 pub struct ChunkRequest {
     pub position: (i16, i16, i16),
     pub load_status: u8,
-    pub request_id: u16,
     pub upgrade: bool,
     pub distance_squared: u32,
 }
@@ -77,7 +75,6 @@ impl PartialEq for ChunkRequest {
     fn eq(&self, other: &Self) -> bool {
         self.position == other.position
             && self.load_status == other.load_status
-            && self.request_id == other.request_id
             && self.upgrade == other.upgrade
             && self.distance_squared == other.distance_squared
     }
@@ -102,7 +99,6 @@ pub struct ChunkResult {
     mesh: Option<Mesh>,
     collider: Option<Collider>,
     chunk_coord: (i16, i16, i16),
-    request_id: u16,
     load_status: u8,
     upgrade: bool,
 }
@@ -120,8 +116,7 @@ pub fn setup_chunk_driver(
     info!("Number of Available Processors: {}", num_processors);
     commands.insert_resource(LogicalProcesors(num_processors));
     let chunks_being_loaded = Arc::new(Mutex::new(ChunksBeingLoaded {
-        chunks: HashMap::new(),
-        request_id: 1,
+        chunks: HashSet::new(),
     }));
     let player_translation_arc = Arc::clone(&player_translation_mutex_handle.0);
     let (chunk_spawn_sender, chunk_spawn_reciever) = unbounded::<ChunkSpawnResult>();
@@ -216,7 +211,6 @@ fn chunk_loader_thread(
                     mesh: None,
                     collider: None,
                     chunk_coord,
-                    request_id: req.request_id,
                     load_status: req.load_status,
                     upgrade: req.upgrade,
                 });
@@ -240,7 +234,6 @@ fn chunk_loader_thread(
                     mesh: None,
                     collider: None,
                     chunk_coord,
-                    request_id: req.request_id,
                     load_status: req.load_status,
                     upgrade: req.upgrade,
                 });
@@ -343,7 +336,6 @@ fn chunk_loader_thread(
                 mesh,
                 collider,
                 chunk_coord,
-                request_id: req.request_id,
                 load_status: req.load_status,
                 upgrade: req.upgrade,
             });
@@ -465,116 +457,101 @@ fn recieve_loaded_chunks(
         return (chunks_to_spawn, to_give_collider);
     }
     while let Ok(result) = results_channel.try_recv() {
-        match chunks_being_loaded.chunks.get(&result.chunk_coord) {
-            Some(expected_id) if *expected_id == result.request_id => {
-                match result.collider {
-                    //if has collider
-                    Some(collider) => {
-                        match result.upgrade {
-                            //if upgrading
-                            true => {
-                                //insert collider
-                                to_give_collider.push((result.chunk_coord, collider));
-                                //update data and load status
-                                let (_has_entity, load_status) =
-                                    svo.root.get_mut(result.chunk_coord).unwrap();
-                                let mut terrain_chunk_map_lock = terrain_chunk_map.lock().unwrap();
-                                terrain_chunk_map_lock
-                                    .insert(result.chunk_coord, result.data.unwrap());
-                                drop(terrain_chunk_map_lock);
-                                *load_status = result.load_status;
-                            }
-                            //if not upgrading
-                            false => {
-                                //spawn it with collider
-                                //insert into svo
-                                svo.root
-                                    .insert(result.chunk_coord, result.load_status, true);
-                                let mut terrain_chunk_map_lock = terrain_chunk_map.lock().unwrap();
-                                terrain_chunk_map_lock
-                                    .insert(result.chunk_coord, result.data.unwrap());
-                                drop(terrain_chunk_map_lock);
-                                chunks_to_spawn.push((
-                                    result.chunk_coord,
-                                    Some(collider),
-                                    result.mesh.unwrap(),
-                                ));
-                            }
+        match result.collider {
+            //if has collider
+            Some(collider) => {
+                match result.upgrade {
+                    //if upgrading
+                    true => {
+                        //insert collider
+                        to_give_collider.push((result.chunk_coord, collider));
+                        //update data and load status
+                        let (_has_entity, load_status) =
+                            svo.root.get_mut(result.chunk_coord).unwrap();
+                        let mut terrain_chunk_map_lock = terrain_chunk_map.lock().unwrap();
+                        terrain_chunk_map_lock.insert(result.chunk_coord, result.data.unwrap());
+                        drop(terrain_chunk_map_lock);
+                        *load_status = result.load_status;
+                    }
+                    //if not upgrading
+                    false => {
+                        //spawn it with collider
+                        //insert into svo
+                        svo.root
+                            .insert(result.chunk_coord, result.load_status, true);
+                        let mut terrain_chunk_map_lock = terrain_chunk_map.lock().unwrap();
+                        terrain_chunk_map_lock.insert(result.chunk_coord, result.data.unwrap());
+                        drop(terrain_chunk_map_lock);
+                        chunks_to_spawn.push((
+                            result.chunk_coord,
+                            Some(collider),
+                            result.mesh.unwrap(),
+                        ));
+                    }
+                }
+            }
+            //if does not have collider
+            None => match result.upgrade {
+                //if upgrading
+                true => {
+                    match result.load_status {
+                        //if loading status 0
+                        0 => {
+                            svo.root
+                                .insert(result.chunk_coord, result.load_status, false);
+                            let mut terrain_chunk_map_lock = terrain_chunk_map.lock().unwrap();
+                            terrain_chunk_map_lock.insert(result.chunk_coord, result.data.unwrap());
+                            drop(terrain_chunk_map_lock);
+                        }
+                        //if load status not 0
+                        _ => {
+                            svo.root
+                                .insert(result.chunk_coord, result.load_status, false);
                         }
                     }
-                    //if does not have collider
-                    None => match result.upgrade {
-                        //if upgrading
-                        true => {
-                            match result.load_status {
-                                //if loading status 0
-                                0 => {
-                                    svo.root
-                                        .insert(result.chunk_coord, result.load_status, false);
-                                    let mut terrain_chunk_map_lock =
-                                        terrain_chunk_map.lock().unwrap();
-                                    terrain_chunk_map_lock
-                                        .insert(result.chunk_coord, result.data.unwrap());
-                                    drop(terrain_chunk_map_lock);
-                                }
-                                //if load status not 0
-                                _ => {
-                                    svo.root
-                                        .insert(result.chunk_coord, result.load_status, false);
-                                }
-                            }
-                        }
-                        //if not upgrading
-                        false => match result.mesh {
-                            //if has mesh
-                            Some(mesh) => match result.load_status {
-                                //if has mesh
-                                0 => {
-                                    //if load status 0 spawn and insert data
-                                    svo.root
-                                        .insert(result.chunk_coord, result.load_status, true);
-                                    let mut terrain_chunk_map_lock =
-                                        terrain_chunk_map.lock().unwrap();
-                                    terrain_chunk_map_lock
-                                        .insert(result.chunk_coord, result.data.unwrap());
-                                    drop(terrain_chunk_map_lock);
-                                    chunks_to_spawn.push((result.chunk_coord, None, mesh));
-                                }
-                                //if load status not 0 spawn and insert no data
-                                _ => {
-                                    chunks_to_spawn.push((result.chunk_coord, None, mesh));
-                                    svo.root
-                                        .insert(result.chunk_coord, result.load_status, true);
-                                }
-                            },
-                            //if no mesh
-                            None => match result.load_status {
-                                //if has mesh
-                                0 => {
-                                    //if load status 0insert data
-                                    svo.root
-                                        .insert(result.chunk_coord, result.load_status, false);
-                                    let mut terrain_chunk_map_lock =
-                                        terrain_chunk_map.lock().unwrap();
-                                    terrain_chunk_map_lock
-                                        .insert(result.chunk_coord, result.data.unwrap());
-                                    drop(terrain_chunk_map_lock);
-                                }
-                                //if load status not 0 insert no data
-                                _ => {
-                                    svo.root
-                                        .insert(result.chunk_coord, result.load_status, false);
-                                }
-                            },
-                        },
-                    },
                 }
-                chunks_being_loaded.chunks.remove(&result.chunk_coord);
-            }
-            _ => {
-                panic!("what happened here");
-            }
+                //if not upgrading
+                false => match result.mesh {
+                    //if has mesh
+                    Some(mesh) => match result.load_status {
+                        //if has mesh
+                        0 => {
+                            //if load status 0 spawn and insert data
+                            svo.root
+                                .insert(result.chunk_coord, result.load_status, true);
+                            let mut terrain_chunk_map_lock = terrain_chunk_map.lock().unwrap();
+                            terrain_chunk_map_lock.insert(result.chunk_coord, result.data.unwrap());
+                            drop(terrain_chunk_map_lock);
+                            chunks_to_spawn.push((result.chunk_coord, None, mesh));
+                        }
+                        //if load status not 0 spawn and insert no data
+                        _ => {
+                            chunks_to_spawn.push((result.chunk_coord, None, mesh));
+                            svo.root
+                                .insert(result.chunk_coord, result.load_status, true);
+                        }
+                    },
+                    //if no mesh
+                    None => match result.load_status {
+                        //if has mesh
+                        0 => {
+                            //if load status 0insert data
+                            svo.root
+                                .insert(result.chunk_coord, result.load_status, false);
+                            let mut terrain_chunk_map_lock = terrain_chunk_map.lock().unwrap();
+                            terrain_chunk_map_lock.insert(result.chunk_coord, result.data.unwrap());
+                            drop(terrain_chunk_map_lock);
+                        }
+                        //if load status not 0 insert no data
+                        _ => {
+                            svo.root
+                                .insert(result.chunk_coord, result.load_status, false);
+                        }
+                    },
+                },
+            },
         }
+        chunks_being_loaded.chunks.remove(&result.chunk_coord);
     }
     (chunks_to_spawn, to_give_collider)
 }
