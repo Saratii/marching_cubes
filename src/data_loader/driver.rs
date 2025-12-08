@@ -95,7 +95,6 @@ impl PartialOrd for ChunkRequest {
 }
 
 pub struct ChunkResult {
-    data: Option<TerrainChunk>,
     mesh: Option<Mesh>,
     collider: Option<Collider>,
     chunk_coord: (i16, i16, i16),
@@ -137,6 +136,7 @@ pub fn setup_chunk_driver(
         let dirt_compression_file_arc = Arc::clone(&compression_files.dirt_file);
         let req_rx_clone = req_rx.clone();
         let res_tx_clone = res_tx.clone();
+        let terrain_chunk_map_arc = terrain_chunk_map_arc.clone();
         thread::spawn(move || {
             chunk_loader_thread(
                 req_rx_clone,
@@ -148,6 +148,7 @@ pub fn setup_chunk_driver(
                 chunk_index_file_arc,
                 air_compression_file_arc,
                 dirt_compression_file_arc,
+                terrain_chunk_map_arc,
             );
         });
     }
@@ -158,7 +159,6 @@ pub fn setup_chunk_driver(
             player_translation_arc,
             chunk_spawn_sender,
             req_tx,
-            terrain_chunk_map_arc,
         );
     });
 }
@@ -175,6 +175,7 @@ fn chunk_loader_thread(
     chunk_index_file: Arc<Mutex<File>>,
     air_compression_file: Arc<Mutex<File>>,
     dirt_compression_file: Arc<Mutex<File>>,
+    terrain_chunk_map: Arc<Mutex<HashMap<(i16, i16, i16), TerrainChunk>>>,
 ) {
     let fbm =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
@@ -197,17 +198,17 @@ fn chunk_loader_thread(
             let uniform_air_chunks_lock = uniform_air_chunks.lock().unwrap();
             let uniform_dirt_chunks_lock = uniform_dirt_chunks.lock().unwrap();
             if uniform_air_chunks_lock.0.contains(&chunk_coord) {
-                let data = if req.load_status == 0 {
-                    Some(TerrainChunk {
+                if req.load_status == 0 {
+                    let data = TerrainChunk {
                         densities: Box::new([i16::MAX; SAMPLES_PER_CHUNK]),
                         materials: Box::new([0; SAMPLES_PER_CHUNK]),
                         is_uniform: UniformChunk::Air,
-                    })
-                } else {
-                    None
-                };
+                    };
+                    let mut terrain_chunk_map_lock = terrain_chunk_map.lock().unwrap();
+                    terrain_chunk_map_lock.insert(chunk_coord, data);
+                    drop(terrain_chunk_map_lock);
+                }
                 let _ = res_tx.send(ChunkResult {
-                    data,
                     mesh: None,
                     collider: None,
                     chunk_coord,
@@ -220,17 +221,17 @@ fn chunk_loader_thread(
                 }
                 continue;
             } else if uniform_dirt_chunks_lock.0.contains(&chunk_coord) {
-                let data = if req.load_status == 0 {
-                    Some(TerrainChunk {
+                if req.load_status == 0 {
+                    let data = TerrainChunk {
                         densities: Box::new([i16::MIN; SAMPLES_PER_CHUNK]),
                         materials: Box::new([1; SAMPLES_PER_CHUNK]),
                         is_uniform: UniformChunk::Dirt,
-                    })
-                } else {
-                    None
-                };
+                    };
+                    let mut terrain_chunk_map_lock = terrain_chunk_map.lock().unwrap();
+                    terrain_chunk_map_lock.insert(chunk_coord, data);
+                    drop(terrain_chunk_map_lock);
+                }
                 let _ = res_tx.send(ChunkResult {
-                    data,
                     mesh: None,
                     collider: None,
                     chunk_coord,
@@ -331,8 +332,12 @@ fn chunk_loader_thread(
             } else {
                 None
             };
+            if req.load_status == 0 {
+                let mut terrain_chunk_map_lock = terrain_chunk_map.lock().unwrap();
+                terrain_chunk_map_lock.insert(chunk_coord, data.clone().unwrap());
+                drop(terrain_chunk_map_lock);
+            }
             let _ = res_tx.send(ChunkResult {
-                data,
                 mesh,
                 collider,
                 chunk_coord,
@@ -375,7 +380,6 @@ fn svo_manager_thread(
     player_translation: Arc<Mutex<Vec3>>,
     chunk_spawn_channel: Sender<ChunkSpawnResult>,
     load_request_channel: Sender<ChunkRequest>,
-    mut terrain_chunk_map: Arc<Mutex<HashMap<(i16, i16, i16), TerrainChunk>>>,
 ) {
     let mut svo = ChunkSvo::new();
     let mut request_buffer = Vec::new();
@@ -404,7 +408,6 @@ fn svo_manager_thread(
             &results_channel,
             &mut svo,
             &mut chunks_being_loaded,
-            &mut terrain_chunk_map,
             &chunk_spawn_channel,
         );
         let mut to_despawn = Vec::new();
@@ -441,7 +444,6 @@ fn recieve_loaded_chunks(
     results_channel: &Receiver<ChunkResult>,
     svo: &mut ChunkSvo,
     chunks_being_loaded: &mut ChunksBeingLoaded,
-    terrain_chunk_map: &mut Arc<Mutex<HashMap<(i16, i16, i16), TerrainChunk>>>,
     chunk_spawn_channel: &Sender<ChunkSpawnResult>,
 ) {
     while let Ok(result) = results_channel.try_recv() {
@@ -461,9 +463,6 @@ fn recieve_loaded_chunks(
                         //update data and load status
                         let (_has_entity, load_status) =
                             svo.root.get_mut(result.chunk_coord).unwrap();
-                        let mut terrain_chunk_map_lock = terrain_chunk_map.lock().unwrap();
-                        terrain_chunk_map_lock.insert(result.chunk_coord, result.data.unwrap());
-                        drop(terrain_chunk_map_lock);
                         *load_status = result.load_status;
                     }
                     //if not upgrading
@@ -472,9 +471,6 @@ fn recieve_loaded_chunks(
                         //insert into svo
                         svo.root
                             .insert(result.chunk_coord, result.load_status, true);
-                        let mut terrain_chunk_map_lock = terrain_chunk_map.lock().unwrap();
-                        terrain_chunk_map_lock.insert(result.chunk_coord, result.data.unwrap());
-                        drop(terrain_chunk_map_lock);
                         chunk_spawn_channel
                             .send(ChunkSpawnResult::ToSpawn((
                                 result.chunk_coord,
@@ -494,9 +490,6 @@ fn recieve_loaded_chunks(
                         0 => {
                             svo.root
                                 .insert(result.chunk_coord, result.load_status, false);
-                            let mut terrain_chunk_map_lock = terrain_chunk_map.lock().unwrap();
-                            terrain_chunk_map_lock.insert(result.chunk_coord, result.data.unwrap());
-                            drop(terrain_chunk_map_lock);
                         }
                         //if load status not 0
                         _ => {
@@ -514,9 +507,6 @@ fn recieve_loaded_chunks(
                             //if load status 0 spawn and insert data
                             svo.root
                                 .insert(result.chunk_coord, result.load_status, true);
-                            let mut terrain_chunk_map_lock = terrain_chunk_map.lock().unwrap();
-                            terrain_chunk_map_lock.insert(result.chunk_coord, result.data.unwrap());
-                            drop(terrain_chunk_map_lock);
                             chunk_spawn_channel
                                 .send(ChunkSpawnResult::ToSpawn((result.chunk_coord, None, mesh)))
                                 .unwrap();
@@ -537,9 +527,6 @@ fn recieve_loaded_chunks(
                             //if load status 0insert data
                             svo.root
                                 .insert(result.chunk_coord, result.load_status, false);
-                            let mut terrain_chunk_map_lock = terrain_chunk_map.lock().unwrap();
-                            terrain_chunk_map_lock.insert(result.chunk_coord, result.data.unwrap());
-                            drop(terrain_chunk_map_lock);
                         }
                         //if load status not 0 insert no data
                         _ => {
