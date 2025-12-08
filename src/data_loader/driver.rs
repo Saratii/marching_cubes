@@ -136,7 +136,7 @@ pub fn setup_chunk_driver(
         let dirt_compression_file_arc = Arc::clone(&compression_files.dirt_file);
         let req_rx_clone = req_rx.clone();
         let res_tx_clone = res_tx.clone();
-        let terrain_chunk_map_arc = terrain_chunk_map_arc.clone();
+        let terrain_chunk_map_arc = Arc::clone(&terrain_chunk_map_arc);
         thread::spawn(move || {
             chunk_loader_thread(
                 req_rx_clone,
