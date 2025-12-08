@@ -10,7 +10,7 @@ use bevy::pbr::{ExtendedMaterial, PbrPlugin};
 use bevy::prelude::*;
 use bevy::window::PresentMode;
 use bevy::winit::WinitSettings;
-use bevy_rapier3d::plugin::{NoUserData, RapierPhysicsPlugin};
+use bevy_rapier3d::plugin::{NoUserData, PhysicsSet, RapierPhysicsPlugin};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
 // use bevy_rapier3d::render::RapierDebugRenderPlugin;
 use iyes_perf_ui::PerfUiPlugin;
@@ -19,7 +19,8 @@ use marching_cubes::conversions::{
     chunk_coord_to_world_pos, world_pos_to_chunk_coord, world_pos_to_voxel_index,
 };
 use marching_cubes::data_loader::driver::{
-    INITIAL_CHUNKS_LOADED, TerrainChunkMap, chunk_spawn_reciever, setup_chunk_driver,
+    INITIAL_CHUNKS_LOADED, TerrainChunkMap, chunk_spawn_reciever, project_downward,
+    setup_chunk_driver,
 };
 use marching_cubes::data_loader::file_loader::{
     ChunkDataFileReadWrite, ChunkEntityMap, ChunkIndexFile, ChunkIndexMap, CompressionFileHandles,
@@ -110,13 +111,16 @@ fn main() {
                 camera_zoom,
                 cursor_grab,
                 camera_look,
-                player_movement.run_if(|| INITIAL_CHUNKS_LOADED.load(Ordering::Relaxed)), //this feels wasteful
+                player_movement,
                 // z0_chunk_load,
                 // z2_chunk_load,
                 // chunk_reciever.after(z2_chunk_load),
                 // validate_loading_queue.after(chunk_reciever),
                 sync_player_mutex.after(player_movement),
                 chunk_spawn_reciever,
+                project_downward
+                    .after(PhysicsSet::SyncBackend)
+                    .run_if(|| !INITIAL_CHUNKS_LOADED.load(Ordering::Relaxed)),
             ),
         )
         .run();
