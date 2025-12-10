@@ -1,3 +1,5 @@
+#[cfg(feature = "timers")]
+use std::time::Instant;
 use std::{
     collections::{BinaryHeap, HashMap, HashSet, VecDeque},
     fs::File,
@@ -6,7 +8,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::Instant,
 };
 
 use bevy::prelude::*;
@@ -58,10 +59,6 @@ pub enum ChunkSpawnResult {
 #[derive(Resource)]
 pub struct ChunkSpawnReciever(Receiver<ChunkSpawnResult>);
 
-pub struct ChunksBeingLoaded {
-    pub chunks: HashSet<(i16, i16, i16)>,
-}
-
 //level 0: full detail, returns TerrainChunk and collider
 //level n: full/(2^n) detail, no persistant data besides mesh
 pub struct ChunkRequest {
@@ -112,9 +109,6 @@ pub fn setup_chunk_driver(
     let num_processors = thread::available_parallelism().unwrap().get();
     info!("Number of Available Processors: {}", num_processors);
     commands.insert_resource(LogicalProcesors(num_processors));
-    let chunks_being_loaded = Arc::new(Mutex::new(ChunksBeingLoaded {
-        chunks: HashSet::new(),
-    }));
     let player_translation_arc = Arc::clone(&player_translation_mutex_handle.0);
     let (chunk_spawn_sender, chunk_spawn_reciever) = unbounded::<ChunkSpawnResult>();
     let terrain_chunk_map = Arc::new(Mutex::new(HashMap::new()));
@@ -138,7 +132,6 @@ pub fn setup_chunk_driver(
         let terrain_chunk_map_arc = Arc::clone(&terrain_chunk_map_arc);
         let svo_arc = Arc::clone(&svo);
         let chunk_spawn_channel = chunk_spawn_sender.clone();
-        let chunks_being_loaded_arc = Arc::clone(&chunks_being_loaded);
         thread::spawn(move || {
             chunk_loader_thread(
                 req_rx_clone,
@@ -153,14 +146,12 @@ pub fn setup_chunk_driver(
                 terrain_chunk_map_arc,
                 svo_arc,
                 chunk_spawn_channel,
-                chunks_being_loaded_arc,
             );
         });
     }
     thread::spawn(move || {
         svo_manager_thread(
             res_rx,
-            chunks_being_loaded,
             player_translation_arc,
             chunk_spawn_sender,
             req_tx,
@@ -184,7 +175,6 @@ fn chunk_loader_thread(
     terrain_chunk_map: Arc<Mutex<HashMap<(i16, i16, i16), TerrainChunk>>>,
     svo: Arc<Mutex<ChunkSvo>>,
     chunk_spawn_channel: Sender<ChunkSpawnResult>,
-    chunks_being_loaded: Arc<Mutex<ChunksBeingLoaded>>,
 ) {
     let fbm =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
@@ -207,10 +197,15 @@ fn chunk_loader_thread(
             let uniform_air_chunks_lock = uniform_air_chunks.lock().unwrap();
             let is_uniform_air = uniform_air_chunks_lock.0.contains(&chunk_coord);
             drop(uniform_air_chunks_lock);
-            let uniform_dirt_chunks_lock = uniform_dirt_chunks.lock().unwrap();
-            let is_uniform_dirt = uniform_dirt_chunks_lock.0.contains(&chunk_coord);
-            drop(uniform_dirt_chunks_lock);
-            if is_uniform_air || is_uniform_dirt {
+            let is_uniform_dirt = if is_uniform_air {
+                false
+            } else {
+                let uniform_dirt_chunks_lock = uniform_dirt_chunks.lock().unwrap();
+                let contains = uniform_dirt_chunks_lock.0.contains(&chunk_coord);
+                drop(uniform_dirt_chunks_lock);
+                contains
+            };
+            let has_mesh = if is_uniform_air || is_uniform_dirt {
                 if req.load_status == 0 {
                     let data = if is_uniform_air {
                         TerrainChunk {
@@ -227,23 +222,11 @@ fn chunk_loader_thread(
                     };
                     terrain_chunk_map.lock().unwrap().insert(chunk_coord, data);
                 }
-                if req.upgrade {
-                    chunks_being_loaded
-                        .lock()
-                        .unwrap()
-                        .chunks
-                        .remove(&chunk_coord);
-                } else {
-                    let _ = res_tx.send(ChunkResult {
-                        has_entity: false,
-                        chunk_coord,
-                        load_status: req.load_status,
-                    });
-                }
                 #[cfg(feature = "timers")]
                 {
                     uniform_chunks_generated += 1;
                 }
+                false
             } else {
                 let file_offset = {
                     let index_map_lock = index_map_arc.lock().unwrap();
@@ -301,8 +284,9 @@ fn chunk_loader_thread(
                     }
                     chunk
                 };
-                let contains_surface = chunk_contains_surface(&chunk_sdfs);
-                let (collider, mesh) = if contains_surface {
+                let has_mesh = chunk_contains_surface(&chunk_sdfs);
+                let has_collider = has_mesh && req.load_status == 0;
+                let (collider, mesh) = if has_mesh {
                     let mut mesh_buffers = MeshBuffers::new();
                     mc_mesh_generation(
                         &mut mesh_buffers,
@@ -312,7 +296,7 @@ fn chunk_loader_thread(
                         HALF_CHUNK,
                     );
                     let mesh = generate_bevy_mesh(mesh_buffers);
-                    let collider = if req.load_status == 0 {
+                    let collider = if has_collider {
                         Some(
                             Collider::from_bevy_mesh(
                                 &mesh,
@@ -332,7 +316,7 @@ fn chunk_loader_thread(
                     terrain_chunk_map_lock.insert(chunk_coord, chunk_sdfs);
                     drop(terrain_chunk_map_lock);
                 }
-                if collider.is_some() {
+                if has_collider {
                     if req.upgrade {
                         let mut svo_lock = svo.lock().unwrap();
                         let (_has_entity, load_status) =
@@ -342,17 +326,14 @@ fn chunk_loader_thread(
                         chunk_spawn_channel
                             .send(ChunkSpawnResult::ToGiveCollider((
                                 chunk_coord,
-                                collider.clone().unwrap(),
+                                collider.unwrap(),
                             )))
                             .unwrap();
                     } else {
-                        let mut svo_lock = svo.lock().unwrap();
-                        svo_lock.root.insert(chunk_coord, req.load_status, true);
-                        drop(svo_lock);
                         chunk_spawn_channel
                             .send(ChunkSpawnResult::ToSpawn((
                                 chunk_coord,
-                                collider.clone(),
+                                collider,
                                 mesh.unwrap(),
                             )))
                             .unwrap();
@@ -362,19 +343,9 @@ fn chunk_loader_thread(
                             load_status: req.load_status,
                         });
                     }
-                    let mut chunks_being_loaded_lock = chunks_being_loaded.lock().unwrap();
-                    chunks_being_loaded_lock.chunks.remove(&chunk_coord);
-                    drop(chunks_being_loaded_lock);
                 } else {
-                    if req.upgrade {
-                        let mut svo_lock = svo.lock().unwrap();
-                        svo_lock.root.insert(chunk_coord, req.load_status, false);
-                        drop(svo_lock);
-                        let mut chunks_being_loaded_lock = chunks_being_loaded.lock().unwrap();
-                        chunks_being_loaded_lock.chunks.remove(&chunk_coord);
-                        drop(chunks_being_loaded_lock);
-                    } else {
-                        if mesh.is_some() {
+                    if !req.upgrade {
+                        if has_mesh {
                             chunk_spawn_channel
                                 .send(ChunkSpawnResult::ToSpawn((
                                     chunk_coord,
@@ -382,41 +353,36 @@ fn chunk_loader_thread(
                                     mesh.unwrap(),
                                 )))
                                 .unwrap();
-                            let _ = res_tx.send(ChunkResult {
-                                has_entity: true,
-                                chunk_coord,
-                                load_status: req.load_status,
-                            });
-                        } else {
-                            let _ = res_tx.send(ChunkResult {
-                                has_entity: false,
-                                chunk_coord,
-                                load_status: req.load_status,
-                            });
                         }
                     }
                 }
-                #[cfg(feature = "timers")]
+                has_mesh
+            };
+            let _ = res_tx.send(ChunkResult {
+                has_entity: has_mesh,
+                chunk_coord,
+                load_status: req.load_status,
+            });
+            #[cfg(feature = "timers")]
+            {
+                chunks_generated += 1;
+                if Instant::now()
+                    .duration_since(last_debug_print_time)
+                    .as_secs()
+                    >= 10
                 {
-                    chunks_generated += 1;
-                    if Instant::now()
-                        .duration_since(last_debug_print_time)
-                        .as_secs()
-                        >= 10
-                    {
-                        println!(
-                            "Chunk Loader Time: {:?} ms -> {} chunks and {} uniform chunks. Priority Queue Size: {}",
-                            Instant::now()
-                                .duration_since(last_debug_print_time)
-                                .as_millis(),
-                            chunks_generated,
-                            uniform_chunks_generated,
-                            priority_queue.len()
-                        );
-                        chunks_generated = 0;
-                        last_debug_print_time = Instant::now();
-                        uniform_chunks_generated = 0;
-                    }
+                    println!(
+                        "Chunk Loader Time: {:?} ms -> {} chunks and {} uniform chunks. Priority Queue Size: {}",
+                        Instant::now()
+                            .duration_since(last_debug_print_time)
+                            .as_millis(),
+                        chunks_generated,
+                        uniform_chunks_generated,
+                        priority_queue.len()
+                    );
+                    chunks_generated = 0;
+                    last_debug_print_time = Instant::now();
+                    uniform_chunks_generated = 0;
                 }
             }
         }
@@ -429,84 +395,78 @@ fn chunk_loader_thread(
 //sends chunks to be spawned to main thread
 fn svo_manager_thread(
     results_channel: Receiver<ChunkResult>,
-    chunks_being_loaded: Arc<Mutex<ChunksBeingLoaded>>,
     player_translation: Arc<Mutex<Vec3>>,
     chunk_spawn_channel: Sender<ChunkSpawnResult>,
     load_request_channel: Sender<ChunkRequest>,
     svo: Arc<Mutex<ChunkSvo>>,
 ) {
+    #[cfg(feature = "timers")]
+    let t0 = Instant::now();
+    #[cfg(feature = "timers")]
+    let mut first_completion_printed = false;
     let mut request_buffer = Vec::new();
     //do initial z0 load so player can start moving
-    let mut chunks_being_loaded_lock = chunks_being_loaded.lock().unwrap();
-    let player_translation_lock = player_translation.lock().unwrap();
-    drop(player_translation_lock);
-    let start = Instant::now();
+    let mut chunks_being_loaded = HashSet::new();
     let mut svo_lock = svo.lock().unwrap();
     svo_lock.root.fill_missing_chunks_in_radius(
         &PLAYER_SPAWN,
         Z0_RADIUS,
-        &mut chunks_being_loaded_lock,
+        &mut chunks_being_loaded,
         &mut request_buffer,
     );
     drop(svo_lock);
-    drop(chunks_being_loaded_lock);
     for request in request_buffer.drain(..) {
         let _ = load_request_channel.send(request);
     }
-    println!(
-        "Loaded octree: {:?} ms",
-        Instant::now().duration_since(start).as_millis()
-    );
     loop {
-        recieve_loaded_chunks(&results_channel, &svo, &chunks_being_loaded);
-        let mut to_despawn = Vec::new();
+        while let Ok(result) = results_channel.try_recv() {
+            //this channel creates a 1000x improvement in performance at high thread count cause of magic
+            let mut svo_lock = svo.lock().unwrap();
+            svo_lock
+                .root
+                .insert(result.chunk_coord, result.load_status, result.has_entity);
+            drop(svo_lock);
+            chunks_being_loaded.remove(&result.chunk_coord);
+        }
         let player_translation_lock = player_translation.lock().unwrap();
-        let player_translation = player_translation_lock.clone();
+        let player_translation = *player_translation_lock;
         drop(player_translation_lock);
-        let mut chunks_to_deallocate: Vec<((i16, i16, i16), bool)> = Vec::new();
+        let mut chunks_to_deallocate = Vec::new();
         let mut svo_lock = svo.lock().unwrap();
         svo_lock
             .root
             .query_chunks_outside_sphere(&player_translation, &mut chunks_to_deallocate);
-        let mut chunks_being_loaded_lock = chunks_being_loaded.lock().unwrap();
+        for (chunk_coord, _) in &chunks_to_deallocate {
+            svo_lock.root.delete(*chunk_coord);
+        }
+        drop(svo_lock);
         for (chunk_coord, has_entity) in &chunks_to_deallocate {
             if *has_entity {
-                to_despawn.push(*chunk_coord);
                 chunk_spawn_channel
                     .send(ChunkSpawnResult::ToDespawn(*chunk_coord))
                     .unwrap();
             }
-            chunks_being_loaded_lock.chunks.remove(chunk_coord);
-            svo_lock.root.delete(*chunk_coord);
+            chunks_being_loaded.remove(chunk_coord);
         }
+        let mut svo_lock = svo.lock().unwrap();
         svo_lock.root.fill_missing_chunks_in_radius(
             &player_translation,
             MAX_RADIUS,
-            &mut chunks_being_loaded_lock,
+            &mut chunks_being_loaded,
             &mut request_buffer,
         );
         drop(svo_lock);
-        drop(chunks_being_loaded_lock);
         for request in request_buffer.drain(..) {
             let _ = load_request_channel.send(request);
         }
-    }
-}
-
-fn recieve_loaded_chunks(
-    results_channel: &Receiver<ChunkResult>,
-    svo: &Arc<Mutex<ChunkSvo>>,
-    chunks_being_loaded: &Arc<Mutex<ChunksBeingLoaded>>,
-) {
-    while let Ok(result) = results_channel.try_recv() {
-        let mut svo_lock = svo.lock().unwrap();
-        svo_lock
-            .root
-            .insert(result.chunk_coord, result.load_status, result.has_entity);
-        drop(svo_lock);
-        let mut chunks_being_loaded_lock = chunks_being_loaded.lock().unwrap();
-        chunks_being_loaded_lock.chunks.remove(&result.chunk_coord);
-        drop(chunks_being_loaded_lock);
+        #[cfg(feature = "timers")]
+        {
+            if !first_completion_printed && chunks_being_loaded.len() == 0 {
+                let run_time = Instant::now().duration_since(t0).as_millis();
+                println!("SVO Manager First Completion Time: {:?} ms", run_time);
+                first_completion_printed = true;
+            }
+        }
     }
 }
 
@@ -560,10 +520,10 @@ pub fn chunk_spawn_reciever(
         }
         #[cfg(feature = "timers")]
         {
-            println!(
-                "chunk_spawn_reciever {:?} ms",
-                Instant::now().duration_since(t0).as_millis()
-            );
+            let run_time = Instant::now().duration_since(t0).as_millis();
+            if run_time >= 10 {
+                println!("chunk_spawn_reciever: {:?} ms", run_time);
+            }
         }
     }
 }
@@ -571,7 +531,7 @@ pub fn chunk_spawn_reciever(
 //the load condition is at least one chunk below the player must exist with an entity and collider
 //somewhat wasteful
 pub fn project_downward(
-    chunk_entity_map: ResMut<ChunkEntityMap>,
+    chunk_entity_map: Res<ChunkEntityMap>,
     collider_query: Query<(), With<Collider>>,
 ) {
     let player_chunk: (i16, i16, i16) = world_pos_to_chunk_coord(&PLAYER_SPAWN);
