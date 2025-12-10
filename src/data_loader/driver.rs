@@ -95,7 +95,7 @@ impl PartialOrd for ChunkRequest {
 }
 
 pub struct ChunkResult {
-    mesh: Option<Mesh>,
+    has_entity: bool,
     chunk_coord: (i16, i16, i16),
     load_status: u8,
 }
@@ -235,7 +235,7 @@ fn chunk_loader_thread(
                         .remove(&chunk_coord);
                 } else {
                     let _ = res_tx.send(ChunkResult {
-                        mesh: None,
+                        has_entity: false,
                         chunk_coord,
                         load_status: req.load_status,
                     });
@@ -353,11 +353,11 @@ fn chunk_loader_thread(
                             .send(ChunkSpawnResult::ToSpawn((
                                 chunk_coord,
                                 collider.clone(),
-                                mesh.clone().unwrap(),
+                                mesh.unwrap(),
                             )))
                             .unwrap();
                         let _ = res_tx.send(ChunkResult {
-                            mesh,
+                            has_entity: true,
                             chunk_coord,
                             load_status: req.load_status,
                         });
@@ -379,15 +379,21 @@ fn chunk_loader_thread(
                                 .send(ChunkSpawnResult::ToSpawn((
                                     chunk_coord,
                                     None,
-                                    mesh.clone().unwrap(),
+                                    mesh.unwrap(),
                                 )))
                                 .unwrap();
+                            let _ = res_tx.send(ChunkResult {
+                                has_entity: true,
+                                chunk_coord,
+                                load_status: req.load_status,
+                            });
+                        } else {
+                            let _ = res_tx.send(ChunkResult {
+                                has_entity: false,
+                                chunk_coord,
+                                load_status: req.load_status,
+                            });
                         }
-                        let _ = res_tx.send(ChunkResult {
-                            mesh,
-                            chunk_coord,
-                            load_status: req.load_status,
-                        });
                     }
                 }
                 #[cfg(feature = "timers")]
@@ -493,19 +499,11 @@ fn recieve_loaded_chunks(
     chunks_being_loaded: &Arc<Mutex<ChunksBeingLoaded>>,
 ) {
     while let Ok(result) = results_channel.try_recv() {
-        if result.mesh.is_some() {
-            let mut svo_lock = svo.lock().unwrap();
-            svo_lock
-                .root
-                .insert(result.chunk_coord, result.load_status, true);
-            drop(svo_lock);
-        } else {
-            let mut svo_lock = svo.lock().unwrap();
-            svo_lock
-                .root
-                .insert(result.chunk_coord, result.load_status, false);
-            drop(svo_lock);
-        }
+        let mut svo_lock = svo.lock().unwrap();
+        svo_lock
+            .root
+            .insert(result.chunk_coord, result.load_status, result.has_entity);
+        drop(svo_lock);
         let mut chunks_being_loaded_lock = chunks_being_loaded.lock().unwrap();
         chunks_being_loaded_lock.chunks.remove(&result.chunk_coord);
         drop(chunks_being_loaded_lock);
