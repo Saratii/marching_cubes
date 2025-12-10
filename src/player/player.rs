@@ -15,12 +15,12 @@ const CAMERA_3RD_PERSON_OFFSET: Vec3 = Vec3 {
     z: 10.0,
 };
 const PLAYER_SPEED: f32 = 5.0;
-pub const PLAYER_SPAWN: Vec3 = Vec3::new(0., 20., 0.);
+pub const PLAYER_SPAWN: Vec3 = Vec3::new(0., 25., 0.);
 const PLAYER_CUBOID_SIZE: Vec3 = Vec3::new(0.5, 1.5, 0.5);
 const CAMERA_FIRST_PERSON_OFFSET: Vec3 = Vec3::new(0., 0.75 * PLAYER_CUBOID_SIZE.y, 0.);
 const MIN_ZOOM_DISTANCE: f32 = 4.0;
 const MAX_ZOOM_DISTANCE: f32 = 2000.0;
-const ZOOM_SPEED: f32 = 12.0;
+const ZOOM_SPEED: f32 = 16.0;
 const MOUSE_SENSITIVITY: f32 = 0.002;
 const MIN_PITCH: f32 = -1.5;
 const MAX_PITCH: f32 = 1.5;
