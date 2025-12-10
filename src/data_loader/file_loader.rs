@@ -1,8 +1,5 @@
-use crate::terrain::terrain::{NoiseFunction, SAMPLES_PER_CHUNK, TerrainChunk, UniformChunk};
+use crate::terrain::terrain::{SAMPLES_PER_CHUNK, TerrainChunk, UniformChunk};
 use bevy::prelude::*;
-use fastnoise2::SafeNode;
-use fastnoise2::generator::simplex::opensimplex2;
-use fastnoise2::generator::{Generator, GeneratorWrapper};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -19,6 +16,9 @@ pub struct ChunkDataFileRead(pub Arc<Mutex<File>>);
 
 #[derive(Resource)]
 pub struct ChunkDataFileReadWrite(pub Arc<Mutex<File>>);
+
+#[derive(Resource)]
+pub struct PlayerDataFile(pub File);
 
 #[derive(Resource)]
 pub struct CompressionFileHandles {
@@ -135,6 +135,13 @@ pub fn load_chunk_index_map(index_file: &mut File) -> HashMap<(i16, i16, i16), u
 
 pub fn setup_chunk_loading(mut commands: Commands) {
     commands.insert_resource(ChunkEntityMap { 0: HashMap::new() }); //store entities on the main thread
+    let player_data_file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open("data/player_data.txt")
+        .unwrap();
+    commands.insert_resource(PlayerDataFile(player_data_file));
     let mut index_file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -194,9 +201,6 @@ pub fn setup_chunk_loading(mut commands: Commands) {
     println!("Loaded {} chunks into index map", index_map.len());
     commands.insert_resource(ChunkIndexMap(Arc::new(Mutex::new(index_map))));
     commands.insert_resource(ChunkIndexFile(Arc::new(Mutex::new(index_file))));
-    let fbm =
-        || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
-    commands.insert_resource(NoiseFunction(Arc::new(fbm)));
 }
 
 // Load all chunk coords and track empty slots
@@ -263,4 +267,25 @@ pub fn remove_uniform_chunk(
         offset += 6;
     }
     f.flush().unwrap();
+}
+
+pub fn write_player_position(f: &mut File, pos: Vec3) {
+    f.set_len(0).unwrap();
+    f.seek(SeekFrom::Start(0)).unwrap();
+    let s = format!("{} {} {}", pos.x, pos.y, pos.z);
+    f.write_all(s.as_bytes()).unwrap();
+    f.flush().unwrap();
+}
+
+pub fn read_player_position(f: &mut File) -> Option<Vec3> {
+    f.seek(SeekFrom::Start(0)).unwrap();
+    let mut buf = String::new();
+    if f.read_to_string(&mut buf).is_err() {
+        return None;
+    }
+    let mut it = buf.split_whitespace();
+    let x = it.next()?.parse::<f32>().ok()?;
+    let y = it.next()?.parse::<f32>().ok()?;
+    let z = it.next()?.parse::<f32>().ok()?;
+    Some(Vec3::new(x, y, z))
 }

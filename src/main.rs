@@ -12,6 +12,9 @@ use bevy::window::PresentMode;
 use bevy::winit::WinitSettings;
 use bevy_rapier3d::plugin::{NoUserData, PhysicsSet, RapierPhysicsPlugin};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
+use fastnoise2::SafeNode;
+use fastnoise2::generator::simplex::opensimplex2;
+use fastnoise2::generator::{Generator, GeneratorWrapper};
 // use bevy_rapier3d::render::RapierDebugRenderPlugin;
 use iyes_perf_ui::PerfUiPlugin;
 use iyes_perf_ui::prelude::PerfUiDefaultEntries;
@@ -37,8 +40,8 @@ use marching_cubes::terrain::chunk_generator::{
     GenerateChunkEvent, LoadChunksEvent, dequantize_i16_to_f32, quantize_f32_to_i16,
 };
 use marching_cubes::terrain::terrain::{
-    ChunkTag, HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainChunk, TerrainMaterialHandle, UniformChunk,
-    VOXEL_SIZE, generate_bevy_mesh, setup_map,
+    ChunkTag, HALF_CHUNK, NoiseFunction, SAMPLES_PER_CHUNK_DIM, TerrainChunk,
+    TerrainMaterialHandle, UniformChunk, VOXEL_SIZE, generate_bevy_mesh, setup_map,
 };
 use marching_cubes::terrain::terrain_material::TerrainMaterial;
 use marching_cubes::ui::crosshair::spawn_crosshair;
@@ -63,6 +66,9 @@ fn main() {
                 1.0 / 240.0,
             )),
         })
+        .insert_resource(NoiseFunction(|| -> GeneratorWrapper<SafeNode> {
+            (opensimplex2().fbm(1.0, 0.65, 3, 2.2)).build()
+        }()))
         .add_plugins((
             DefaultPlugins
                 .set(WindowPlugin {
@@ -91,13 +97,13 @@ fn main() {
         .add_systems(
             Startup,
             (
-                setup_chunk_driver.after(setup_chunk_loading),
+                setup_chunk_driver.after(spawn_player),
                 setup,
                 setup_chunk_loading,
                 // generate_large_map_utility.after(setup_chunk_loading),
                 setup_map,
                 spawn_crosshair,
-                spawn_player,
+                spawn_player.after(setup_chunk_loading),
                 spawn_minimap.after(spawn_player),
                 initial_grab_cursor,
                 // spawn_initial_chunks.after(setup_chunk_loading),

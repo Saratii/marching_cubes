@@ -7,7 +7,13 @@ use bevy::{
 };
 use bevy_rapier3d::prelude::*;
 
-use crate::data_loader::driver::{INITIAL_CHUNKS_LOADED, PlayerTranslationMutexHandle};
+use crate::{
+    data_loader::{
+        driver::{INITIAL_CHUNKS_LOADED, PlayerTranslationMutexHandle},
+        file_loader::{PlayerDataFile, read_player_position, write_player_position},
+    },
+    terrain::{chunk_generator::sample_fbm, terrain::NoiseFunction},
+};
 
 const CAMERA_3RD_PERSON_OFFSET: Vec3 = Vec3 {
     x: 0.0,
@@ -15,7 +21,7 @@ const CAMERA_3RD_PERSON_OFFSET: Vec3 = Vec3 {
     z: 10.0,
 };
 const PLAYER_SPEED: f32 = 5.0;
-pub const PLAYER_SPAWN: Vec3 = Vec3::new(0., 25., 0.);
+pub const PLAYER_SPAWN: Vec3 = Vec3::new(0., 0., 0.);
 const PLAYER_CUBOID_SIZE: Vec3 = Vec3::new(0.5, 1.5, 0.5);
 const CAMERA_FIRST_PERSON_OFFSET: Vec3 = Vec3::new(0., 0.75 * PLAYER_CUBOID_SIZE.y, 0.);
 const MIN_ZOOM_DISTANCE: f32 = 4.0;
@@ -87,9 +93,20 @@ pub fn spawn_player(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     camera_controller: Res<CameraController>,
+    mut player_data_file: ResMut<PlayerDataFile>,
+    fbm: Res<NoiseFunction>,
 ) {
+    let player_spawn = match read_player_position(&mut player_data_file.0) {
+        Some(pos) => pos,
+        None => Vec3::new(
+            PLAYER_SPAWN.x,
+            sample_fbm(&fbm.0, PLAYER_SPAWN.x, PLAYER_SPAWN.z) + 2.0,
+            PLAYER_SPAWN.z,
+        ),
+    };
+    println!("Spawning player at position: {:?}", player_spawn);
     commands.insert_resource(PlayerTranslationMutexHandle(Arc::new(Mutex::new(
-        PLAYER_SPAWN,
+        player_spawn,
     ))));
     let player_mesh = Cuboid::new(
         PLAYER_CUBOID_SIZE.x,
@@ -116,7 +133,7 @@ pub fn spawn_player(
                 }),
                 ..default()
             },
-            Transform::from_translation(PLAYER_SPAWN),
+            Transform::from_translation(player_spawn),
             Mesh3d(player_mesh_handle),
             MeshMaterial3d(material),
             PlayerTag,
@@ -308,7 +325,11 @@ pub fn player_movement(
 pub fn sync_player_mutex(
     player_transform_mutex_handle: ResMut<PlayerTranslationMutexHandle>,
     player_transform: Single<&Transform, With<PlayerTag>>,
+    mut player_data_file: ResMut<PlayerDataFile>,
 ) {
     let mut player_transform_lock = player_transform_mutex_handle.0.lock().unwrap();
-    *player_transform_lock = player_transform.translation;
+    if *player_transform_lock != player_transform.translation {
+        *player_transform_lock = player_transform.translation;
+        write_player_position(&mut player_data_file.0, *player_transform_lock);
+    }
 }
