@@ -1,8 +1,10 @@
+use std::collections::HashSet;
+
 use bevy::prelude::*;
 
 use crate::{
     conversions::chunk_coord_to_world_pos,
-    data_loader::driver::{ChunkRequest, ChunksBeingLoaded},
+    data_loader::driver::ChunkRequest,
     terrain::terrain::{
         HALF_CHUNK, MAX_RADIUS_SQUARED, Z0_RADIUS_SQUARED, Z1_RADIUS_SQUARED, Z2_RADIUS_SQUARED,
     },
@@ -240,7 +242,7 @@ impl SvoNode {
         &mut self,
         center: &Vec3,
         radius: f32,
-        chunks_being_loaded: &mut ChunksBeingLoaded,
+        chunks_being_loaded: &mut HashSet<(i16, i16, i16)>,
         request_buffer: &mut Vec<ChunkRequest>,
     ) {
         if !sphere_intersects_aabb(center, radius, &self.node_min, &self.node_max) {
@@ -249,13 +251,13 @@ impl SvoNode {
         if self.is_leaf() {
             if self.size == 1 {
                 let chunk_coord = self.lower_chunk_coord;
-                if self.chunk.is_none() && !chunks_being_loaded.chunks.contains(&chunk_coord) {
+                if self.chunk.is_none() && !chunks_being_loaded.contains(&chunk_coord) {
                     let distance_squared =
                         center.distance_squared(chunk_coord_to_world_pos(&chunk_coord));
                     if distance_squared > MAX_RADIUS_SQUARED {
                         return; //skip chunks where the sphere intersects but chunk center is outside max radius
                     }
-                    chunks_being_loaded.chunks.insert(chunk_coord);
+                    chunks_being_loaded.insert(chunk_coord);
                     let load_priority = get_load_priority(distance_squared);
                     request_buffer.push(ChunkRequest {
                         position: chunk_coord,
@@ -263,13 +265,13 @@ impl SvoNode {
                         upgrade: false,
                         distance_squared: distance_squared.round() as u32,
                     });
-                } else if !chunks_being_loaded.chunks.contains(&chunk_coord) {
+                } else if !chunks_being_loaded.contains(&chunk_coord) {
                     let current_load_status = self.chunk.as_ref().unwrap().1;
                     let distance_squared =
                         center.distance_squared(chunk_coord_to_world_pos(&chunk_coord));
                     let desired_load_status = get_load_priority(distance_squared);
                     if desired_load_status < current_load_status {
-                        chunks_being_loaded.chunks.insert(chunk_coord);
+                        chunks_being_loaded.insert(chunk_coord);
                         request_buffer.push(ChunkRequest {
                             position: chunk_coord,
                             load_status: desired_load_status,
