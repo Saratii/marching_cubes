@@ -8,6 +8,7 @@ use crate::terrain::terrain::{
 pub const NOISE_SEED: i32 = 100; // Seed for noise generation
 pub const NOISE_FREQUENCY: f32 = 0.02; // Frequency of the noise
 pub const NOISE_AMPLITUDE: f32 = 120.0; // Amplitude of the noise
+pub const HEIGHT_SCALE: f32 = 50.0; // Scale factor for heightmap
 
 #[derive(Message)]
 pub struct GenerateChunkEvent {
@@ -77,57 +78,65 @@ pub fn chunk_contains_surface(chunk: &TerrainChunk) -> bool {
     false
 }
 
+pub fn sample_fbm(fbm: &GeneratorWrapper<SafeNode>, x: f32, z: f32) -> f32 {
+    // Base terrain - this creates the actual height variation
+    let base = fbm.gen_single_2d(x * 0.0001, z * 0.001, NOISE_SEED);
+    let detail = fbm.gen_single_2d(x * 0.003, z * 0.003, NOISE_SEED + 1);
+    let fine = fbm.gen_single_2d(x * 0.008, z * 0.008, NOISE_SEED + 2);
+
+    // Combine with decreasing weights
+    let height = base * 100.0 + detail * 40.0 + fine * 15.0;
+
+    // Continentalness for biome variation
+    let cont = fbm.gen_single_2d(x * 0.0003, z * 0.0003, NOISE_SEED + 3) * 0.5 + 0.5;
+
+    // Mountain modifier - makes some areas extra tall
+    let mountain_mask = ((cont - 0.4) / 0.3).clamp(0.0, 1.0);
+    let mountain_boost = mountain_mask * mountain_mask * 150.0;
+
+    height + mountain_boost
+}
+
 fn generate_terrain_heights(chunk_start: &Vec3, fbm: &GeneratorWrapper<SafeNode>) -> Vec<f32> {
-    let mut terrain_heights = vec![0.0f32; SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM];
-    let scale_004 = 0.004;
-    let scale_008 = 0.008;
-    let sample_stride = 4;
+    let mut out = vec![0.0; SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM];
+    let stride = 4;
     for z in 0..SAMPLES_PER_CHUNK_DIM {
-        let world_z_base = chunk_start.z + z as f32 * VOXEL_SIZE;
-        let world_z = world_z_base * scale_004;
-        let world_z_detail = world_z_base * scale_008;
-        let height_base = z * SAMPLES_PER_CHUNK_DIM;
+        let wz = chunk_start.z + z as f32 * VOXEL_SIZE;
+        let base = z * SAMPLES_PER_CHUNK_DIM;
         for x in 0..SAMPLES_PER_CHUNK_DIM {
-            let is_border = x == 0
+            if x % stride == 0
+                || z % stride == 0
+                || x == 0
                 || x == SAMPLES_PER_CHUNK_DIM - 1
                 || z == 0
-                || z == SAMPLES_PER_CHUNK_DIM - 1;
-            let is_sample_point = x % sample_stride == 0 || z % sample_stride == 0;
-            if is_border || is_sample_point {
-                let world_x_base = chunk_start.x + x as f32 * VOXEL_SIZE;
-                let world_x = world_x_base * scale_004;
-                let world_x_detail = world_x_base * scale_008;
-                let base = fbm.gen_single_2d(world_x, world_z, NOISE_SEED);
-                let normalized = base * 0.5 + 0.5;
-                let mask = normalized * normalized;
-                let detail =
-                    fbm.gen_single_2d(world_x_detail, world_z_detail, NOISE_SEED) * NOISE_AMPLITUDE;
-                terrain_heights[height_base + x] = detail * mask;
+                || z == SAMPLES_PER_CHUNK_DIM - 1
+            {
+                let wx = chunk_start.x + x as f32 * VOXEL_SIZE;
+                out[base + x] = sample_fbm(fbm, wx, wz);
             }
         }
     }
     for z in 1..SAMPLES_PER_CHUNK_DIM - 1 {
-        let height_base = z * SAMPLES_PER_CHUNK_DIM;
+        let base = z * SAMPLES_PER_CHUNK_DIM;
         for x in 1..SAMPLES_PER_CHUNK_DIM - 1 {
-            let is_sample_point = x % sample_stride == 0 || z % sample_stride == 0;
-            if !is_sample_point {
-                let sx = (x / sample_stride) * sample_stride;
-                let sz = (z / sample_stride) * sample_stride;
-                let sx_next = (sx + sample_stride).min(SAMPLES_PER_CHUNK_DIM - 1);
-                let sz_next = (sz + sample_stride).min(SAMPLES_PER_CHUNK_DIM - 1);
-                let tx = (x - sx) as f32 / sample_stride as f32;
-                let tz = (z - sz) as f32 / sample_stride as f32;
-                let s00 = terrain_heights[sz * SAMPLES_PER_CHUNK_DIM + sx];
-                let s10 = terrain_heights[sz * SAMPLES_PER_CHUNK_DIM + sx_next];
-                let s01 = terrain_heights[sz_next * SAMPLES_PER_CHUNK_DIM + sx];
-                let s11 = terrain_heights[sz_next * SAMPLES_PER_CHUNK_DIM + sx_next];
+            if x % stride != 0 && z % stride != 0 {
+                let sx = (x / stride) * stride;
+                let sz = (z / stride) * stride;
+                let sx1 = (sx + stride).min(SAMPLES_PER_CHUNK_DIM - 1);
+                let sz1 = (sz + stride).min(SAMPLES_PER_CHUNK_DIM - 1);
+                let tx = (x - sx) as f32 / stride as f32;
+                let tz = (z - sz) as f32 / stride as f32;
+                let s00 = out[sz * SAMPLES_PER_CHUNK_DIM + sx];
+                let s10 = out[sz * SAMPLES_PER_CHUNK_DIM + sx1];
+                let s01 = out[sz1 * SAMPLES_PER_CHUNK_DIM + sx];
+                let s11 = out[sz1 * SAMPLES_PER_CHUNK_DIM + sx1];
                 let s0 = s00 * (1.0 - tx) + s10 * tx;
                 let s1 = s01 * (1.0 - tx) + s11 * tx;
-                terrain_heights[height_base + x] = s0 * (1.0 - tz) + s1 * tz;
+                out[base + x] = s0 * (1.0 - tz) + s1 * tz;
             }
         }
     }
-    terrain_heights
+    out
 }
 
 fn fill_voxel_densities(

@@ -13,7 +13,12 @@ fn benchmark_generate_densities(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(10));
     group.sample_size(1000);
     group.bench_function("generate_densities_single_chunk", |b| {
-        b.iter(|| generate_densities(black_box(&(0, 0, 0)), black_box(&noise_function)))
+        b.iter(|| {
+            black_box(generate_densities(
+                black_box(&(0, 0, 0)),
+                black_box(&noise_function),
+            ))
+        })
     });
     group.finish();
 }

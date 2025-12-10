@@ -39,5 +39,7 @@ fn fragment(
     var out: FragmentOutput;
     out.color = apply_pbr_lighting(pbr_input);
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
+    //let g = world_pos.y * 0.01;
+    //out.color = vec4(g, 0.2 + g, 0.8 - g, 1.0);
     return out;
 }

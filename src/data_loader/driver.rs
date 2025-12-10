@@ -26,7 +26,7 @@ use crate::{
         write_uniform_chunk,
     },
     marching_cubes::mc::{MeshBuffers, mc_mesh_generation},
-    player::player::PLAYER_SPAWN,
+    player::player::PlayerTag,
     sparse_voxel_octree::ChunkSvo,
     terrain::{
         chunk_generator::chunk_contains_surface,
@@ -45,6 +45,9 @@ pub struct LogicalProcesors(pub usize);
 
 #[derive(Resource)]
 pub struct PlayerTranslationMutexHandle(pub Arc<Mutex<Vec3>>);
+
+#[derive(Resource)]
+pub struct NoiseGenerator(pub GeneratorWrapper<SafeNode>);
 
 //stores the data for all chunks in Z0 radius on the bevy thread. Chunk loader can write to the mutex and bevy can modify it for digging operations.
 #[derive(Resource)]
@@ -118,6 +121,9 @@ pub fn setup_chunk_driver(
     let svo = Arc::new(Mutex::new(ChunkSvo::new()));
     commands.insert_resource(TerrainChunkMap(terrain_chunk_map));
     commands.insert_resource(ChunkSpawnReciever(chunk_spawn_reciever));
+    let fbm =
+        || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
+    commands.insert_resource(NoiseGenerator(fbm.clone()));
     for _ in 0..1.max(num_processors - 2) {
         //leave one processor free for main thread and one for svo manager <- might be wrong
         let index_map_arc = Arc::clone(&index_map.0);
@@ -132,6 +138,7 @@ pub fn setup_chunk_driver(
         let terrain_chunk_map_arc = Arc::clone(&terrain_chunk_map_arc);
         let svo_arc = Arc::clone(&svo);
         let chunk_spawn_channel = chunk_spawn_sender.clone();
+        let fbm_clone = fbm.clone();
         thread::spawn(move || {
             chunk_loader_thread(
                 req_rx_clone,
@@ -146,6 +153,7 @@ pub fn setup_chunk_driver(
                 terrain_chunk_map_arc,
                 svo_arc,
                 chunk_spawn_channel,
+                fbm_clone,
             );
         });
     }
@@ -175,9 +183,8 @@ fn chunk_loader_thread(
     terrain_chunk_map: Arc<Mutex<HashMap<(i16, i16, i16), TerrainChunk>>>,
     svo: Arc<Mutex<ChunkSvo>>,
     chunk_spawn_channel: Sender<ChunkSpawnResult>,
+    fbm: GeneratorWrapper<SafeNode>,
 ) {
-    let fbm =
-        || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
     let mut priority_queue = BinaryHeap::new();
     #[cfg(feature = "timers")]
     let mut chunks_generated = 0;
@@ -408,8 +415,11 @@ fn svo_manager_thread(
     //do initial z0 load so player can start moving
     let mut chunks_being_loaded = HashSet::new();
     let mut svo_lock = svo.lock().unwrap();
+    let player_translation_lock = player_translation.lock().unwrap();
+    let initial_player_translation = *player_translation_lock;
+    drop(player_translation_lock);
     svo_lock.root.fill_missing_chunks_in_radius(
-        &PLAYER_SPAWN,
+        &initial_player_translation,
         Z0_RADIUS,
         &mut chunks_being_loaded,
         &mut request_buffer,
@@ -528,20 +538,16 @@ pub fn chunk_spawn_reciever(
     }
 }
 
-//the load condition is at least one chunk below the player must exist with an entity and collider
-//somewhat wasteful
+//wait for player's chunk to be spawned
 pub fn project_downward(
     chunk_entity_map: Res<ChunkEntityMap>,
-    collider_query: Query<(), With<Collider>>,
+    player_position: Single<&Transform, (With<PlayerTag>, Without<ChunkTag>)>,
+    spawned_chunks_query: Query<(), With<ChunkTag>>,
 ) {
-    let player_chunk: (i16, i16, i16) = world_pos_to_chunk_coord(&PLAYER_SPAWN);
-    for chunk_y in 0..10 {
-        let check_chunk = (player_chunk.0, player_chunk.1 - chunk_y, player_chunk.2);
-        if let Some(entity) = chunk_entity_map.0.get(&check_chunk) {
-            if collider_query.get(*entity).is_ok() {
-                INITIAL_CHUNKS_LOADED.store(true, Ordering::Relaxed);
-                return;
-            }
+    let player_chunk = world_pos_to_chunk_coord(&player_position.translation);
+    if let Some(entity) = chunk_entity_map.0.get(&player_chunk) {
+        if spawned_chunks_query.get(*entity).is_ok() {
+            INITIAL_CHUNKS_LOADED.store(true, Ordering::Relaxed);
         }
     }
 }
