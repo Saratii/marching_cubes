@@ -3,7 +3,13 @@ use fastnoise2::{
     SafeNode,
     generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
 };
-use marching_cubes::terrain::chunk_generator::generate_densities;
+use marching_cubes::{
+    marching_cubes::mc::{MeshBuffers, mc_mesh_generation},
+    terrain::{
+        chunk_generator::{chunk_contains_surface, generate_densities},
+        terrain::{HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainChunk},
+    },
+};
 use std::{hint::black_box, time::Duration};
 
 fn benchmark_generate_densities(c: &mut Criterion) {
@@ -23,7 +29,35 @@ fn benchmark_generate_densities(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, benchmark_generate_densities,);
+fn benchmark_marching_cubes(c: &mut Criterion) {
+    let chunk = (0, 2, 0);
+    let noise_function =
+        || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
+    let chunk = TerrainChunk::new(chunk, &noise_function);
+    assert!(
+        chunk_contains_surface(&chunk),
+        "Chunk at {:?} should contain a surface",
+        chunk
+    );
+    c.bench_function("marching_cubes", |b| {
+        let mut mesh_buffers = MeshBuffers::new();
+        b.iter(|| {
+            black_box(mc_mesh_generation(
+                black_box(&mut mesh_buffers),
+                black_box(&chunk.densities),
+                black_box(&chunk.materials),
+                black_box(SAMPLES_PER_CHUNK_DIM),
+                black_box(HALF_CHUNK),
+            ));
+        })
+    });
+}
+
+criterion_group!(
+    benches,
+    benchmark_generate_densities,
+    benchmark_marching_cubes
+);
 criterion_main!(benches);
 
 //cargo bench --bench chunk_generation -- deserialize_chunk_data

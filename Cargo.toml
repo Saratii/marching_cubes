@@ -19,6 +19,7 @@ bevy = { version="0.17.3", features=["trace_tracy"] }
 bytemuck = "1.24.0"
 wgpu = "26.0.1"
 pollster = "0.4.0"
+rustc-hash = "2.1.1"
 
 [[bench]]
 name = "chunk_generation"
