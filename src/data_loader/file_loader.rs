@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 const BYTES_PER_VOXEL: usize = std::mem::size_of::<i16>() + std::mem::size_of::<u8>();
@@ -133,49 +134,61 @@ pub fn load_chunk_index_map(index_file: &mut File) -> HashMap<(i16, i16, i16), u
     index_map
 }
 
+//this helper is needed because a moron wrote std::fs:OpenOptions::open
+fn get_project_root() -> PathBuf {
+    let exe_path = std::env::current_exe().expect("Failed to get executable path");
+    exe_path
+        .parent()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+        .expect("Failed to get project root")
+        .to_path_buf()
+}
+
 pub fn setup_chunk_loading(mut commands: Commands) {
+    let root = get_project_root();
     commands.insert_resource(ChunkEntityMap { 0: HashMap::new() }); //store entities on the main thread
     let player_data_file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
-        .open("data/player_data.txt")
+        .open(root.join("data/player_data.txt"))
         .unwrap();
     commands.insert_resource(PlayerDataFile(player_data_file));
     let mut index_file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
-        .open("data/chunk_index_data.txt")
+        .open(root.join("data/chunk_index_data.txt"))
         .unwrap();
     let data_file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
-        .open("data/chunk_data.txt")
+        .open(root.join("data/chunk_data.txt"))
         .unwrap();
     let data_file_read = OpenOptions::new()
         .read(true)
-        .open("data/chunk_data.txt")
+        .open(root.join("data/chunk_data.txt"))
         .unwrap();
     let mut air_compression_file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
-        .open("data/air_compression_data.txt")
+        .open(root.join("data/air_compression_data.txt"))
         .unwrap();
     let mut dirt_compression_file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
-        .open("data/dirt_compression_data.txt")
+        .open(root.join("data/dirt_compression_data.txt"))
         .unwrap();
     #[allow(unused)]
     let stale_chunks_file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
-        .open("data/stale_chunks.txt")
+        .open(root.join("data/stale_chunks.txt"))
         .unwrap();
     commands.insert_resource(ChunkDataFileReadWrite(Arc::new(Mutex::new(data_file))));
     commands.insert_resource(ChunkDataFileRead(Arc::new(Mutex::new(data_file_read))));
