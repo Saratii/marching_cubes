@@ -16,7 +16,6 @@ use crate::{
     data_loader::file_loader::{
         ChunkDataFileReadWrite, ChunkIndexFile, ChunkIndexMap, create_chunk_file_data,
     },
-    marching_cubes::mc::MeshBuffers,
     player::player::PLAYER_SPAWN,
     terrain::{chunk_generator::generate_densities, terrain_material::TerrainMaterial},
 };
@@ -189,20 +188,19 @@ pub fn generate_large_map_utility(
     exit(0);
 }
 
-pub fn generate_bevy_mesh(mesh_buffers: MeshBuffers) -> Mesh {
+pub fn generate_bevy_mesh(
+    vertices: Vec<[f32; 3]>,
+    normals: Vec<[f32; 3]>,
+    uvs: Vec<[f32; 2]>,
+    indices: Vec<u32>,
+) -> Mesh {
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::default(),
     );
-    let MeshBuffers {
-        positions,
-        normals,
-        indices,
-        uvs,
-    } = mesh_buffers;
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-    mesh.insert_indices(Indices::U32(indices));
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_indices(Indices::U32(indices));
     mesh
 }

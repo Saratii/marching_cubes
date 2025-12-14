@@ -4,7 +4,7 @@ use fastnoise2::{
     generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
 };
 use marching_cubes::{
-    marching_cubes::mc::{MeshBuffers, mc_mesh_generation},
+    marching_cubes::mc::mc_mesh_generation,
     terrain::{
         chunk_generator::{chunk_contains_surface, generate_densities},
         terrain::{HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainChunk},
@@ -40,10 +40,8 @@ fn benchmark_marching_cubes(c: &mut Criterion) {
         chunk
     );
     c.bench_function("marching_cubes", |b| {
-        let mut mesh_buffers = MeshBuffers::new();
         b.iter(|| {
             black_box(mc_mesh_generation(
-                black_box(&mut mesh_buffers),
                 black_box(&chunk.densities),
                 black_box(&chunk.materials),
                 black_box(SAMPLES_PER_CHUNK_DIM),
