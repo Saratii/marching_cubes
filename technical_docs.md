@@ -44,7 +44,7 @@ Rendering Graphics:
     The textures I use are procedurally generated and have several levels of LOD KTX data. Mipmap data reduces visual artifacts at distance and can lower the rendering load.
     Custom triplaner shader for texture wrapping. Also allows multiple textures to be loaded onto the same mesh via a texture atlas. 
 
-Persistant File Storage
+Persistent File Storage:
     All chunk data and some player data is saved to drive. This allows terrain deform operations to be persistant across runs and also quickens the chunk loading time because chunks dont need to be completely regenerated. 
     Currently chunk data is all stored in a few text files in raw byte format. Storing raw bytes is faster for read and write at the cost of human readability.
     I use several map and flag files that provide over 99.9% compression against raw chunk data. 
@@ -52,7 +52,7 @@ Persistant File Storage
     In the future I would like to expand the offset system to include paging, as that unlocks several other optimizations.
     One of the large challenges in data storage is maintaining data ACID. Databases do this automatically but when I tested using both sqlite and LMDB, databases were significantly slower than my custom implementation.
 
-Memory Allocator
+Memory Allocator:
     Through painful amounts of testing and profiling I found that the default windows allocator is garbage.
     For allocations between 400 bytes and 1200 bytes I could consistantly produce a 16x allocation time difference between linux and windows.
     I tested this on multiple PCs and with multiple programs and the timing delay was always present.
@@ -84,8 +84,6 @@ Failed Technologies:
     My implementation works well and the vertex data meets all invariants under every circumstance I could test. Unfortunately it is still far too slow to use in real time rendering. 
     I checked over a dozen open source MDC implementations and all of them had failing invariants and made huge simplifications to the QEF solving. (Yes im salty I wanted MDC for this project)
     
-- leave no core un-fucked
-
 Drucker-Prager Elastoplasticity - https://math.ucdavis.edu/~jteran/papers/KGPSJT16.pdf, https://www.youtube.com/watch?v=Bqme4WWuIVQ, https://math.ucdavis.edu/~jteran/
 visco fluid sim - https://github.com/kotsoft/particle_based_viscoelastic_fluid
 MPM (snowball, water, rubber) - https://github.com/Elias-Gu/MPM2D
