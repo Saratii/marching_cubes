@@ -2,50 +2,76 @@ Engine:
     This project aims to create a fully deformable world with with much finer detail than any other voxel engine.
     It improves on the technical ideas presented by the ClayBook engine https://www.gdcvault.com/play/1025316/Advanced-Graphics-Techniques-Tutorial-GPU
     The end goal is to have all volumetric data abide by variable viscous fluid dynamics, providing hyper-realistic terrain. 
+    Despite the project having visual elements, it is not a game.
+    The vast majority of development has gone into backend optimizations that would apply to general scientific computing applications or high performance apps. 
+    By design, this project targets high end hardware and is optimized for my PC.
+    Even in its current state, I have been unable to find any professional game or voxel engine that comes anywhere near the performance of this.
+    This project has been so performance critical that it required me to make changes to open source libraries like bevy ecs and crossbeam. 
 
 World Representation:
-    The world is represented as volumetric SDF data where each quantized float is a density value, which also works as the distance to a local implicit surface.
+    The world is represented as volumetric density data where each float is quantized.
     The volumetric data is chunked to allow local world modification and smaller mesh regeneration.
     The Marching Cubes algorithm is used to approximate an isosurface and create a mesh for each chunk out of triangles. 
     Within marching cubes, I used trilinear interpolation to create artifically smooth surfaces from discrete volumetric data.
-    The world can be deformed by applying classic SDF logical operations to the SDF sampled data.
+    The world can be deformed by applying classic SDF logical operations to the density sampled data.
     As the player agent moves around the world, new chunks are generated, leading to an effectively infinite sized world like minecraft. 
 
 Chunk Allocation/Deallocation:
     Because the world is infinite in size (all directions) and the volumetric data is already extremely memory intensive, it must be written and read during runtime from SSD storage. 
-    Whenever the player agent crosses a chunk boundary, every loaded chunk is validated against a constant distance and chunks that are no longer the radius are deallocated.
-    Similarly, the chunks that are now in range that are not loaded are first searched for in the storage data, and if they exist they are loaded into memory.
-    If they do not exist they are generated on the spot and written to storage. 
-    For efficiency, the storage data is binary to avoid string allocations and have faster write operations. 
-    An index file is used to lookup where the chunk data actually is by caching the start byte to avoid having to search the massive data file. 
-    Anytime a chunk is deformed, the data is overwritten in storage creating a persistant game state withing having to explictely "save".
-    Because chunk operations are expensive, chunk updates require the distance from the last update to be greater than some constant grace area.
-    This allows the player to move around a small area that follows the player without any chunk unloading or unloading. 
-    Chunks are loaded asyncronously in a long term compute thread. I used pipes to send the load requests and recieve the data. 
-
-Backend Bevy:
-    This engine uses the popular rust game backend, bevy. This allows much of the boilerplate code to be handled by bevy while still allowing low level attention to detail. 
-    Bevy also provides an ECS engine that handles much of the engine state along with parallel data access.
-
-Physics Backend:
-    Currently I use rapier to define skeletal collision constraints and solve for collisions. I will likely have to implement something custom when the fluid dynamics simulations are built.
+    World and chunk data is spread across many different lookup hashmaps and trees. This approach minimizes the memory usage while also providing optimal O(...) complexities for each needed operation.
+    Most of the data is stored in a multithreaded Octree allowing spatial relationships. 
+    I aggressively multithreaded this part of the project.
+    Besides the main render thread I have a managing thread that continually traverses the octree, determining which chunks should be loaded and which should not be loaded based on predefined distances.
+    I used an async piping system to send the chunk load requests to distributed worker threads with the manager thread working as a load balancer.
+    Each worker thread will determine how to source the data (regenerate vs load from ssd), format the data and pipe it to the render thread for rendering or back to the manager thread.
+    The worker threads are responsible for running marching cubes, which is the most expensive operation in the project.
 
 World Generation:
     The entire world is created procedurally.
     The surface data is generated by sampling a fast Fractional Brownian Noise function from the FastNoise2 library built in C++. Even though this is the fastest noise library I could find, chunk generation is still bottlenecked by noise sampling.
-    Runtime chunks are generated in parallel and async already but the Mutex locking could be improved. 
+    To help surface generation, I use a noise upscaling algorithm to sample each surface fewer times at the cost of less resolution.
 
-- leave no core un-fucked
+Rendering Graphics:
+    Graphics quality is unfortunately limited as the nature of destructable terrain and dynamic meshing eliminates most lighting approximations.
+    Much of high end renderieng algorithms are also locked behind triple A studios and game engines like Unreal and Unity so nearly all graphic elements are done by hand. 
 
+    The textures I use are procedurally generated and have several levels of LOD KTX data. Mipmap data reduces visual artifacts at distance and can lower the rendering load.
+    Custom triplaner shader for texture wrapping. Also allows multiple textures to be loaded onto the same mesh via a texture atlas. 
+
+Persistant File Storage
+    All chunk data and some player data is saved to drive. This allows terrain deform operations to be persistant across runs and also quickens the chunk loading time because chunks dont need to be completely regenerated. 
+    Currently chunk data is all stored in a few text files in raw byte format. Storing raw bytes is faster for read and write at the cost of human readability.
+    I use several map and flag files that provide over 99.9% compression against raw chunk data. 
+    To prevent O(n) lookups I store byte offsets in a seperate file and load them into memory.
+    In the future I would like to expand the offset system to include paging, as that unlocks several other optimizations.
+    One of the large challenges in data storage is maintaining data ACID. Databases do this automatically but when I tested using both sqlite and LMDB, databases were significantly slower than my custom implementation.
+
+Memory Allocator
+    Through painful amounts of testing and profiling I found that the default windows allocator is garbage.
+    For allocations between 400 bytes and 1200 bytes I could consistantly produce a 16x allocation time difference between linux and windows.
+    I tested this on multiple PCs and with multiple programs and the timing delay was always present.
+    Switching the windows default allocator to mi-malloc allocator resolved this and brought the allocation time to the same levels as linux.
+    Even though mi-malloc is designed by microsoft, it is not default in windows because its not as well tested and stability is important.
+    This project does huge amounts of data allocations so this one optimization alone provided immense benefit. 
 
 
 Failed Technologies:
     8 bit symmetric quantization - too much data loss, causes visual artifacts
+
     Memory mapped database, LMDB. The internet said it was fast, its not. My custom file loading was 6x faster. 
+
+    GPU compute shader for sampling. The compute shader worked and was extremely fast, but unfortunately the GPU buffer upload and download took longer than a CPU noise implementation while the GPU noise algorithm was near instant.
+    Later in the project I would like to revist GPU compute if I decide to run marching cubes and write a custom render pipeline. This will allow all of the heavy compute to run in a shader and avoid most of the GPU upload an downloads.
+
+    I attempted to rewrite all of the SIMD AVX512 instructions for noise computation but it turns out 20+ years of C++ library SIMD development trumps an undergraduate's ability. 
+    
+- leave no core un-fucked
 
 Drucker-Prager Elastoplasticity - https://math.ucdavis.edu/~jteran/papers/KGPSJT16.pdf, https://www.youtube.com/watch?v=Bqme4WWuIVQ, https://math.ucdavis.edu/~jteran/
 visco fluid sim - https://github.com/kotsoft/particle_based_viscoelastic_fluid
 MPM (snowball, water, rubber) - https://github.com/Elias-Gu/MPM2D
+
+Mipmaps - https://vulkan-tutorial.com/Generating_Mipmaps
 
 //reference, delete later
 https://80.lv/articles/simulating-a-car-drifting-through-mud-with-a-custom-mpm-solver?utm_source=chatgpt.com
