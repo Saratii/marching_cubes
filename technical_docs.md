@@ -64,6 +64,9 @@ Failed Technologies:
     Later in the project I would like to revist GPU compute if I decide to run marching cubes and write a custom render pipeline. This will allow all of the heavy compute to run in a shader and avoid most of the GPU upload an downloads.
 
     I attempted to rewrite all of the SIMD AVX512 instructions for noise computation but it turns out 20+ years of C++ library SIMD development trumps an undergraduate's ability. 
+
+    Moving octree insertions and chunk load map deletions to worker threads instead of manager thread after chunk load decreases performance by 100x.
+    Has something to do with memory page locality of the mutex locks, don't understand it but fine. 
     
 - leave no core un-fucked
 
