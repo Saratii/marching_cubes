@@ -25,7 +25,7 @@ use crate::{
         CompressionFileHandles, UniformChunkMap, create_chunk_file_data, load_chunk_data,
         write_uniform_chunk,
     },
-    marching_cubes::mc::{MeshBuffers, mc_mesh_generation},
+    marching_cubes::mc::mc_mesh_generation,
     player::player::PlayerTag,
     sparse_voxel_octree::ChunkSvo,
     terrain::{
@@ -294,15 +294,13 @@ fn chunk_loader_thread(
                 let has_mesh = chunk_contains_surface(&chunk_sdfs);
                 let has_collider = has_mesh && req.load_status == 0;
                 let (collider, mesh) = if has_mesh {
-                    let mut mesh_buffers = MeshBuffers::new();
-                    mc_mesh_generation(
-                        &mut mesh_buffers,
+                    let (vertices, normals, uvs, indices) = mc_mesh_generation(
                         &chunk_sdfs.densities,
                         &chunk_sdfs.materials,
                         SAMPLES_PER_CHUNK_DIM,
                         HALF_CHUNK,
                     );
-                    let mesh = generate_bevy_mesh(mesh_buffers);
+                    let mesh = generate_bevy_mesh(vertices, normals, uvs, indices);
                     let collider = if has_collider {
                         Some(
                             Collider::from_bevy_mesh(

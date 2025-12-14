@@ -30,7 +30,7 @@ use marching_cubes::data_loader::file_loader::{
     UniformChunkMap, create_chunk_file_data, remove_uniform_chunk, setup_chunk_loading,
     update_chunk_file_data,
 };
-use marching_cubes::marching_cubes::mc::{MeshBuffers, mc_mesh_generation};
+use marching_cubes::marching_cubes::mc::mc_mesh_generation;
 use marching_cubes::player::player::{
     CameraController, KeyBindings, MainCameraTag, camera_look, camera_zoom, cursor_grab,
     initial_grab_cursor, player_movement, spawn_player, sync_player_mutex, toggle_camera,
@@ -317,15 +317,13 @@ fn handle_digging_input(
                             drop(terrain_chunk_map_lock);
                         }
                     }
-                    let mut mesh_buffers = MeshBuffers::new();
-                    mc_mesh_generation(
-                        &mut mesh_buffers,
+                    let (vertices, normals, uvs, indices) = mc_mesh_generation(
                         &chunk_clone.densities,
                         &chunk_clone.materials,
                         SAMPLES_PER_CHUNK_DIM,
                         HALF_CHUNK,
                     );
-                    let new_mesh = generate_bevy_mesh(mesh_buffers);
+                    let new_mesh = generate_bevy_mesh(vertices, normals, uvs, indices);
                     if new_mesh.count_vertices() > 0 {
                         let collider = Collider::from_bevy_mesh(
                             &new_mesh,
