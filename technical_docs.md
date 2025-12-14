@@ -60,6 +60,11 @@ Memory Allocator
     Even though mi-malloc is designed by microsoft, it is not default in windows because its not as well tested and stability is important.
     This project does huge amounts of data allocations so this one optimization alone provided immense benefit. 
 
+Marching Cubes Optimizations:
+    I have went through several iterations of marching cubes algorithms and caching teqniques. 
+    Marching cubes is the bottle neck and at the center of all of the hot loops. 
+    I also went through several rounds of generating assembly for marching cube functions and optimizing the LLVM output.
+    I used various profilers, flamegraphs, and hardware level debuggers to find and minimize ASM hotspots. 
 
 Failed Technologies:
     8 bit symmetric quantization - too much data loss, causes visual artifacts
@@ -73,6 +78,11 @@ Failed Technologies:
 
     Moving octree insertions and chunk load map deletions to worker threads instead of manager thread after chunk load decreases performance by 100x.
     Has something to do with memory page locality of the mutex locks, don't understand it but fine. 
+
+    Manifold Dual Contouring is nonsense and dark magic. I could not find a single instance of published MDC library code. 
+    I reached out to several CAD development companies who use MDC and none of them were willing to share. 
+    My implementation works well and the vertex data meets all invariants under every circumstance I could test. Unfortunately it is still far too slow to use in real time rendering. 
+    I checked over a dozen open source MDC implementations and all of them had failing invariants and made huge simplifications to the QEF solving. (Yes im salty I wanted MDC for this project)
     
 - leave no core un-fucked
 
