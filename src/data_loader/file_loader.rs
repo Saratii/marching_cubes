@@ -134,8 +134,7 @@ pub fn load_chunk_index_map(index_file: &mut File) -> HashMap<(i16, i16, i16), u
     index_map
 }
 
-//this helper is needed because a moron wrote std::fs:OpenOptions::open
-fn get_project_root() -> PathBuf {
+pub fn get_project_root() -> PathBuf {
     let exe_path = std::env::current_exe().expect("Failed to get executable path");
     exe_path
         .parent()

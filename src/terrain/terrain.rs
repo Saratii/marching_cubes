@@ -15,6 +15,7 @@ use crate::{
     conversions::{chunk_coord_to_world_pos, flatten_index, world_pos_to_chunk_coord},
     data_loader::file_loader::{
         ChunkDataFileReadWrite, ChunkIndexFile, ChunkIndexMap, create_chunk_file_data,
+        get_project_root,
     },
     player::player::PLAYER_SPAWN,
     terrain::{chunk_generator::generate_densities, terrain_material::TerrainMaterial},
@@ -30,7 +31,7 @@ pub const Z0_RADIUS_SQUARED: f32 = Z0_RADIUS * Z0_RADIUS;
 pub const Z1_RADIUS: f32 = 100.0; //in world units. Distance where chunks are loaded at full res but not stored in memory.
 pub const Z1_RADIUS_SQUARED: f32 = Z1_RADIUS * Z1_RADIUS;
 pub const VOXEL_SIZE: f32 = CHUNK_SIZE / (SAMPLES_PER_CHUNK_DIM - 1) as f32;
-pub const Z2_RADIUS: f32 = 1000.0;
+pub const Z2_RADIUS: f32 = 1200.0;
 pub const Z2_RADIUS_SQUARED: f32 = Z2_RADIUS * Z2_RADIUS;
 pub const MAX_RADIUS: f32 = Z0_RADIUS.max(Z1_RADIUS).max(Z2_RADIUS);
 pub const MAX_RADIUS_SQUARED: f32 = MAX_RADIUS * MAX_RADIUS;
@@ -109,20 +110,24 @@ pub fn setup_map(
     mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, TerrainMaterial>>>,
     asset_server: Res<AssetServer>,
 ) {
+    let root = get_project_root();
     let atlas_texture_handle: Handle<Image> = asset_server
-        .load_with_settings::<Image, ImageLoaderSettings>("texture_atlas.ktx2", |settings| {
-            settings.sampler = ImageSampler::Descriptor(
-                SamplerDescriptor {
-                    address_mode_u: AddressMode::ClampToEdge,
-                    address_mode_v: AddressMode::ClampToEdge,
-                    address_mode_w: AddressMode::ClampToEdge,
-                    lod_min_clamp: 0.0,
-                    lod_max_clamp: 5.0,
-                    ..Default::default()
-                }
-                .into(),
-            );
-        });
+        .load_with_settings::<Image, ImageLoaderSettings>(
+            root.join("assets/texture_atlas.ktx2"),
+            |settings| {
+                settings.sampler = ImageSampler::Descriptor(
+                    SamplerDescriptor {
+                        address_mode_u: AddressMode::ClampToEdge,
+                        address_mode_v: AddressMode::ClampToEdge,
+                        address_mode_w: AddressMode::ClampToEdge,
+                        lod_min_clamp: 0.0,
+                        lod_max_clamp: 5.0,
+                        ..Default::default()
+                    }
+                    .into(),
+                );
+            },
+        );
     let standard_terrain_material_handle = materials.add(ExtendedMaterial {
         base: StandardMaterial {
             perceptual_roughness: 0.8,

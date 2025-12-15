@@ -379,6 +379,16 @@ impl SvoNode {
             }
         }
     }
+
+    pub fn size_in_bytes(&self) -> usize {
+        let mut size = std::mem::size_of::<Self>();
+        if let Some(children) = &self.children {
+            for child in children.iter().flatten() {
+                size += child.size_in_bytes();
+            }
+        }
+        size
+    }
 }
 
 pub fn sphere_intersects_aabb(center: &Vec3, radius: f32, min: &Vec3, max: &Vec3) -> bool {

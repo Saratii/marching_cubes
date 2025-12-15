@@ -1,4 +1,4 @@
-use bevy::{ecs::message::Message, math::Vec3};
+use bevy::math::Vec3;
 use fastnoise2::{SafeNode, generator::GeneratorWrapper};
 
 use crate::terrain::terrain::{
@@ -9,16 +9,6 @@ pub const NOISE_SEED: i32 = 100; // Seed for noise generation
 pub const NOISE_FREQUENCY: f32 = 0.02; // Frequency of the noise
 pub const NOISE_AMPLITUDE: f32 = 120.0; // Amplitude of the noise
 pub const HEIGHT_SCALE: f32 = 50.0; // Scale factor for heightmap
-
-#[derive(Message)]
-pub struct GenerateChunkEvent {
-    pub chunk_coords: Vec<(i16, i16, i16)>,
-}
-
-#[derive(Message)]
-pub struct LoadChunksEvent {
-    pub chunk_coords: Vec<(i16, i16, i16)>,
-}
 
 pub fn generate_densities(
     chunk_coord: &(i16, i16, i16),
