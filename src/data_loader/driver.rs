@@ -94,7 +94,7 @@ impl PartialOrd for ChunkRequest {
     }
 }
 
-pub struct ChunkResult {
+struct ChunkResult {
     has_entity: bool,
     chunk_coord: (i16, i16, i16),
     load_status: u8,
@@ -342,11 +342,6 @@ fn chunk_loader_thread(
                                 mesh.unwrap(),
                             )))
                             .unwrap();
-                        let _ = res_tx.send(ChunkResult {
-                            has_entity: true,
-                            chunk_coord,
-                            load_status: req.load_status,
-                        });
                     }
                 } else {
                     if !req.upgrade {
@@ -426,15 +421,23 @@ fn svo_manager_thread(
     for request in request_buffer.drain(..) {
         let _ = load_request_channel.send(request);
     }
+    let mut results_batch = Vec::new();
     loop {
+        let svo_lock = svo.lock().unwrap();
+        drop(svo_lock);
         while let Ok(result) = results_channel.try_recv() {
             //this channel creates a 1000x improvement in performance at high thread count cause of magic
+            results_batch.push(result);
+        }
+        if !results_batch.is_empty() {
             let mut svo_lock = svo.lock().unwrap();
-            svo_lock
-                .root
-                .insert(result.chunk_coord, result.load_status, result.has_entity);
+            for result in results_batch.drain(..) {
+                svo_lock
+                    .root
+                    .insert(result.chunk_coord, result.load_status, result.has_entity);
+                chunks_being_loaded.remove(&result.chunk_coord);
+            }
             drop(svo_lock);
-            chunks_being_loaded.remove(&result.chunk_coord);
         }
         let player_translation_lock = player_translation.lock().unwrap();
         let player_translation = *player_translation_lock;

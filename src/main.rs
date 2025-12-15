@@ -1,6 +1,7 @@
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use bevy::asset::UnapprovedPathMode;
 use bevy::camera::primitives::MeshAabb;
 use bevy::diagnostic::{
     EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin, SystemInformationDiagnosticsPlugin,
@@ -36,9 +37,7 @@ use marching_cubes::player::player::{
     initial_grab_cursor, player_movement, spawn_player, sync_player_mutex, toggle_camera,
 };
 use marching_cubes::sparse_voxel_octree::sphere_intersects_aabb;
-use marching_cubes::terrain::chunk_generator::{
-    GenerateChunkEvent, LoadChunksEvent, dequantize_i16_to_f32, quantize_f32_to_i16,
-};
+use marching_cubes::terrain::chunk_generator::{dequantize_i16_to_f32, quantize_f32_to_i16};
 use marching_cubes::terrain::terrain::{
     ChunkTag, HALF_CHUNK, NoiseFunction, SAMPLES_PER_CHUNK_DIM, TerrainChunk,
     TerrainMaterialHandle, UniformChunk, VOXEL_SIZE, generate_bevy_mesh, setup_map,
@@ -56,8 +55,6 @@ fn main() {
     App::new()
         .insert_resource(KeyBindings::default())
         .insert_resource(CameraController::default())
-        .add_message::<LoadChunksEvent>()
-        .add_message::<GenerateChunkEvent>()
         .insert_resource(WinitSettings {
             focused_mode: bevy::winit::UpdateMode::reactive_low_power(Duration::from_secs_f64(
                 1.0 / 240.0,
@@ -84,7 +81,11 @@ fn main() {
                         ..ImageSamplerDescriptor::linear()
                     },
                 })
-                .set(PbrPlugin { ..default() }),
+                .set(PbrPlugin { ..default() })
+                .set(AssetPlugin {
+                    unapproved_path_mode: UnapprovedPathMode::Allow, //because bevy is made by morons who don't know how CWD works
+                    ..default()
+                }),
             FrameTimeDiagnosticsPlugin::default(),
             EntityCountDiagnosticsPlugin::default(),
             SystemInformationDiagnosticsPlugin,
@@ -106,7 +107,6 @@ fn main() {
                 spawn_player.after(setup_chunk_loading),
                 spawn_minimap.after(spawn_player),
                 initial_grab_cursor,
-                // spawn_initial_chunks.after(setup_chunk_loading),
             ),
         )
         .add_systems(
@@ -118,10 +118,6 @@ fn main() {
                 cursor_grab,
                 camera_look,
                 player_movement,
-                // z0_chunk_load,
-                // z2_chunk_load,
-                // chunk_reciever.after(z2_chunk_load),
-                // validate_loading_queue.after(chunk_reciever),
                 sync_player_mutex.after(player_movement),
                 chunk_spawn_reciever,
                 project_downward
