@@ -6,6 +6,7 @@ MAX_MIPS = "3"
 TILES = [
     "assets/source_tiles/dirt.png",
     "assets/source_tiles/grass.png",
+    "assets/source_tiles/sand.png",
 ]
 
 PAD = 2
