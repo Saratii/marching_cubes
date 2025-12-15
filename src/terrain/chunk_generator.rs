@@ -163,7 +163,13 @@ fn fill_voxel_densities(
                     if distance_to_surface < quantize_f32_to_i16(-1.0) {
                         materials[voxel_index] = 1; //dirt
                     } else {
-                        materials[voxel_index] = 2; //grass
+                        let global_y = chunk_start.y + y as f32 * VOXEL_SIZE;
+                        if global_y < 0.0 {
+                            //sea level
+                            materials[voxel_index] = 3; //sand
+                        } else {
+                            materials[voxel_index] = 2; //grass
+                        }
                     }
                 } else {
                     materials[voxel_index] = 0; //air
