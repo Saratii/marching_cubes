@@ -4,4 +4,4 @@
 
 
 >10M triangles
-><img width="1219" height="670" alt="image" src="https://github.com/user-attachments/assets/b611efa3-1447-4e60-8572-9b7deb58f7fa" />
+<img width="1219" height="670" alt="image" src="https://github.com/user-attachments/assets/b611efa3-1447-4e60-8572-9b7deb58f7fa" />
