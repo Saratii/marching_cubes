@@ -94,7 +94,7 @@ fn main() {
             MaterialPlugin::<ExtendedMaterial<StandardMaterial, TerrainMaterial>>::default(),
             // RapierDebugRenderPlugin::default(),
         ))
-        .insert_resource(ClearColor(Color::srgb(0.0, 1.0, 1.0)))
+        .insert_resource(ClearColor(Color::srgb(0.0, 0.4, 0.5)))
         .add_systems(
             Startup,
             (
@@ -128,10 +128,11 @@ fn main() {
         .run();
 }
 
-fn setup(mut commands: Commands) {
+fn setup(mut commands: Commands, mut ambient_light: ResMut<AmbientLight>) {
     commands.spawn(PerfUiDefaultEntries::default());
     commands.spawn((
         DirectionalLight {
+            illuminance: 7000.0,
             shadows_enabled: true,
             ..default()
         },
@@ -142,6 +143,7 @@ fn setup(mut commands: Commands) {
             -std::f32::consts::FRAC_PI_4,
         )),
     ));
+    ambient_light.brightness = 400.0;
 }
 
 pub fn dig_sphere(

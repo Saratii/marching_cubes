@@ -21,8 +21,8 @@ use crate::{
     terrain::{chunk_generator::generate_densities, terrain_material::TerrainMaterial},
 };
 
-pub const SAMPLES_PER_CHUNK_DIM: usize = 32; // Number of voxel sample points
-pub const CHUNK_SIZE: f32 = 8.0; //in world units
+pub const SAMPLES_PER_CHUNK_DIM: usize = 50; // Number of voxel sample points
+pub const CHUNK_SIZE: f32 = 12.5; //in world units
 pub const SAMPLES_PER_CHUNK: usize =
     SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM;
 pub const HALF_CHUNK: f32 = CHUNK_SIZE / 2.0;
