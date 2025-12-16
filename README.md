@@ -1,4 +1,4 @@
-This is a heavyily optimized performance voxel engine.
+This is a heavily optimized performance voxel engine.
 
 It has real time graphics rendering, real time mesh generation, and real time persistant data storage.
 
