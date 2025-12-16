@@ -26,7 +26,8 @@ const PLAYER_CUBOID_SIZE: Vec3 = Vec3::new(0.5, 1.5, 0.5);
 const CAMERA_FIRST_PERSON_OFFSET: Vec3 = Vec3::new(0., 0.75 * PLAYER_CUBOID_SIZE.y, 0.);
 const MIN_ZOOM_DISTANCE: f32 = 4.0;
 const MAX_ZOOM_DISTANCE: f32 = 2000.0;
-const ZOOM_SPEED: f32 = 30.0;
+const MIN_ZOOM_SPEED: f32 = 0.5;
+const MAX_ZOOM_SPEED: f32 = 120.0;
 const MOUSE_SENSITIVITY: f32 = 0.002;
 const MIN_PITCH: f32 = -1.5;
 const MAX_PITCH: f32 = 1.5;
@@ -182,8 +183,10 @@ pub fn camera_zoom(
         return;
     }
     for event in scroll_events.read() {
-        let zoom_delta = event.y * ZOOM_SPEED;
         let current_distance = camera_transform.translation.length();
+        let t = (current_distance - MIN_ZOOM_DISTANCE) / (MAX_ZOOM_DISTANCE - MIN_ZOOM_DISTANCE);
+        let zoom_speed = MIN_ZOOM_SPEED + t * (MAX_ZOOM_SPEED - MIN_ZOOM_SPEED);
+        let zoom_delta = event.y * zoom_speed;
         let new_distance =
             (current_distance - zoom_delta).clamp(MIN_ZOOM_DISTANCE, MAX_ZOOM_DISTANCE);
         camera_controller.distance = new_distance;

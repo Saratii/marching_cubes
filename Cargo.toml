@@ -15,7 +15,7 @@ serde_json = "1.0.145"
 serde = "1.0.228"
 flamegraph = "0.6.10"
 crossbeam-channel = "0.5.15"
-bevy = { version="0.17.3", features=["trace_tracy"] }
+bevy = { version="0.17.3" }
 bytemuck = "1.24.0"
 wgpu = "26.0.1"
 pollster = "0.4.0"
