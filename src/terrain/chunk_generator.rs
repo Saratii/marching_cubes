@@ -31,7 +31,7 @@ pub fn generate_densities(
     )
 }
 
-fn calculate_chunk_start(chunk_coord: &(i16, i16, i16)) -> Vec3 {
+pub fn calculate_chunk_start(chunk_coord: &(i16, i16, i16)) -> Vec3 {
     Vec3::new(
         chunk_coord.0 as f32 * CHUNK_SIZE - HALF_CHUNK,
         chunk_coord.1 as f32 * CHUNK_SIZE - HALF_CHUNK,
@@ -87,7 +87,7 @@ pub fn sample_fbm(fbm: &GeneratorWrapper<SafeNode>, x: f32, z: f32) -> f32 {
     height + mountain_boost
 }
 
-fn generate_terrain_heights(chunk_start: &Vec3, fbm: &GeneratorWrapper<SafeNode>) -> Vec<f32> {
+pub fn generate_terrain_heights(chunk_start: &Vec3, fbm: &GeneratorWrapper<SafeNode>) -> Vec<f32> {
     let mut out = vec![0.0; SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM];
     let stride = 4;
     for z in 0..SAMPLES_PER_CHUNK_DIM {
