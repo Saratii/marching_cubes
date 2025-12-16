@@ -1,6 +1,6 @@
 This is a heavily optimized performance voxel engine.
 
-It has real time graphics rendering, real time mesh generation, and real time persistant data storage.
+It has real time graphics rendering, real time mesh generation, and real time persistent data storage.
 
 Please read the technical docs for more information. 
 
