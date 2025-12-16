@@ -1,5 +1,7 @@
 This is a heavyily optimized performance voxel engine.
+
 It has real time graphics rendering, real time mesh generation, and real time persistant data storage.
+
 Please read the technical docs for more information. 
 
 <img width="791" height="701" alt="image" src="https://github.com/user-attachments/assets/0c0df2cf-31d7-4320-ac4b-a2bf687a0cb8" />
