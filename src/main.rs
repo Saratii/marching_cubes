@@ -6,6 +6,7 @@ use bevy::camera::primitives::MeshAabb;
 use bevy::diagnostic::{
     EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin, SystemInformationDiagnosticsPlugin,
 };
+use bevy::ecs::system::SystemParam;
 use bevy::image::ImageSamplerDescriptor;
 use bevy::pbr::{ExtendedMaterial, PbrPlugin};
 use bevy::prelude::*;
@@ -27,9 +28,9 @@ use marching_cubes::data_loader::driver::{
     setup_chunk_driver,
 };
 use marching_cubes::data_loader::file_loader::{
-    ChunkDataFileReadWrite, ChunkEntityMap, ChunkIndexFile, ChunkIndexMap, CompressionFileHandles,
-    UniformChunkMap, create_chunk_file_data, remove_uniform_chunk, setup_chunk_loading,
-    update_chunk_file_data,
+    ChunkDataFileReadWrite, ChunkEntityMap, ChunkIndexFile, ChunkIndexMapDelta, ChunkIndexMapRead,
+    CompressionFileHandles, UniformChunkMap, create_chunk_file_data, remove_uniform_chunk,
+    setup_chunk_loading, update_chunk_file_data,
 };
 use marching_cubes::marching_cubes::mc::mc_mesh_generation;
 use marching_cubes::player::player::{
@@ -219,6 +220,18 @@ pub fn modify_chunk_voxels(
     return chunk_modified;
 }
 
+#[derive(SystemParam)]
+pub struct TerrainIo<'w> {
+    pub chunk_data_file: ResMut<'w, ChunkDataFileReadWrite>,
+    pub chunk_index_map_delta: Res<'w, ChunkIndexMapDelta>,
+    pub chunk_index_map_read: Res<'w, ChunkIndexMapRead>,
+    pub chunk_index_file: Res<'w, ChunkIndexFile>,
+    pub compression_files: ResMut<'w, CompressionFileHandles>,
+    pub uniform_chunks_map: ResMut<'w, UniformChunkMap>,
+    pub terrain_chunk_map: ResMut<'w, TerrainChunkMap>,
+    pub chunk_entity_map: ResMut<'w, ChunkEntityMap>,
+}
+
 fn handle_digging_input(
     mouse_input: Res<ButtonInput<MouseButton>>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCameraTag>>,
@@ -226,16 +239,10 @@ fn handle_digging_input(
     mut commands: Commands,
     mut dig_timer: Local<f32>,
     time: Res<Time>,
-    chunk_data_file: ResMut<ChunkDataFileReadWrite>,
-    chunk_index_map: Res<ChunkIndexMap>,
-    chunk_index_file: Res<ChunkIndexFile>,
     material_handle: Res<TerrainMaterialHandle>,
     mut solid_chunk_query: Query<(&mut Collider, &mut Mesh3d, Entity), With<ChunkTag>>,
     mut mesh_handles: ResMut<Assets<Mesh>>,
-    mut terrain_chunk_map: ResMut<TerrainChunkMap>,
-    mut chunk_entity_map: ResMut<ChunkEntityMap>,
-    compression_file_handles: ResMut<CompressionFileHandles>,
-    uniform_chunks_map: ResMut<UniformChunkMap>,
+    mut terrain_io: TerrainIo,
 ) {
     const DIG_STRENGTH: f32 = 0.5;
     const DIG_TIMER: f32 = 0.02; // seconds
@@ -255,16 +262,16 @@ fn handle_digging_input(
     if should_dig {
         if let Some(cursor_pos) = window.cursor_position() {
             if let Some((world_pos, _, _)) =
-                screen_to_world_ray(cursor_pos, camera.0, camera.1, &terrain_chunk_map)
+                screen_to_world_ray(cursor_pos, camera.0, camera.1, &terrain_io.terrain_chunk_map)
             {
                 let modified_chunks =
-                    dig_sphere(world_pos, DIG_RADIUS, DIG_STRENGTH, &mut terrain_chunk_map);
+                    dig_sphere(world_pos, DIG_RADIUS, DIG_STRENGTH, &mut terrain_io.terrain_chunk_map);
                 if modified_chunks.is_empty() {
                     return;
                 }
                 for chunk_coord in modified_chunks {
-                    let entity = chunk_entity_map.0.get(&chunk_coord);
-                    let mut terrain_chunk_map_lock = terrain_chunk_map.0.lock().unwrap();
+                    let entity = terrain_io.chunk_entity_map.0.get(&chunk_coord);
+                    let mut terrain_chunk_map_lock = terrain_io.terrain_chunk_map.0.lock().unwrap();
                     let chunk = terrain_chunk_map_lock.get_mut(&chunk_coord).unwrap();
                     let chunk_clone = chunk.clone(); //clone instead of holding lock
                     match chunk_clone.is_uniform {
@@ -272,9 +279,9 @@ fn handle_digging_input(
                         UniformChunk::Air | UniformChunk::Dirt => {
                             chunk.is_uniform = UniformChunk::NonUniform;
                             drop(terrain_chunk_map_lock);
-                            let mut chunk_index_map_lock = chunk_index_map.0.lock().unwrap();
-                            let mut chunk_data_file_locked = chunk_data_file.0.lock().unwrap();
-                            let mut chunk_index_file_locked = chunk_index_file.0.lock().unwrap();
+                            let mut chunk_index_map_lock = terrain_io.chunk_index_map_delta.0.lock().unwrap();
+                            let mut chunk_data_file_locked = terrain_io.chunk_data_file.0.lock().unwrap();
+                            let mut chunk_index_file_locked = terrain_io.chunk_index_file.0.lock().unwrap();
                             create_chunk_file_data(
                                 &chunk_clone,
                                 &chunk_coord,
@@ -286,11 +293,11 @@ fn handle_digging_input(
                             drop(chunk_data_file_locked);
                             if chunk_clone.is_uniform == UniformChunk::Air {
                                 let uniform_chunks_map_lock =
-                                    uniform_chunks_map.air_chunks.lock().unwrap();
+                                    terrain_io.uniform_chunks_map.air_chunks.lock().unwrap();
                                 let mut air_file_lock =
-                                    compression_file_handles.air_file.lock().unwrap();
+                                    terrain_io.compression_files.air_file.lock().unwrap();
                                 let mut uniform_air_empty_offsets_lock =
-                                    uniform_chunks_map.uniform_air_empty_offsets.lock().unwrap();
+                                    terrain_io.uniform_chunks_map.uniform_air_empty_offsets.lock().unwrap();
                                 remove_uniform_chunk(
                                     &chunk_coord,
                                     &mut air_file_lock,
@@ -301,10 +308,10 @@ fn handle_digging_input(
                                 drop(uniform_air_empty_offsets_lock);
                             } else if chunk_clone.is_uniform == UniformChunk::Dirt {
                                 let uniform_chunks_map_lock =
-                                    uniform_chunks_map.dirt_chunks.lock().unwrap();
+                                    terrain_io.uniform_chunks_map.dirt_chunks.lock().unwrap();
                                 let mut dirt_file_lock =
-                                    compression_file_handles.dirt_file.lock().unwrap();
-                                let mut uniform_dirt_empty_offsets_lock = uniform_chunks_map
+                                    terrain_io.compression_files.dirt_file.lock().unwrap();
+                                let mut uniform_dirt_empty_offsets_lock = terrain_io.uniform_chunks_map
                                     .uniform_dirt_empty_offsets
                                     .lock()
                                     .unwrap();
@@ -361,7 +368,7 @@ fn handle_digging_input(
                                         )),
                                     ))
                                     .id();
-                                chunk_entity_map.0.insert(chunk_coord, new_entity);
+                                terrain_io.chunk_entity_map.0.insert(chunk_coord, new_entity);
                             }
                         }
                     } else {
@@ -369,17 +376,26 @@ fn handle_digging_input(
                         if let Some(entity) = entity {
                             commands.entity(*entity).despawn();
                         }
-                        chunk_entity_map.0.remove(&chunk_coord);
+                        terrain_io.chunk_entity_map.0.remove(&chunk_coord);
                     }
-                    let chunk_index_map = chunk_index_map.0.lock().unwrap();
-                    let mut chunk_data_file_locked = chunk_data_file.0.lock().unwrap();
+                    //first check read only initial copy
+                    let byte_offset = {
+                        let offset = terrain_io.chunk_index_map_read.0.get(&chunk_coord).cloned();
+                        //if index isnt there maybe its in delta per chance
+                        let offset = if offset.is_none() {
+                            let index_map_lock = terrain_io.chunk_index_map_delta.0.lock().unwrap();
+                            index_map_lock.get(&chunk_coord).cloned().clone()
+                        } else {
+                            offset
+                        };
+                        offset
+                    };
+                    let mut chunk_data_file_locked = terrain_io.chunk_data_file.0.lock().unwrap();
                     update_chunk_file_data(
-                        &chunk_index_map,
-                        chunk_coord,
+                        byte_offset.unwrap(),
                         &chunk_clone,
                         &mut chunk_data_file_locked,
                     );
-                    drop(chunk_index_map);
                     drop(chunk_data_file_locked);
                 }
             }

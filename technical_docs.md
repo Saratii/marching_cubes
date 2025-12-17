@@ -69,6 +69,7 @@ Marching Cubes Optimizations:
 Through performance testing I realized threads dont scale well and 4 threads can do the same work at 16.
 This is entirely due to lock contention. Although there were zero deadlocks or even semi-dead locks, lock contention can be improved.
     -  Change uniform chunk map to be a read only arc and store a transaction lock. This creates lock free reads in the hottest loop on a chunk load. Neutral on chunk generation. 
+    - Same transaction log optimization for index mapping
 
 Failed Technologies:
     8 bit symmetric quantization - too much data loss, causes visual artifacts

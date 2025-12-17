@@ -1,4 +1,6 @@
-use crate::data_loader::file_loader::load_uniform_chunks;
+use crate::data_loader::file_loader::{
+    ChunkDataFileReadWrite, ChunkIndexMapDelta, load_uniform_chunks,
+};
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
 use crossbeam_channel::{Receiver, Sender, unbounded};
@@ -23,9 +25,8 @@ use std::{
 use crate::{
     conversions::{chunk_coord_to_world_pos, world_pos_to_chunk_coord},
     data_loader::file_loader::{
-        ChunkDataFileReadWrite, ChunkEntityMap, ChunkIndexFile, ChunkIndexMap,
-        CompressionFileHandles, UniformChunkMap, create_chunk_file_data, load_chunk_data,
-        write_uniform_chunk,
+        ChunkEntityMap, ChunkIndexFile, ChunkIndexMapRead, CompressionFileHandles, UniformChunkMap,
+        create_chunk_file_data, load_chunk_data, write_uniform_chunk,
     },
     marching_cubes::mc::mc_mesh_generation,
     player::player::PlayerTag,
@@ -104,7 +105,8 @@ struct ChunkResult {
 
 pub fn setup_chunk_driver(
     mut commands: Commands,
-    index_map: Res<ChunkIndexMap>,
+    index_map_read: Res<ChunkIndexMapRead>,
+    index_map_delta: Res<ChunkIndexMapDelta>,
     player_translation_mutex_handle: Res<PlayerTranslationMutexHandle>,
     chunk_data_file: Res<ChunkDataFileReadWrite>,
     chunk_index_file: Res<ChunkIndexFile>,
@@ -148,7 +150,8 @@ pub fn setup_chunk_driver(
     let uniform_dirt_chunk_deltas = Arc::new(Mutex::new(HashSet::new()));
     for thread_idx in 0..num_processors.saturating_sub(2) {
         //leave one processor free for main thread and one for svo manager <- might be wrong
-        let index_map_arc = Arc::clone(&index_map.0);
+        let index_map_read = Arc::clone(&index_map_read.0);
+        let index_map_delta = Arc::clone(&index_map_delta.0);
         let uniform_air_chunks_delta = Arc::clone(&uniform_air_chunk_deltas);
         let uniform_dirt_chunks_delta = Arc::clone(&uniform_dirt_chunk_deltas);
         let chunk_data_file_arc = Arc::clone(&chunk_data_file.0);
@@ -170,7 +173,8 @@ pub fn setup_chunk_driver(
                 thread_idx,
                 req_rx_clone,
                 res_tx_clone,
-                index_map_arc,
+                index_map_read,
+                index_map_delta,
                 uniform_air_chunks_delta,
                 uniform_dirt_chunks_delta,
                 chunk_data_file_arc,
@@ -211,7 +215,8 @@ fn chunk_loader_thread(
     #[cfg_attr(not(feature = "timers"), allow(unused_variables))] thread_idx: usize,
     req_rx: Receiver<ChunkRequest>,
     res_tx: Sender<ChunkResult>,
-    index_map_arc: Arc<Mutex<HashMap<(i16, i16, i16), u64>>>,
+    index_map_read: Arc<HashMap<(i16, i16, i16), u64>>,
+    index_map_delta: Arc<Mutex<HashMap<(i16, i16, i16), u64>>>,
     uniform_air_chunks_delta: Arc<Mutex<HashSet<(i16, i16, i16)>>>,
     uniform_dirt_chunks_delta: Arc<Mutex<HashSet<(i16, i16, i16)>>>,
     chunk_data_file: Arc<Mutex<File>>,
@@ -296,9 +301,17 @@ fn chunk_loader_thread(
                 }
                 false
             } else {
+                //first check read only initial copy
                 let file_offset = {
-                    let index_map_lock = index_map_arc.lock().unwrap();
-                    index_map_lock.get(&chunk_coord).copied()
+                    let offset = index_map_read.get(&chunk_coord).cloned();
+                    //if index isnt there maybe its in delta per chance
+                    let offset = if offset.is_none() {
+                        let index_map_lock = index_map_delta.lock().unwrap();
+                        index_map_lock.get(&chunk_coord).cloned().clone()
+                    } else {
+                        offset
+                    };
+                    offset
                 };
                 let chunk_sdfs = if let Some(offset) = file_offset {
                     let mut chunk_data_file_lock = chunk_data_file.lock().unwrap();
@@ -343,7 +356,7 @@ fn chunk_loader_thread(
                             drop(uniform_dirt_empty_offsets_lock);
                         }
                         UniformChunk::NonUniform => {
-                            let mut index_map_lock = index_map_arc.lock().unwrap();
+                            let mut index_map_lock = index_map_delta.lock().unwrap();
                             let mut chunk_data_file_lock = chunk_data_file.lock().unwrap();
                             let mut chunk_index_file_lock = chunk_index_file.lock().unwrap();
                             create_chunk_file_data(
