@@ -33,8 +33,10 @@ pub struct StaleCompressionFile(pub Arc<Mutex<File>>);
 
 #[derive(Resource)]
 pub struct UniformChunkMap {
-    pub air_chunks: Arc<Mutex<(HashSet<(i16, i16, i16)>, VecDeque<u64>)>>,
-    pub dirt_chunks: Arc<Mutex<(HashSet<(i16, i16, i16)>, VecDeque<u64>)>>,
+    pub air_chunks: Arc<Mutex<HashSet<(i16, i16, i16)>>>,
+    pub dirt_chunks: Arc<Mutex<HashSet<(i16, i16, i16)>>>,
+    pub uniform_air_empty_offsets: Arc<Mutex<VecDeque<u64>>>,
+    pub uniform_dirt_empty_offsets: Arc<Mutex<VecDeque<u64>>>,
 }
 
 #[derive(Resource)]
@@ -170,13 +172,13 @@ pub fn setup_chunk_loading(mut commands: Commands) {
         .read(true)
         .open(root.join("data/chunk_data.txt"))
         .unwrap();
-    let mut air_compression_file = OpenOptions::new()
+    let air_compression_file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .open(root.join("data/air_compression_data.txt"))
         .unwrap();
-    let mut dirt_compression_file = OpenOptions::new()
+    let dirt_compression_file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
@@ -191,20 +193,6 @@ pub fn setup_chunk_loading(mut commands: Commands) {
         .unwrap();
     commands.insert_resource(ChunkDataFileReadWrite(Arc::new(Mutex::new(data_file))));
     commands.insert_resource(ChunkDataFileRead(Arc::new(Mutex::new(data_file_read))));
-    let uniform_air_chunks = load_uniform_chunks(&mut air_compression_file);
-    let uniform_dirt_chunks = load_uniform_chunks(&mut dirt_compression_file);
-    println!(
-        "Loaded {} compressed air chunks",
-        uniform_air_chunks.0.len()
-    );
-    println!(
-        "Loaded {} compressed dirt chunks",
-        uniform_dirt_chunks.0.len()
-    );
-    commands.insert_resource(UniformChunkMap {
-        air_chunks: Arc::new(Mutex::new(uniform_air_chunks)),
-        dirt_chunks: Arc::new(Mutex::new(uniform_dirt_chunks)),
-    });
     commands.insert_resource(CompressionFileHandles {
         dirt_file: Arc::new(Mutex::new(dirt_compression_file)),
         air_file: Arc::new(Mutex::new(air_compression_file)),
