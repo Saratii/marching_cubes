@@ -129,9 +129,11 @@ pub fn setup_chunk_driver(
     let mut air_file_lock = compression_files.air_file.lock().unwrap();
     let (uniform_air_chunks, empty_air_offsets) = load_uniform_chunks(&mut air_file_lock);
     drop(air_file_lock);
+    let uniform_air_chunks = Arc::new(uniform_air_chunks);
     let mut dirt_file_lock = compression_files.dirt_file.lock().unwrap();
     let (uniform_dirt_chunks, empty_dirt_offsets) = load_uniform_chunks(&mut dirt_file_lock);
     drop(dirt_file_lock);
+    let uniform_dirt_chunks = Arc::new(uniform_dirt_chunks);
     println!("Loaded {} compressed air chunks", uniform_air_chunks.len());
     println!(
         "Loaded {} compressed dirt chunks",
@@ -159,8 +161,8 @@ pub fn setup_chunk_driver(
         let svo_arc = Arc::clone(&svo);
         let chunk_spawn_channel = chunk_spawn_sender.clone();
         let fbm_clone = fbm.clone();
-        let uniform_air_chunks_read_only = uniform_air_chunks.clone();
-        let uniform_dirt_chunks_read_only = uniform_dirt_chunks.clone();
+        let uniform_air_chunks_read_only = Arc::clone(&uniform_air_chunks);
+        let uniform_dirt_chunks_read_only = Arc::clone(&uniform_dirt_chunks);
         let uniform_air_empty_offsets_arc = Arc::clone(&uniform_air_empty_offsets);
         let uniform_dirt_empty_offsets_arc = Arc::clone(&uniform_dirt_empty_offsets);
         thread::spawn(move || {
@@ -220,8 +222,8 @@ fn chunk_loader_thread(
     svo: Arc<Mutex<ChunkSvo>>,
     chunk_spawn_channel: Sender<ChunkSpawnResult>,
     fbm: GeneratorWrapper<SafeNode>,
-    uniform_air_chunks_read_only: HashSet<(i16, i16, i16)>,
-    uniform_dirt_chunks_read_only: HashSet<(i16, i16, i16)>,
+    uniform_air_chunks_read_only: Arc<HashSet<(i16, i16, i16)>>,
+    uniform_dirt_chunks_read_only: Arc<HashSet<(i16, i16, i16)>>,
     uniform_air_empty_offsets: Arc<Mutex<VecDeque<u64>>>,
     uniform_dirt_empty_offsets: Arc<Mutex<VecDeque<u64>>>,
 ) {
