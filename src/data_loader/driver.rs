@@ -1,3 +1,11 @@
+use crate::data_loader::file_loader::load_uniform_chunks;
+use bevy::prelude::*;
+use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
+use crossbeam_channel::{Receiver, Sender, unbounded};
+use fastnoise2::{
+    SafeNode,
+    generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
+};
 #[cfg(feature = "timers")]
 use std::io::Write;
 #[cfg(feature = "timers")]
@@ -10,14 +18,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
-};
-
-use bevy::prelude::*;
-use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
-use crossbeam_channel::{Receiver, Sender, unbounded};
-use fastnoise2::{
-    SafeNode,
-    generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
 };
 
 use crate::{
@@ -106,7 +106,6 @@ pub fn setup_chunk_driver(
     mut commands: Commands,
     index_map: Res<ChunkIndexMap>,
     player_translation_mutex_handle: Res<PlayerTranslationMutexHandle>,
-    uniform_chunks_map: Res<UniformChunkMap>,
     chunk_data_file: Res<ChunkDataFileReadWrite>,
     chunk_index_file: Res<ChunkIndexFile>,
     compression_files: Res<CompressionFileHandles>,
@@ -127,14 +126,29 @@ pub fn setup_chunk_driver(
     let svo = Arc::new(Mutex::new(ChunkSvo::new()));
     commands.insert_resource(TerrainChunkMap(terrain_chunk_map));
     commands.insert_resource(ChunkSpawnReciever(chunk_spawn_reciever));
+    let mut air_file_lock = compression_files.air_file.lock().unwrap();
+    let (uniform_air_chunks, empty_air_offsets) = load_uniform_chunks(&mut air_file_lock);
+    drop(air_file_lock);
+    let mut dirt_file_lock = compression_files.dirt_file.lock().unwrap();
+    let (uniform_dirt_chunks, empty_dirt_offsets) = load_uniform_chunks(&mut dirt_file_lock);
+    drop(dirt_file_lock);
+    println!("Loaded {} compressed air chunks", uniform_air_chunks.len());
+    println!(
+        "Loaded {} compressed dirt chunks",
+        uniform_dirt_chunks.len()
+    );
     let fbm =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
     commands.insert_resource(NoiseGenerator(fbm.clone()));
-    for thread_idx in 0..2 {
+    let uniform_air_empty_offsets = Arc::new(Mutex::new(empty_air_offsets));
+    let uniform_dirt_empty_offsets = Arc::new(Mutex::new(empty_dirt_offsets));
+    let uniform_air_chunk_deltas = Arc::new(Mutex::new(HashSet::new()));
+    let uniform_dirt_chunk_deltas = Arc::new(Mutex::new(HashSet::new()));
+    for thread_idx in 0..num_processors.saturating_sub(2) {
         //leave one processor free for main thread and one for svo manager <- might be wrong
         let index_map_arc = Arc::clone(&index_map.0);
-        let uniform_air_chunks_arc = Arc::clone(&uniform_chunks_map.air_chunks);
-        let uniform_dirt_chunks_arc = Arc::clone(&uniform_chunks_map.dirt_chunks);
+        let uniform_air_chunks_delta = Arc::clone(&uniform_air_chunk_deltas);
+        let uniform_dirt_chunks_delta = Arc::clone(&uniform_dirt_chunk_deltas);
         let chunk_data_file_arc = Arc::clone(&chunk_data_file.0);
         let chunk_index_file_arc = Arc::clone(&chunk_index_file.0);
         let air_compression_file_arc = Arc::clone(&compression_files.air_file);
@@ -145,14 +159,18 @@ pub fn setup_chunk_driver(
         let svo_arc = Arc::clone(&svo);
         let chunk_spawn_channel = chunk_spawn_sender.clone();
         let fbm_clone = fbm.clone();
+        let uniform_air_chunks_read_only = uniform_air_chunks.clone();
+        let uniform_dirt_chunks_read_only = uniform_dirt_chunks.clone();
+        let uniform_air_empty_offsets_arc = Arc::clone(&uniform_air_empty_offsets);
+        let uniform_dirt_empty_offsets_arc = Arc::clone(&uniform_dirt_empty_offsets);
         thread::spawn(move || {
             chunk_loader_thread(
                 thread_idx,
                 req_rx_clone,
                 res_tx_clone,
                 index_map_arc,
-                uniform_air_chunks_arc,
-                uniform_dirt_chunks_arc,
+                uniform_air_chunks_delta,
+                uniform_dirt_chunks_delta,
                 chunk_data_file_arc,
                 chunk_index_file_arc,
                 air_compression_file_arc,
@@ -161,6 +179,10 @@ pub fn setup_chunk_driver(
                 svo_arc,
                 chunk_spawn_channel,
                 fbm_clone,
+                uniform_air_chunks_read_only,
+                uniform_dirt_chunks_read_only,
+                uniform_air_empty_offsets_arc,
+                uniform_dirt_empty_offsets_arc,
             );
         });
     }
@@ -173,6 +195,12 @@ pub fn setup_chunk_driver(
             svo,
         );
     });
+    commands.insert_resource(UniformChunkMap {
+        air_chunks: uniform_air_chunk_deltas,
+        dirt_chunks: uniform_dirt_chunk_deltas,
+        uniform_air_empty_offsets,
+        uniform_dirt_empty_offsets,
+    });
 }
 
 //compute thread for loading chunks from disk
@@ -182,8 +210,8 @@ fn chunk_loader_thread(
     req_rx: Receiver<ChunkRequest>,
     res_tx: Sender<ChunkResult>,
     index_map_arc: Arc<Mutex<HashMap<(i16, i16, i16), u64>>>,
-    uniform_air_chunks: Arc<Mutex<(HashSet<(i16, i16, i16)>, VecDeque<u64>)>>,
-    uniform_dirt_chunks: Arc<Mutex<(HashSet<(i16, i16, i16)>, VecDeque<u64>)>>,
+    uniform_air_chunks_delta: Arc<Mutex<HashSet<(i16, i16, i16)>>>,
+    uniform_dirt_chunks_delta: Arc<Mutex<HashSet<(i16, i16, i16)>>>,
     chunk_data_file: Arc<Mutex<File>>,
     chunk_index_file: Arc<Mutex<File>>,
     air_compression_file: Arc<Mutex<File>>,
@@ -192,6 +220,10 @@ fn chunk_loader_thread(
     svo: Arc<Mutex<ChunkSvo>>,
     chunk_spawn_channel: Sender<ChunkSpawnResult>,
     fbm: GeneratorWrapper<SafeNode>,
+    uniform_air_chunks_read_only: HashSet<(i16, i16, i16)>,
+    uniform_dirt_chunks_read_only: HashSet<(i16, i16, i16)>,
+    uniform_air_empty_offsets: Arc<Mutex<VecDeque<u64>>>,
+    uniform_dirt_empty_offsets: Arc<Mutex<VecDeque<u64>>>,
 ) {
     let mut priority_queue = BinaryHeap::new();
     #[cfg(feature = "timers")]
@@ -225,17 +257,24 @@ fn chunk_loader_thread(
         }
         if let Some(req) = priority_queue.pop() {
             let chunk_coord = req.position;
-            let uniform_air_chunks_lock = uniform_air_chunks.lock().unwrap();
-            let is_uniform_air = uniform_air_chunks_lock.0.contains(&chunk_coord);
-            drop(uniform_air_chunks_lock);
-            let is_uniform_dirt = if is_uniform_air {
+            //first search the read only without locking
+            let mut is_uniform_air = uniform_air_chunks_read_only.contains(&chunk_coord);
+            let mut is_uniform_dirt = if is_uniform_air {
                 false
             } else {
-                let uniform_dirt_chunks_lock = uniform_dirt_chunks.lock().unwrap();
-                let contains = uniform_dirt_chunks_lock.0.contains(&chunk_coord);
-                drop(uniform_dirt_chunks_lock);
-                contains
+                uniform_dirt_chunks_read_only.contains(&chunk_coord)
             };
+            //if neither, lock and double check the runtime uniform deltas
+            if !is_uniform_air && !is_uniform_dirt {
+                let uniform_air_chunks_lock = uniform_air_chunks_delta.lock().unwrap();
+                is_uniform_air = uniform_air_chunks_lock.contains(&chunk_coord);
+                drop(uniform_air_chunks_lock);
+                if !is_uniform_air {
+                    let uniform_dirt_chunks_lock = uniform_dirt_chunks_delta.lock().unwrap();
+                    is_uniform_dirt = uniform_dirt_chunks_lock.contains(&chunk_coord);
+                    drop(uniform_dirt_chunks_lock);
+                }
+            }
             let has_mesh = if is_uniform_air || is_uniform_dirt {
                 if req.load_status == 0 {
                     let data = if is_uniform_air {
@@ -268,30 +307,38 @@ fn chunk_loader_thread(
                     let chunk = TerrainChunk::new(chunk_coord, &fbm);
                     match chunk.is_uniform {
                         UniformChunk::Air => {
-                            let mut uniform_air_chunks_lock = uniform_air_chunks.lock().unwrap();
-                            uniform_air_chunks_lock.0.insert(chunk_coord);
+                            let mut uniform_air_chunks_lock =
+                                uniform_air_chunks_delta.lock().unwrap();
+                            uniform_air_chunks_lock.insert(chunk_coord);
+                            drop(uniform_air_chunks_lock);
                             let mut air_compression_file_lock =
                                 air_compression_file.lock().unwrap();
+                            let mut uniform_air_empty_offsets_lock =
+                                uniform_air_empty_offsets.lock().unwrap();
                             write_uniform_chunk(
                                 &chunk_coord,
                                 &mut air_compression_file_lock,
-                                &mut uniform_air_chunks_lock.1,
+                                &mut uniform_air_empty_offsets_lock,
                             );
                             drop(air_compression_file_lock);
-                            drop(uniform_air_chunks_lock);
+                            drop(uniform_air_empty_offsets_lock);
                         }
                         UniformChunk::Dirt => {
-                            let mut uniform_dirt_chunks_lock = uniform_dirt_chunks.lock().unwrap();
-                            uniform_dirt_chunks_lock.0.insert(chunk_coord);
+                            let mut uniform_dirt_chunks_lock =
+                                uniform_dirt_chunks_delta.lock().unwrap();
+                            uniform_dirt_chunks_lock.insert(chunk_coord);
+                            drop(uniform_dirt_chunks_lock);
                             let mut dirt_compression_file_lock =
                                 dirt_compression_file.lock().unwrap();
+                            let mut uniform_dirt_empty_offsets_lock =
+                                uniform_dirt_empty_offsets.lock().unwrap();
                             write_uniform_chunk(
                                 &chunk_coord,
                                 &mut dirt_compression_file_lock,
-                                &mut uniform_dirt_chunks_lock.1,
+                                &mut uniform_dirt_empty_offsets_lock,
                             );
                             drop(dirt_compression_file_lock);
-                            drop(uniform_dirt_chunks_lock);
+                            drop(uniform_dirt_empty_offsets_lock);
                         }
                         UniformChunk::NonUniform => {
                             let mut index_map_lock = index_map_arc.lock().unwrap();

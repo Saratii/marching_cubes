@@ -285,29 +285,37 @@ fn handle_digging_input(
                             drop(chunk_index_file_locked);
                             drop(chunk_data_file_locked);
                             if chunk_clone.is_uniform == UniformChunk::Air {
-                                let mut uniform_chunks_map_lock =
+                                let uniform_chunks_map_lock =
                                     uniform_chunks_map.air_chunks.lock().unwrap();
                                 let mut air_file_lock =
                                     compression_file_handles.air_file.lock().unwrap();
+                                let mut uniform_air_empty_offsets_lock =
+                                    uniform_chunks_map.uniform_air_empty_offsets.lock().unwrap();
                                 remove_uniform_chunk(
                                     &chunk_coord,
                                     &mut air_file_lock,
-                                    &mut uniform_chunks_map_lock.1,
+                                    &mut uniform_air_empty_offsets_lock,
                                 );
                                 drop(uniform_chunks_map_lock);
                                 drop(air_file_lock);
+                                drop(uniform_air_empty_offsets_lock);
                             } else if chunk_clone.is_uniform == UniformChunk::Dirt {
-                                let mut uniform_chunks_map_lock =
+                                let uniform_chunks_map_lock =
                                     uniform_chunks_map.dirt_chunks.lock().unwrap();
                                 let mut dirt_file_lock =
                                     compression_file_handles.dirt_file.lock().unwrap();
+                                let mut uniform_dirt_empty_offsets_lock = uniform_chunks_map
+                                    .uniform_dirt_empty_offsets
+                                    .lock()
+                                    .unwrap();
                                 remove_uniform_chunk(
                                     &chunk_coord,
                                     &mut dirt_file_lock,
-                                    &mut uniform_chunks_map_lock.1,
+                                    &mut uniform_dirt_empty_offsets_lock,
                                 );
                                 drop(dirt_file_lock);
                                 drop(uniform_chunks_map_lock);
+                                drop(uniform_dirt_empty_offsets_lock);
                             }
                             drop(chunk_index_map_lock);
                         }
