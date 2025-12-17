@@ -46,13 +46,12 @@ fn benchmark_write_single_existing_chunk(c: &mut Criterion) {
         .unwrap();
     let index_map = load_chunk_index_map(&mut index_file);
     let first_chunk_coord = *index_map.keys().next().unwrap();
-    let file_offset = index_map.get(&first_chunk_coord).unwrap();
-    let chunk = load_chunk_data(&mut data_file, *file_offset);
+    let byte_offset = index_map.get(&first_chunk_coord).unwrap();
+    let chunk = load_chunk_data(&mut data_file, *byte_offset);
     c.bench_function("write_single_existing_chunk", |b| {
         b.iter(|| {
             update_chunk_file_data(
-                black_box(&index_map),
-                black_box(first_chunk_coord),
+                black_box(*byte_offset),
                 black_box(&chunk),
                 black_box(&mut data_file),
             );

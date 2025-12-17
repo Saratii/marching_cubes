@@ -40,7 +40,10 @@ pub struct UniformChunkMap {
 }
 
 #[derive(Resource)]
-pub struct ChunkIndexMap(pub Arc<Mutex<HashMap<(i16, i16, i16), u64>>>);
+pub struct ChunkIndexMapRead(pub Arc<HashMap<(i16, i16, i16), u64>>);
+
+#[derive(Resource)]
+pub struct ChunkIndexMapDelta(pub Arc<Mutex<HashMap<(i16, i16, i16), u64>>>);
 
 #[derive(Resource)]
 pub struct ChunkEntityMap(pub HashMap<(i16, i16, i16), Entity>);
@@ -98,15 +101,9 @@ pub fn create_chunk_file_data(
     chunk_index_map.insert(*chunk_coord, byte_offset);
 }
 
-pub fn update_chunk_file_data(
-    chunk_index_map: &HashMap<(i16, i16, i16), u64>,
-    chunk_coord: (i16, i16, i16),
-    chunk: &TerrainChunk,
-    chunk_data_file: &mut File,
-) {
-    let byte_offset = chunk_index_map.get(&chunk_coord).unwrap();
+pub fn update_chunk_file_data(byte_offset: u64, chunk: &TerrainChunk, chunk_data_file: &mut File) {
     let buffer = serialize_chunk_data(chunk);
-    chunk_data_file.seek(SeekFrom::Start(*byte_offset)).unwrap();
+    chunk_data_file.seek(SeekFrom::Start(byte_offset)).unwrap();
     chunk_data_file.write_all(&buffer).unwrap();
     chunk_data_file.flush().unwrap();
 }
@@ -199,7 +196,10 @@ pub fn setup_chunk_loading(mut commands: Commands) {
     });
     let index_map = load_chunk_index_map(&mut index_file);
     println!("Loaded {} chunks into index map", index_map.len());
-    commands.insert_resource(ChunkIndexMap(Arc::new(Mutex::new(index_map))));
+    commands.insert_resource(ChunkIndexMapDelta(Arc::new(Mutex::new(HashMap::new()))));
+    commands.insert_resource(ChunkIndexMapRead(Arc::new(load_chunk_index_map(
+        &mut index_file,
+    ))));
     commands.insert_resource(ChunkIndexFile(Arc::new(Mutex::new(index_file))));
 }
 

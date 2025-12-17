@@ -1,5 +1,3 @@
-use std::process::exit;
-
 use bevy::{
     asset::RenderAssetUsages,
     image::{ImageLoaderSettings, ImageSampler},
@@ -12,12 +10,8 @@ use fastnoise2::{SafeNode, generator::GeneratorWrapper};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    conversions::{chunk_coord_to_world_pos, flatten_index, world_pos_to_chunk_coord},
-    data_loader::file_loader::{
-        ChunkDataFileReadWrite, ChunkIndexFile, ChunkIndexMap, create_chunk_file_data,
-        get_project_root,
-    },
-    player::player::PLAYER_SPAWN,
+    conversions::flatten_index,
+    data_loader::file_loader::get_project_root,
     terrain::{chunk_generator::generate_densities, terrain_material::TerrainMaterial},
 };
 
@@ -31,7 +25,7 @@ pub const Z0_RADIUS_SQUARED: f32 = Z0_RADIUS * Z0_RADIUS;
 pub const Z1_RADIUS: f32 = 100.0; //in world units. Distance where chunks are loaded at full res but not stored in memory.
 pub const Z1_RADIUS_SQUARED: f32 = Z1_RADIUS * Z1_RADIUS;
 pub const VOXEL_SIZE: f32 = CHUNK_SIZE / (SAMPLES_PER_CHUNK_DIM - 1) as f32;
-pub const Z2_RADIUS: f32 = 1400.0;
+pub const Z2_RADIUS: f32 = 900.0;
 pub const Z2_RADIUS_SQUARED: f32 = Z2_RADIUS * Z2_RADIUS;
 pub const MAX_RADIUS: f32 = Z0_RADIUS.max(Z1_RADIUS).max(Z2_RADIUS);
 pub const MAX_RADIUS_SQUARED: f32 = MAX_RADIUS * MAX_RADIUS;
@@ -140,57 +134,6 @@ pub fn setup_map(
     });
     commands.insert_resource(TerrainMaterialHandle(standard_terrain_material_handle));
     commands.insert_resource(TextureAtlasHandle(atlas_texture_handle));
-}
-
-//writes data to disk for a large amount of chunks without saving to memory
-// 900GB written in 8 minutes HEHE
-pub fn generate_large_map_utility(
-    chunk_index_map: Res<ChunkIndexMap>,
-    fbm: Res<NoiseFunction>,
-    chunk_index_file: ResMut<ChunkIndexFile>,
-    chunk_data_file: ResMut<ChunkDataFileReadWrite>,
-) {
-    const CREATION_RADIUS: f32 = 150.0;
-    const CREATION_RADIUS_SQUARED: f32 = CREATION_RADIUS * CREATION_RADIUS;
-    let player_chunk = world_pos_to_chunk_coord(&PLAYER_SPAWN);
-    let min_chunk = (
-        player_chunk.0 - CREATION_RADIUS as i16,
-        player_chunk.1 - CREATION_RADIUS as i16,
-        player_chunk.2 - CREATION_RADIUS as i16,
-    );
-    let max_chunk = (
-        player_chunk.0 + CREATION_RADIUS as i16,
-        player_chunk.1 + CREATION_RADIUS as i16,
-        player_chunk.2 + CREATION_RADIUS as i16,
-    );
-    for chunk_x in min_chunk.0..=max_chunk.0 {
-        for chunk_z in min_chunk.2..=max_chunk.2 {
-            for chunk_y in min_chunk.1..=max_chunk.1 {
-                let chunk_coord = (chunk_x, chunk_y, chunk_z);
-                let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
-                if chunk_world_pos.distance_squared(PLAYER_SPAWN) < CREATION_RADIUS_SQUARED {
-                    let mut locked_index_map = chunk_index_map.0.lock().unwrap();
-                    if !locked_index_map.contains_key(&chunk_coord) {
-                        let chunk = TerrainChunk::new(chunk_coord, &fbm.0);
-                        let mut chunk_data_file_locked = chunk_data_file.0.lock().unwrap();
-                        let mut chunk_index_file_locked = chunk_index_file.0.lock().unwrap();
-                        create_chunk_file_data(
-                            &chunk,
-                            &chunk_coord,
-                            &mut locked_index_map,
-                            &mut chunk_data_file_locked,
-                            &mut chunk_index_file_locked,
-                        );
-                        drop(chunk_index_file_locked);
-                        drop(chunk_data_file_locked);
-                    };
-                    drop(locked_index_map);
-                }
-            }
-        }
-    }
-    println!("Finished generating large map.");
-    exit(0);
 }
 
 pub fn generate_bevy_mesh(
