@@ -1,4 +1,6 @@
 #[cfg(feature = "timers")]
+use std::io::Write;
+#[cfg(feature = "timers")]
 use std::time::Instant;
 use std::{
     collections::{BinaryHeap, HashMap, HashSet, VecDeque},
@@ -109,6 +111,10 @@ pub fn setup_chunk_driver(
     chunk_index_file: Res<ChunkIndexFile>,
     compression_files: Res<CompressionFileHandles>,
 ) {
+    #[cfg(feature = "timers")]
+    {
+        std::fs::create_dir_all("plots").unwrap();
+    }
     let num_processors = thread::available_parallelism().unwrap().get();
     info!("Number of Available Processors: {}", num_processors);
     commands.insert_resource(LogicalProcesors(num_processors));
@@ -124,7 +130,7 @@ pub fn setup_chunk_driver(
     let fbm =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
     commands.insert_resource(NoiseGenerator(fbm.clone()));
-    for _ in 0..1.max(num_processors - 2) {
+    for thread_idx in 0..2 {
         //leave one processor free for main thread and one for svo manager <- might be wrong
         let index_map_arc = Arc::clone(&index_map.0);
         let uniform_air_chunks_arc = Arc::clone(&uniform_chunks_map.air_chunks);
@@ -141,6 +147,7 @@ pub fn setup_chunk_driver(
         let fbm_clone = fbm.clone();
         thread::spawn(move || {
             chunk_loader_thread(
+                thread_idx,
                 req_rx_clone,
                 res_tx_clone,
                 index_map_arc,
@@ -171,6 +178,7 @@ pub fn setup_chunk_driver(
 //compute thread for loading chunks from disk
 //recieves chunk load requests from svo_manager_thread and returns the data
 fn chunk_loader_thread(
+    #[cfg_attr(not(feature = "timers"), allow(unused_variables))] thread_idx: usize,
     req_rx: Receiver<ChunkRequest>,
     res_tx: Sender<ChunkResult>,
     index_map_arc: Arc<Mutex<HashMap<(i16, i16, i16), u64>>>,
@@ -189,9 +197,25 @@ fn chunk_loader_thread(
     #[cfg(feature = "timers")]
     let mut chunks_generated = 0;
     #[cfg(feature = "timers")]
-    let mut last_debug_print_time = Instant::now();
+    let mut chunks_with_entities = 0;
     #[cfg(feature = "timers")]
-    let mut uniform_chunks_generated = 0;
+    let mut last_record_time = Instant::now();
+    #[cfg(feature = "timers")]
+    let start_time = Instant::now();
+    #[cfg(feature = "timers")]
+    let mut throughput_file =
+        File::create(format!("plots/latest/throughput_thread_{}.csv", thread_idx)).unwrap();
+    #[cfg(feature = "timers")]
+    writeln!(
+        throughput_file,
+        "time_seconds,chunks_per_second,entity_chunks_per_second"
+    )
+    .unwrap();
+    #[cfg(feature = "timers")]
+    let mut queue_size_file =
+        File::create(format!("plots/latest/queue_size_thread_{}.csv", thread_idx)).unwrap();
+    #[cfg(feature = "timers")]
+    writeln!(queue_size_file, "time_seconds,queue_size").unwrap();
     loop {
         if priority_queue.is_empty() {
             priority_queue.push(req_rx.recv().expect("channel closed"));
@@ -228,10 +252,6 @@ fn chunk_loader_thread(
                         }
                     };
                     terrain_chunk_map.lock().unwrap().insert(chunk_coord, data);
-                }
-                #[cfg(feature = "timers")]
-                {
-                    uniform_chunks_generated += 1;
                 }
                 false
             } else {
@@ -366,23 +386,26 @@ fn chunk_loader_thread(
             #[cfg(feature = "timers")]
             {
                 chunks_generated += 1;
-                if Instant::now()
-                    .duration_since(last_debug_print_time)
-                    .as_secs()
-                    >= 10
-                {
-                    println!(
-                        "Chunk Loader Time: {:?} ms -> {} chunks and {} uniform chunks. Priority Queue Size: {}",
-                        Instant::now()
-                            .duration_since(last_debug_print_time)
-                            .as_millis(),
-                        chunks_generated,
-                        uniform_chunks_generated,
-                        priority_queue.len()
-                    );
+                if has_mesh {
+                    chunks_with_entities += 1;
+                }
+                let elapsed = Instant::now().duration_since(last_record_time);
+                if elapsed.as_secs() >= 1 {
+                    let time_seconds = Instant::now().duration_since(start_time).as_secs_f64();
+                    let chunks_per_second = chunks_generated as f64 / elapsed.as_secs_f64();
+                    let entity_chunks_per_second =
+                        chunks_with_entities as f64 / elapsed.as_secs_f64();
+                    let queue_size = priority_queue.len();
+                    writeln!(
+                        &mut throughput_file,
+                        "{},{},{}",
+                        time_seconds, chunks_per_second, entity_chunks_per_second
+                    )
+                    .unwrap();
+                    writeln!(&mut queue_size_file, "{},{}", time_seconds, queue_size).unwrap();
                     chunks_generated = 0;
-                    last_debug_print_time = Instant::now();
-                    uniform_chunks_generated = 0;
+                    chunks_with_entities = 0;
+                    last_record_time = Instant::now();
                 }
             }
         }
@@ -472,10 +495,11 @@ fn svo_manager_thread(
         }
         #[cfg(feature = "timers")]
         {
-            if !first_completion_printed && chunks_being_loaded.len() == 0 {
+            if !first_completion_printed && chunks_being_loaded.is_empty() {
                 let run_time = Instant::now().duration_since(t0).as_millis();
                 println!("SVO Manager First Completion Time: {:?} ms", run_time);
                 first_completion_printed = true;
+                INITIAL_CHUNKS_LOADED.store(true, Ordering::Relaxed);
             }
         }
     }
