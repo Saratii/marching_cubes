@@ -10,34 +10,11 @@ const BYTES_PER_VOXEL: usize = std::mem::size_of::<i16>() + std::mem::size_of::<
 const CHUNK_SERIALIZED_SIZE: usize = SAMPLES_PER_CHUNK * BYTES_PER_VOXEL;
 
 #[derive(Resource)]
-pub struct ChunkIndexFile(pub Arc<Mutex<File>>);
-
-#[derive(Resource)]
-pub struct ChunkDataFileRead(pub Arc<Mutex<File>>);
-
-#[derive(Resource)]
-pub struct ChunkDataFileReadWrite(pub Arc<Mutex<File>>);
-
-#[derive(Resource)]
 pub struct PlayerDataFile(pub File);
-
-#[derive(Resource)]
-pub struct CompressionFileHandles {
-    pub dirt_file: Arc<Mutex<File>>,
-    pub air_file: Arc<Mutex<File>>,
-}
 
 //when a non-uniform chunk becomes uniform and is removed from the main data file, mark its spot as available to be reused
 #[derive(Resource)]
 pub struct StaleCompressionFile(pub Arc<Mutex<File>>);
-
-#[derive(Resource)]
-pub struct UniformChunkMap {
-    pub air_chunks: Arc<Mutex<HashSet<(i16, i16, i16)>>>,
-    pub dirt_chunks: Arc<Mutex<HashSet<(i16, i16, i16)>>>,
-    pub uniform_air_empty_offsets: Arc<Mutex<VecDeque<u64>>>,
-    pub uniform_dirt_empty_offsets: Arc<Mutex<VecDeque<u64>>>,
-}
 
 #[derive(Resource)]
 pub struct ChunkIndexMapRead(pub Arc<HashMap<(i16, i16, i16), u64>>);
@@ -153,34 +130,6 @@ pub fn setup_chunk_loading(mut commands: Commands) {
         .open(root.join("data/player_data.txt"))
         .unwrap();
     commands.insert_resource(PlayerDataFile(player_data_file));
-    let mut index_file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .open(root.join("data/chunk_index_data.txt"))
-        .unwrap();
-    let data_file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .open(root.join("data/chunk_data.txt"))
-        .unwrap();
-    let data_file_read = OpenOptions::new()
-        .read(true)
-        .open(root.join("data/chunk_data.txt"))
-        .unwrap();
-    let air_compression_file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .open(root.join("data/air_compression_data.txt"))
-        .unwrap();
-    let dirt_compression_file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .open(root.join("data/dirt_compression_data.txt"))
-        .unwrap();
     #[allow(unused)]
     let stale_chunks_file = OpenOptions::new()
         .read(true)
@@ -188,19 +137,7 @@ pub fn setup_chunk_loading(mut commands: Commands) {
         .create(true)
         .open(root.join("data/stale_chunks.txt"))
         .unwrap();
-    commands.insert_resource(ChunkDataFileReadWrite(Arc::new(Mutex::new(data_file))));
-    commands.insert_resource(ChunkDataFileRead(Arc::new(Mutex::new(data_file_read))));
-    commands.insert_resource(CompressionFileHandles {
-        dirt_file: Arc::new(Mutex::new(dirt_compression_file)),
-        air_file: Arc::new(Mutex::new(air_compression_file)),
-    });
-    let index_map = load_chunk_index_map(&mut index_file);
-    println!("Loaded {} chunks into index map", index_map.len());
     commands.insert_resource(ChunkIndexMapDelta(Arc::new(Mutex::new(HashMap::new()))));
-    commands.insert_resource(ChunkIndexMapRead(Arc::new(load_chunk_index_map(
-        &mut index_file,
-    ))));
-    commands.insert_resource(ChunkIndexFile(Arc::new(Mutex::new(index_file))));
 }
 
 // Load all chunk coords and track empty slots
