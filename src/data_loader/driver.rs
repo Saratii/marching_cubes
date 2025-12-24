@@ -207,7 +207,7 @@ pub fn setup_chunk_driver(
         );
     });
     for thread_idx in 0..num_processors.saturating_sub(2) {
-        //leave one processor free for main thread and one for svo manager <- might be wrong1
+        //leave one processor free for main thread and one for svo manager <- might be wrong
         let index_map_read = Arc::clone(&index_map_read);
         let index_map_delta = Arc::clone(&index_map_delta.0);
         let uniform_air_chunks_delta = Arc::clone(&uniform_air_chunk_deltas);
@@ -268,12 +268,7 @@ fn dedicated_write_thread(
     mut air_empty_offsets: VecDeque<u64>,
     mut dirt_empty_offsets: VecDeque<u64>,
 ) {
-    let mut time_since_last = std::time::Instant::now();
     while let Ok(cmd) = rx.recv() {
-        if time_since_last.elapsed().as_secs() >= 1 {
-            println!("channel len: {}", rx.len());
-            time_since_last = std::time::Instant::now();
-        }
         match cmd {
             WriteCmd::WriteNonUniform { chunk, coord } => {
                 let mut index_map = index_map_delta.lock().unwrap();
@@ -641,9 +636,11 @@ pub fn chunk_spawn_reciever(
     mut chunk_entity_map: ResMut<ChunkEntityMap>,
     terrain_chunk_map: Res<TerrainChunkMap>,
 ) {
+    let mut count = 0;
     while let Ok(req) = req_rx.0.try_recv() {
         #[cfg(feature = "timers")]
         let t0 = Instant::now();
+        count += 1;
         match req {
             ChunkSpawnResult::ToSpawn((chunk, collider_opt, mesh)) => {
                 let entity = match collider_opt {
@@ -679,6 +676,10 @@ pub fn chunk_spawn_reciever(
                 terrain_chunk_map_lock.remove(&chunk_coord);
                 drop(terrain_chunk_map_lock);
             }
+        }
+        if count >= 40 {
+            //this is stupid but bevy is slow
+            return;
         }
         #[cfg(feature = "timers")]
         {
