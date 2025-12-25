@@ -18,13 +18,13 @@ pub fn mc_mesh_generation(
     materials: &[u8],
     samples_per_chunk_dim: usize,
     half_extent: f32,
-) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<u32>) {
+) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>, Vec<u32>) {
     let mut edge_to_vertex: HashMap<EdgeKey, u32> = HashMap::with_hasher(FxBuildHasher::default());
     let cubes_per_chunk_dim = samples_per_chunk_dim - 1;
     let voxel_size = (half_extent * 2.0) / (samples_per_chunk_dim - 1) as f32;
     let mut vertices = Vec::new();
     let mut normals = Vec::new();
-    let mut uvs = Vec::new();
+    let mut material_ids = Vec::new();
     let mut indices = Vec::new();
     let stride = samples_per_chunk_dim * samples_per_chunk_dim;
     for z in 0..cubes_per_chunk_dim {
@@ -46,7 +46,7 @@ pub fn mc_mesh_generation(
                     base,
                     &mut vertices,
                     &mut normals,
-                    &mut uvs,
+                    &mut material_ids,
                     &mut indices,
                     densities,
                     materials,
@@ -58,7 +58,15 @@ pub fn mc_mesh_generation(
             }
         }
     }
-    (vertices, normals, uvs, indices)
+    for normal in normals.iter_mut() {
+        let len = (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]).sqrt();
+        if len > 0.0001 {
+            normal[0] /= len;
+            normal[1] /= len;
+            normal[2] /= len;
+        }
+    }
+    (vertices, normals, material_ids, indices)
 }
 
 #[inline(always)]
@@ -80,7 +88,7 @@ fn process_cube_with_cache(
     base: usize,
     vertices: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
-    uvs: &mut Vec<[f32; 2]>,
+    material_ids: &mut Vec<u32>,
     indices: &mut Vec<u32>,
     densities: &[i16],
     materials: &[u8],
@@ -106,7 +114,7 @@ fn process_cube_with_cache(
         voxel_size,
         vertices,
         normals,
-        uvs,
+        material_ids,
         materials,
         samples_per_chunk_dim,
         indices,
@@ -128,7 +136,7 @@ fn triangulate_cube_with_cache(
     voxel_size: f32,
     vertices: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
-    uvs: &mut Vec<[f32; 2]>,
+    material_ids: &mut Vec<u32>,
     materials: &[u8],
     samples_per_chunk_dim: usize,
     indices: &mut Vec<u32>,
@@ -151,7 +159,7 @@ fn triangulate_cube_with_cache(
             cube_z,
             vertices,
             normals,
-            uvs,
+            material_ids,
             materials,
             samples_per_chunk_dim,
             stride,
@@ -170,7 +178,7 @@ fn triangulate_cube_with_cache(
             cube_z,
             vertices,
             normals,
-            uvs,
+            material_ids,
             materials,
             samples_per_chunk_dim,
             stride,
@@ -189,7 +197,7 @@ fn triangulate_cube_with_cache(
             cube_z,
             vertices,
             normals,
-            uvs,
+            material_ids,
             materials,
             samples_per_chunk_dim,
             stride,
@@ -243,7 +251,7 @@ fn get_or_create_edge_vertex(
     cube_z: usize,
     vertices: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
-    uvs: &mut Vec<[f32; 2]>,
+    material_ids: &mut Vec<u32>,
     materials: &[u8],
     samples_per_chunk_dim: usize,
     stride: usize,
@@ -277,7 +285,7 @@ fn get_or_create_edge_vertex(
             };
             let idx = vertices.len() as u32;
             vertices.push(position);
-            uvs.push([material as f32, 0.0]);
+            material_ids.push(material as u32);
             normals.push([0.0, 0.0, 0.0]);
             e.insert(idx);
             idx

@@ -43,6 +43,8 @@ Rendering Graphics:
     The textures I use are procedurally generated and have several levels of LOD KTX data. Mipmap data reduces visual artifacts at distance and can lower the rendering load.
     Custom triplaner shader for texture wrapping. Also allows multiple textures to be loaded onto the same mesh via a texture atlas. 
 
+    To save on PCIE bandwidth I rewrote the vertex shader to excluse UV coordinates.
+
 Persistent File Storage:
     All chunk data and some player data is saved to drive. This allows terrain deform operations to be persistant across runs and also quickens the chunk loading time because chunks dont need to be completely regenerated. 
     Currently chunk data is all stored in a few text files in raw byte format. Storing raw bytes is faster for read and write at the cost of human readability.

@@ -1,23 +1,47 @@
 use bevy::{
-    asset::{Asset, Handle},
-    image::Image,
-    pbr::MaterialExtension,
-    reflect::Reflect,
-    render::render_resource::AsBindGroup,
+    mesh::{MeshVertexAttribute, MeshVertexBufferLayoutRef},
+    pbr::{MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline},
+    prelude::*,
+    reflect::TypePath,
+    render::render_resource::{
+        AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError, VertexFormat,
+    },
     shader::ShaderRef,
 };
 
-#[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
-pub struct TerrainMaterial {
+pub const ATTRIBUTE_MATERIAL_ID: MeshVertexAttribute =
+    MeshVertexAttribute::new("MaterialId", 988540918, VertexFormat::Uint32);
+
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
+pub struct TerrainMaterialExtension {
     #[texture(103)]
     #[sampler(104)]
-    pub texture: Handle<Image>,
+    pub base_texture: Handle<Image>,
     #[uniform(105)]
     pub scale: f32,
 }
 
-impl MaterialExtension for TerrainMaterial {
+impl MaterialExtension for TerrainMaterialExtension {
+    fn vertex_shader() -> ShaderRef {
+        "shaders/triplanar.wgsl".into()
+    }
+
     fn fragment_shader() -> ShaderRef {
         "shaders/triplanar.wgsl".into()
+    }
+
+    fn specialize(
+        _pipeline: &MaterialExtensionPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        layout: &MeshVertexBufferLayoutRef,
+        _key: MaterialExtensionKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        let vertex_layout = layout.0.get_layout(&[
+            Mesh::ATTRIBUTE_POSITION.at_shader_location(0),
+            Mesh::ATTRIBUTE_NORMAL.at_shader_location(1),
+            ATTRIBUTE_MATERIAL_ID.at_shader_location(2),
+        ])?;
+        descriptor.vertex.buffers = vec![vertex_layout];
+        Ok(())
     }
 }

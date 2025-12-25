@@ -436,13 +436,13 @@ fn chunk_loader_thread(
                 let has_mesh = chunk_contains_surface(&chunk_sdfs);
                 let has_collider = has_mesh && req.load_status == 0;
                 let (collider, mesh) = if has_mesh {
-                    let (vertices, normals, uvs, indices) = mc_mesh_generation(
+                    let (vertices, normals, material_ids, indices) = mc_mesh_generation(
                         &chunk_sdfs.densities,
                         &chunk_sdfs.materials,
                         SAMPLES_PER_CHUNK_DIM,
                         HALF_CHUNK,
                     );
-                    let mesh = generate_bevy_mesh(vertices, normals, uvs, indices);
+                    let mesh = generate_bevy_mesh(vertices, normals, material_ids, indices);
                     let collider = if has_collider {
                         Some(
                             Collider::from_bevy_mesh(

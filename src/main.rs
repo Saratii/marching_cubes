@@ -41,7 +41,7 @@ use marching_cubes::terrain::terrain::{
     ChunkTag, HALF_CHUNK, NoiseFunction, SAMPLES_PER_CHUNK_DIM, TerrainChunk,
     TerrainMaterialHandle, UniformChunk, VOXEL_SIZE, generate_bevy_mesh, setup_map,
 };
-use marching_cubes::terrain::terrain_material::TerrainMaterial;
+use marching_cubes::terrain::terrain_material::TerrainMaterialExtension;
 use marching_cubes::ui::crosshair::spawn_crosshair;
 use marching_cubes::ui::minimap::spawn_minimap;
 use rayon::ThreadPoolBuilder;
@@ -90,7 +90,8 @@ fn main() {
             SystemInformationDiagnosticsPlugin,
             PerfUiPlugin,
             RapierPhysicsPlugin::<NoUserData>::default(),
-            MaterialPlugin::<ExtendedMaterial<StandardMaterial, TerrainMaterial>>::default(),
+            MaterialPlugin::<ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>>::default(
+            ),
             // RapierDebugRenderPlugin::default(),
         ))
         .insert_resource(ClearColor(Color::srgb(0.0, 0.4, 0.5)))
@@ -304,13 +305,13 @@ fn handle_digging_input(
                             drop(terrain_chunk_map_lock);
                         }
                     }
-                    let (vertices, normals, uvs, indices) = mc_mesh_generation(
+                    let (vertices, normals, material_ids, indices) = mc_mesh_generation(
                         &chunk_clone.densities,
                         &chunk_clone.materials,
                         SAMPLES_PER_CHUNK_DIM,
                         HALF_CHUNK,
                     );
-                    let new_mesh = generate_bevy_mesh(vertices, normals, uvs, indices);
+                    let new_mesh = generate_bevy_mesh(vertices, normals, material_ids, indices);
                     if new_mesh.count_vertices() > 0 {
                         let collider = Collider::from_bevy_mesh(
                             &new_mesh,
