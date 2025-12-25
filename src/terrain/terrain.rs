@@ -12,7 +12,10 @@ use serde::{Deserialize, Serialize};
 use crate::{
     conversions::flatten_index,
     data_loader::file_loader::get_project_root,
-    terrain::{chunk_generator::generate_densities, terrain_material::TerrainMaterial},
+    terrain::{
+        chunk_generator::generate_densities,
+        terrain_material::{ATTRIBUTE_MATERIAL_ID, TerrainMaterialExtension},
+    },
 };
 
 pub const SAMPLES_PER_CHUNK_DIM: usize = 50; // Number of voxel sample points
@@ -37,7 +40,9 @@ pub struct ChunkTag;
 pub struct NoiseFunction(pub GeneratorWrapper<SafeNode>);
 
 #[derive(Resource)]
-pub struct TerrainMaterialHandle(pub Handle<ExtendedMaterial<StandardMaterial, TerrainMaterial>>);
+pub struct TerrainMaterialHandle(
+    pub Handle<ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>>,
+);
 
 #[derive(Resource)]
 pub struct TextureAtlasHandle(pub Handle<Image>);
@@ -101,7 +106,7 @@ impl TerrainChunk {
 
 pub fn setup_map(
     mut commands: Commands,
-    mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, TerrainMaterial>>>,
+    mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>>>,
     asset_server: Res<AssetServer>,
 ) {
     let root = get_project_root();
@@ -127,8 +132,8 @@ pub fn setup_map(
             perceptual_roughness: 0.8,
             ..Default::default()
         },
-        extension: TerrainMaterial {
-            texture: atlas_texture_handle.clone(),
+        extension: TerrainMaterialExtension {
+            base_texture: atlas_texture_handle.clone(),
             scale: 0.5,
         },
     });
@@ -139,7 +144,7 @@ pub fn setup_map(
 pub fn generate_bevy_mesh(
     vertices: Vec<[f32; 3]>,
     normals: Vec<[f32; 3]>,
-    uvs: Vec<[f32; 2]>,
+    material_ids: Vec<u32>,
     indices: Vec<u32>,
 ) -> Mesh {
     let mut mesh = Mesh::new(
@@ -148,7 +153,7 @@ pub fn generate_bevy_mesh(
     );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
     mesh.insert_indices(Indices::U32(indices));
+    mesh.insert_attribute(ATTRIBUTE_MATERIAL_ID, material_ids);
     mesh
 }
