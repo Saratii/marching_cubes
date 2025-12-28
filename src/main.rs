@@ -14,6 +14,7 @@ use bevy::window::PresentMode;
 use bevy::winit::WinitSettings;
 use bevy_rapier3d::plugin::{NoUserData, PhysicsSet, RapierPhysicsPlugin};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
+use bevy_volumetric_clouds::CloudsPlugin;
 use fastnoise2::SafeNode;
 use fastnoise2::generator::simplex::opensimplex2;
 use fastnoise2::generator::{Generator, GeneratorWrapper};
@@ -92,9 +93,9 @@ fn main() {
             RapierPhysicsPlugin::<NoUserData>::default(),
             MaterialPlugin::<ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>>::default(
             ),
+            CloudsPlugin,
             // RapierDebugRenderPlugin::default(),
         ))
-        .insert_resource(ClearColor(Color::srgb(0.0, 0.4, 0.5)))
         .add_systems(
             Startup,
             (
