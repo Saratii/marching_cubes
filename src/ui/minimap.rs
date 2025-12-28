@@ -1,7 +1,10 @@
 use bevy::{
-    camera::{ImageRenderTarget, RenderTarget}, math::FloatOrd, prelude::*, render::render_resource::{
-            Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
-        }
+    camera::{ImageRenderTarget, RenderTarget},
+    math::FloatOrd,
+    prelude::*,
+    render::render_resource::{
+        Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
+    },
 };
 
 use crate::player::player::PlayerTag;

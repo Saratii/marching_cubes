@@ -3,9 +3,11 @@ use std::sync::{Arc, Mutex, atomic::Ordering};
 use bevy::{
     input::mouse::{MouseMotion, MouseWheel},
     prelude::*,
+    render::view::Hdr,
     window::{CursorGrabMode, CursorOptions, PrimaryWindow},
 };
 use bevy_rapier3d::prelude::*;
+use bevy_volumetric_clouds::CloudCamera;
 
 use crate::{
     data_loader::{
@@ -143,6 +145,8 @@ pub fn spawn_player(
         ))
         .with_child((
             Camera3d::default(),
+            Hdr,
+            CloudCamera,
             Transform {
                 translation: CAMERA_FIRST_PERSON_OFFSET,
                 rotation: initial_rotation,

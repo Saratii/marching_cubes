@@ -426,6 +426,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bevy-volumetric-clouds"
+version = "0.1.5"
+source = "git+https://github.com/Saratii/bevy-volumetric-clouds#d581446fbcfc64ea8959fcdad613c9be23aecd17"
+dependencies = [
+ "bevy",
+]
+
+[[package]]
 name = "bevy_a11y"
 version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3882,6 +3890,7 @@ name = "marching_cubes"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "bevy-volumetric-clouds",
  "bevy_rapier3d",
  "bytemuck",
  "criterion",
