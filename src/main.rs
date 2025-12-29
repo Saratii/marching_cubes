@@ -39,7 +39,7 @@ use marching_cubes::player::player::{
 use marching_cubes::sparse_voxel_octree::sphere_intersects_aabb;
 use marching_cubes::terrain::chunk_generator::{dequantize_i16_to_f32, quantize_f32_to_i16};
 use marching_cubes::terrain::terrain::{
-    ChunkTag, HALF_CHUNK, NoiseFunction, SAMPLES_PER_CHUNK_DIM, TerrainChunk,
+    CHUNK_SIZE, ChunkTag, HALF_CHUNK, NoiseFunction, SAMPLES_PER_CHUNK_DIM, TerrainChunk,
     TerrainMaterialHandle, UniformChunk, VOXEL_SIZE, generate_bevy_mesh, setup_map,
 };
 use marching_cubes::terrain::terrain_material::TerrainMaterialExtension;
@@ -71,6 +71,7 @@ fn main() {
                 .set(WindowPlugin {
                     primary_window: Some(Window {
                         present_mode: PresentMode::AutoNoVsync,
+                        resolution: (1600, 720).into(),
                         ..default()
                     }),
                     ..default()
@@ -183,13 +184,12 @@ pub fn modify_chunk_voxels(
     strength: f32,
 ) -> bool {
     let chunk_center = chunk_coord_to_world_pos(&chunk_coord);
-    let chunk_world_size = SAMPLES_PER_CHUNK_DIM as f32 * VOXEL_SIZE;
     let node_min = Vec3::new(
         chunk_center.x - HALF_CHUNK,
         chunk_center.y - HALF_CHUNK,
         chunk_center.z - HALF_CHUNK,
     );
-    let node_max = node_min + Vec3::splat(chunk_world_size);
+    let node_max = node_min + Vec3::splat(CHUNK_SIZE);
     if !sphere_intersects_aabb(&dig_center, radius, &node_min, &node_max) {
         return false;
     }
@@ -243,7 +243,7 @@ fn handle_digging_input(
 ) {
     const DIG_STRENGTH: f32 = 0.5;
     const DIG_TIMER: f32 = 0.02; // seconds
-    const DIG_RADIUS: f32 = 1.0; // world space
+    const DIG_RADIUS: f32 = 1.5; // world space
     let should_dig = if mouse_input.pressed(MouseButton::Left) {
         *dig_timer += time.delta_secs();
         if *dig_timer >= DIG_TIMER {

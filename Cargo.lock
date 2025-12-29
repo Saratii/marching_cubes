@@ -428,7 +428,6 @@ dependencies = [
 [[package]]
 name = "bevy-volumetric-clouds"
 version = "0.1.5"
-source = "git+https://github.com/Saratii/bevy-volumetric-clouds#d581446fbcfc64ea8959fcdad613c9be23aecd17"
 dependencies = [
  "bevy",
 ]
