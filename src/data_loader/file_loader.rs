@@ -1,6 +1,7 @@
 use crate::terrain::terrain::{SAMPLES_PER_CHUNK, TerrainChunk, UniformChunk};
 use bevy::prelude::*;
-use std::collections::{HashMap, HashSet, VecDeque};
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
@@ -18,13 +19,13 @@ pub struct PlayerDataFile(pub File);
 pub struct StaleCompressionFile(pub Arc<Mutex<File>>);
 
 #[derive(Resource)]
-pub struct ChunkIndexMapRead(pub Arc<HashMap<(i16, i16, i16), u64>>);
+pub struct ChunkIndexMapRead(pub Arc<FxHashMap<(i16, i16, i16), u64>>);
 
 #[derive(Resource)]
-pub struct ChunkIndexMapDelta(pub Arc<Mutex<HashMap<(i16, i16, i16), u64>>>);
+pub struct ChunkIndexMapDelta(pub Arc<Mutex<FxHashMap<(i16, i16, i16), u64>>>);
 
 #[derive(Resource)]
-pub struct ChunkEntityMap(pub HashMap<(i16, i16, i16), Entity>);
+pub struct ChunkEntityMap(pub FxHashMap<(i16, i16, i16), Entity>);
 
 // Binary format layout:
 // - SDF values: num_voxels * i16 (2 bytes each)
@@ -60,7 +61,7 @@ pub fn deserialize_chunk_data(data: &[u8]) -> TerrainChunk {
 pub fn create_chunk_file_data(
     chunk: &TerrainChunk,
     chunk_coord: &(i16, i16, i16),
-    chunk_index_map: &mut HashMap<(i16, i16, i16), u64>,
+    chunk_index_map: &mut FxHashMap<(i16, i16, i16), u64>,
     chunk_data_file: &mut File,
     chunk_index_file: &mut File,
 ) {
@@ -94,8 +95,8 @@ pub fn load_chunk_data(chunk_data_file: &mut File, byte_offset: u64) -> TerrainC
     deserialize_chunk_data(&buffer)
 }
 
-pub fn load_chunk_index_map(index_file: &mut File) -> HashMap<(i16, i16, i16), u64> {
-    let mut index_map = HashMap::new();
+pub fn load_chunk_index_map(index_file: &mut File) -> FxHashMap<(i16, i16, i16), u64> {
+    let mut index_map = FxHashMap::default();
     index_file.seek(SeekFrom::Start(0)).unwrap();
     let mut buffer = [0u8; 14]; // sizeof (i16, i16, i16, u64)
     while let Ok(_) = index_file.read_exact(&mut buffer) {
@@ -123,7 +124,9 @@ pub fn get_project_root() -> PathBuf {
 
 pub fn setup_chunk_loading(mut commands: Commands) {
     let root = get_project_root();
-    commands.insert_resource(ChunkEntityMap { 0: HashMap::new() }); //store entities on the main thread
+    commands.insert_resource(ChunkEntityMap {
+        0: FxHashMap::default(),
+    }); //store entities on the main thread
     let player_data_file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -138,26 +141,30 @@ pub fn setup_chunk_loading(mut commands: Commands) {
         .create(true)
         .open(root.join("data/stale_chunks.txt"))
         .unwrap();
-    commands.insert_resource(ChunkIndexMapDelta(Arc::new(Mutex::new(HashMap::new()))));
+    commands.insert_resource(ChunkIndexMapDelta(Arc::new(Mutex::new(
+        FxHashMap::default(),
+    ))));
 }
 
 // Load all chunk coords and track empty slots
-pub fn load_uniform_chunks(f: &mut File) -> (HashSet<(i16, i16, i16)>, VecDeque<u64>) {
-    let mut uniform_chunks = HashSet::new();
-    let mut free_slots = VecDeque::new();
+pub fn load_uniform_chunks(f: &mut File) -> (FxHashSet<(i16, i16, i16)>, VecDeque<u64>) {
     f.seek(SeekFrom::Start(0)).unwrap();
-    let mut buffer = [0u8; 6];
-    let mut offset = 0u64;
-    while f.read_exact(&mut buffer).is_ok() {
-        if buffer == TOMBSTONE_BYTES {
+    let mut data = Vec::new();
+    f.read_to_end(&mut data).unwrap();
+    let count = data.len() / 6;
+    let mut uniform_chunks = FxHashSet::with_capacity_and_hasher(count, Default::default());
+    let mut free_slots = VecDeque::new();
+    for (i, b) in data.chunks_exact(6).enumerate() {
+        let offset = (i * 6) as u64;
+        if b == TOMBSTONE_BYTES {
             free_slots.push_back(offset);
         } else {
-            let x = i16::from_le_bytes([buffer[0], buffer[1]]);
-            let y = i16::from_le_bytes([buffer[2], buffer[3]]);
-            let z = i16::from_le_bytes([buffer[4], buffer[5]]);
-            uniform_chunks.insert((x, y, z));
+            uniform_chunks.insert((
+                i16::from_le_bytes([b[0], b[1]]),
+                i16::from_le_bytes([b[2], b[3]]),
+                i16::from_le_bytes([b[4], b[5]]),
+            ));
         }
-        offset += 6;
     }
     (uniform_chunks, free_slots)
 }

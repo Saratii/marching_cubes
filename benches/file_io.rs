@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs::OpenOptions, hint::black_box};
+use std::{fs::OpenOptions, hint::black_box};
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use fastnoise2::{
@@ -14,6 +14,7 @@ use marching_cubes::{
         terrain::{TerrainChunk, UniformChunk},
     },
 };
+use rustc_hash::FxHashMap;
 
 fn benchmark_read_single_chunk(c: &mut Criterion) {
     let mut index_file = OpenOptions::new()
@@ -72,7 +73,7 @@ fn benchmark_write_single_new_chunk(c: &mut Criterion) {
         is_uniform: UniformChunk::NonUniform,
     };
     let chunk_coord = (1000, 1000, 1000);
-    let mut index_map = HashMap::new();
+    let mut index_map = FxHashMap::default();
     let mut data_file = OpenOptions::new()
         .create(true)
         .write(true)
@@ -144,7 +145,7 @@ fn benchmark_bulk_write_new_chunk(c: &mut Criterion) {
     }
     c.bench_function("bulk_write_new_chunks", |b| {
         b.iter(|| {
-            let mut index_map = HashMap::new();
+            let mut index_map = FxHashMap::default();
             let mut data_file = OpenOptions::new()
                 .create(true)
                 .write(true)
