@@ -20,6 +20,7 @@ use crate::{
 
 pub const SAMPLES_PER_CHUNK_DIM: usize = 50; // Number of voxel sample points
 pub const CHUNK_SIZE: f32 = 12.5; //in world units
+pub const CLUSTER_SIZE: usize = 5; //number of chunks along one edge of a cluster
 pub const SAMPLES_PER_CHUNK: usize =
     SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM;
 pub const SAMPLES_PER_CHUNK_DIM_M1: usize = SAMPLES_PER_CHUNK_DIM - 1;
