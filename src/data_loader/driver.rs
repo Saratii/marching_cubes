@@ -15,6 +15,7 @@ use fastnoise2::{
     SafeNode,
     generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
 };
+use rustc_hash::{FxHashMap, FxHashSet};
 #[cfg(feature = "timers")]
 use std::io::Write;
 use std::{
@@ -172,17 +173,17 @@ pub fn setup_chunk_driver(
     let mut t0 = Instant::now();
     let (uniform_air_chunks, empty_air_offsets) = load_uniform_chunks(&mut air_compression_file);
     println!(
-        "Loaded {} compressed air chunks in {} seconds.",
+        "Loaded {} compressed air chunks in {} ms.",
         uniform_air_chunks.len(),
-        t0.elapsed().as_secs_f32()
+        t0.elapsed().as_millis()
     );
     let uniform_air_chunks = Arc::new(uniform_air_chunks);
     t0 = Instant::now();
     let (uniform_dirt_chunks, empty_dirt_offsets) = load_uniform_chunks(&mut dirt_compression_file);
     println!(
-        "Loaded {} compressed dirt chunks in {} seconds.",
+        "Loaded {} compressed dirt chunks in {} ms.",
         uniform_dirt_chunks.len(),
-        t0.elapsed().as_secs_f32()
+        t0.elapsed().as_millis()
     );
     let uniform_dirt_chunks = Arc::new(uniform_dirt_chunks);
     let fbm =
@@ -207,9 +208,9 @@ pub fn setup_chunk_driver(
     let t0 = Instant::now();
     let index_map_read = Arc::new(load_chunk_index_map(&mut chunk_index_file));
     println!(
-        "Loaded {} chunks into index map in {} seconds.",
+        "Loaded {} chunks into index map in {} ms.",
         index_map_read.len(),
-        t0.elapsed().as_secs_f32()
+        t0.elapsed().as_millis()
     );
     thread::spawn(move || {
         dedicated_write_thread(
@@ -277,7 +278,7 @@ pub fn setup_chunk_driver(
 
 fn dedicated_write_thread(
     rx: Receiver<WriteCmd>,
-    index_map_delta: Arc<Mutex<HashMap<(i16, i16, i16), u64>>>,
+    index_map_delta: Arc<Mutex<FxHashMap<(i16, i16, i16), u64>>>,
     mut chunk_data_file: File,
     mut chunk_index_file: File,
     mut air_file: File,
@@ -322,8 +323,8 @@ fn chunk_loader_thread(
     #[cfg_attr(not(feature = "timers"), allow(unused_variables))] thread_idx: usize,
     req_rx: Receiver<ChunkRequest>,
     res_tx: Sender<ChunkResult>,
-    index_map_read: Arc<HashMap<(i16, i16, i16), u64>>,
-    index_map_delta: Arc<Mutex<HashMap<(i16, i16, i16), u64>>>,
+    index_map_read: Arc<FxHashMap<(i16, i16, i16), u64>>,
+    index_map_delta: Arc<Mutex<FxHashMap<(i16, i16, i16), u64>>>,
     uniform_air_chunks_delta: Arc<Mutex<HashSet<(i16, i16, i16)>>>,
     uniform_dirt_chunks_delta: Arc<Mutex<HashSet<(i16, i16, i16)>>>,
     mut chunk_data_file_read: File,
@@ -331,8 +332,8 @@ fn chunk_loader_thread(
     svo: Arc<Mutex<ChunkSvo>>,
     chunk_spawn_channel: Sender<ChunkSpawnResult>,
     fbm: GeneratorWrapper<SafeNode>,
-    uniform_air_chunks_read_only: Arc<HashSet<(i16, i16, i16)>>,
-    uniform_dirt_chunks_read_only: Arc<HashSet<(i16, i16, i16)>>,
+    uniform_air_chunks_read_only: Arc<FxHashSet<(i16, i16, i16)>>,
+    uniform_dirt_chunks_read_only: Arc<FxHashSet<(i16, i16, i16)>>,
     write_sender: Sender<WriteCmd>,
 ) {
     let mut priority_queue = BinaryHeap::new();
