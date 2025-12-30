@@ -241,8 +241,8 @@ fn handle_digging_input(
     write_cmd_sender: Res<WriteCmdSender>,
 ) {
     const DIG_STRENGTH: f32 = 0.5;
-    const DIG_TIMER: f32 = 0.02; // seconds
-    const DIG_RADIUS: f32 = 1.5; // world space
+    const DIG_TIMER: f32 = 0.01; // seconds
+    const DIG_RADIUS: f32 = 2.0; // world space
     let should_dig = if mouse_input.pressed(MouseButton::Left) {
         *dig_timer += time.delta_secs();
         if *dig_timer >= DIG_TIMER {
@@ -277,6 +277,12 @@ fn handle_digging_input(
                     let mut terrain_chunk_map_lock = terrain_io.terrain_chunk_map.0.lock().unwrap();
                     let chunk = terrain_chunk_map_lock.get_mut(&chunk_coord).unwrap();
                     let chunk_clone = chunk.clone(); //clone instead of holding lock
+                    let (vertices, normals, material_ids, indices) = mc_mesh_generation(
+                        &chunk_clone.densities,
+                        &chunk_clone.materials,
+                        SAMPLES_PER_CHUNK_DIM,
+                        HALF_CHUNK,
+                    );
                     match chunk_clone.is_uniform {
                         //this may need to also do the opposite, upgrading non-uniform to uniform
                         UniformChunk::Air | UniformChunk::Dirt => {
@@ -303,14 +309,30 @@ fn handle_digging_input(
                         }
                         UniformChunk::NonUniform => {
                             drop(terrain_chunk_map_lock);
+                            //first check read only initial copy
+                            let offset = terrain_io
+                                .chunk_index_map_read
+                                .0
+                                .get(&chunk_coord)
+                                .cloned()
+                                .or_else(|| {
+                                    terrain_io
+                                        .chunk_index_map_delta
+                                        .0
+                                        .lock()
+                                        .unwrap()
+                                        .get(&chunk_coord)
+                                        .cloned()
+                                }).expect("During dig, tried to update a non-uniform chunk that somehow doesn't have an offset in either the read or delta index maps!");
+                            write_cmd_sender
+                                .0
+                                .send(WriteCmd::UpdateNonUniform {
+                                    offset,
+                                    chunk: chunk_clone,
+                                })
+                                .unwrap();
                         }
                     }
-                    let (vertices, normals, material_ids, indices) = mc_mesh_generation(
-                        &chunk_clone.densities,
-                        &chunk_clone.materials,
-                        SAMPLES_PER_CHUNK_DIM,
-                        HALF_CHUNK,
-                    );
                     let new_mesh = generate_bevy_mesh(vertices, normals, material_ids, indices);
                     if new_mesh.count_vertices() > 0 {
                         let collider = Collider::from_bevy_mesh(
@@ -356,25 +378,6 @@ fn handle_digging_input(
                         }
                         terrain_io.chunk_entity_map.0.remove(&chunk_coord);
                     }
-                    //first check read only initial copy
-                    let offset = {
-                        let offset = terrain_io.chunk_index_map_read.0.get(&chunk_coord).cloned();
-                        //if index isnt there maybe its in delta per chance
-                        let offset = if offset.is_none() {
-                            let index_map_lock = terrain_io.chunk_index_map_delta.0.lock().unwrap();
-                            index_map_lock.get(&chunk_coord).cloned().clone()
-                        } else {
-                            offset
-                        };
-                        offset.unwrap()
-                    };
-                    write_cmd_sender
-                        .0
-                        .send(WriteCmd::UpdateNonUniform {
-                            offset,
-                            chunk: chunk_clone,
-                        })
-                        .unwrap();
                 }
             }
         }

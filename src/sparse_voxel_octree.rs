@@ -52,8 +52,14 @@ impl SvoNode {
         }
     }
 
+    #[inline(always)]
     pub fn is_leaf(&self) -> bool {
-        self.children.is_none()
+        self.size == 1
+    }
+
+    #[inline(always)]
+    pub fn is_expanded(&self) -> bool {
+        self.children.is_some()
     }
 
     fn child_index(&self, chunk_coord: &(i16, i16, i16)) -> usize {
@@ -130,7 +136,7 @@ impl SvoNode {
             return false;
         }
 
-        if self.is_leaf() {
+        if !self.is_expanded() {
             if self.size == 1 {
                 return self.chunk.is_some() && self.lower_chunk_coord == *chunk_coord;
             }
@@ -151,7 +157,7 @@ impl SvoNode {
     }
 
     pub fn iter(&self) -> Box<dyn Iterator<Item = &SvoNode> + '_> {
-        if self.is_leaf() {
+        if !self.is_expanded() {
             Box::new(std::iter::once(self))
         } else if let Some(children) = &self.children {
             Box::new(
@@ -176,7 +182,7 @@ impl SvoNode {
             return self.chunk.is_some() || self.children.is_some();
         }
 
-        if self.is_leaf() {
+        if !self.is_expanded() {
             if self.size == 1 && self.lower_chunk_coord == chunk_coord {
                 self.chunk = None;
             }
@@ -248,7 +254,7 @@ impl SvoNode {
         if !sphere_intersects_aabb(center, radius, &self.node_min, &self.node_max) {
             return;
         }
-        if self.is_leaf() {
+        if !self.is_expanded() {
             if self.size == 1 {
                 let chunk_coord = self.lower_chunk_coord;
                 if self.chunk.is_none() && !chunks_being_loaded.contains(&chunk_coord) {
@@ -349,7 +355,7 @@ impl SvoNode {
             self.collect_all_chunks(results);
             return;
         }
-        if self.is_leaf() && self.size == 1 {
+        if !self.is_expanded() && self.size == 1 {
             if let Some((has_entity, _)) = &self.chunk {
                 let chunk_center = chunk_coord_to_world_pos(&self.lower_chunk_coord);
                 let dist_sq = center.distance_squared(chunk_center);
@@ -367,7 +373,7 @@ impl SvoNode {
     }
 
     fn collect_all_chunks(&self, results: &mut Vec<((i16, i16, i16), bool)>) {
-        if self.is_leaf() && self.size == 1 {
+        if !self.is_expanded() && self.size == 1 {
             if let Some((has_entity, _)) = &self.chunk {
                 results.push((self.lower_chunk_coord, *has_entity));
             }
