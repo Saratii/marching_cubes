@@ -17,8 +17,6 @@ use fastnoise2::{
 };
 #[cfg(feature = "timers")]
 use std::io::Write;
-#[cfg(feature = "timers")]
-use std::time::Instant;
 use std::{
     collections::{BinaryHeap, HashMap, HashSet, VecDeque},
     fs::{File, OpenOptions},
@@ -27,6 +25,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
+    time::Instant,
 };
 
 use crate::{
@@ -170,15 +169,22 @@ pub fn setup_chunk_driver(
         .create(true)
         .open(root.join("data/dirt_compression_data.txt"))
         .unwrap();
+    let mut t0 = Instant::now();
     let (uniform_air_chunks, empty_air_offsets) = load_uniform_chunks(&mut air_compression_file);
-    let uniform_air_chunks = Arc::new(uniform_air_chunks);
-    let (uniform_dirt_chunks, empty_dirt_offsets) = load_uniform_chunks(&mut dirt_compression_file);
-    let uniform_dirt_chunks = Arc::new(uniform_dirt_chunks);
-    println!("Loaded {} compressed air chunks", uniform_air_chunks.len());
     println!(
-        "Loaded {} compressed dirt chunks",
-        uniform_dirt_chunks.len()
+        "Loaded {} compressed air chunks in {} seconds.",
+        uniform_air_chunks.len(),
+        t0.elapsed().as_secs_f32()
     );
+    let uniform_air_chunks = Arc::new(uniform_air_chunks);
+    t0 = Instant::now();
+    let (uniform_dirt_chunks, empty_dirt_offsets) = load_uniform_chunks(&mut dirt_compression_file);
+    println!(
+        "Loaded {} compressed dirt chunks in {} seconds.",
+        uniform_dirt_chunks.len(),
+        t0.elapsed().as_secs_f32()
+    );
+    let uniform_dirt_chunks = Arc::new(uniform_dirt_chunks);
     let fbm =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
     commands.insert_resource(NoiseGenerator(fbm.clone()));
@@ -198,8 +204,13 @@ pub fn setup_chunk_driver(
         .create(true)
         .open(root.join("data/chunk_index_data.txt"))
         .unwrap();
+    let t0 = Instant::now();
     let index_map_read = Arc::new(load_chunk_index_map(&mut chunk_index_file));
-    println!("Loaded {} chunks into index map", index_map_read.len());
+    println!(
+        "Loaded {} chunks into index map in {} seconds.",
+        index_map_read.len(),
+        t0.elapsed().as_secs_f32()
+    );
     thread::spawn(move || {
         dedicated_write_thread(
             write_rx,
