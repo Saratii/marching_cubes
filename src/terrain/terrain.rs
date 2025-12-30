@@ -63,8 +63,13 @@ pub struct TerrainChunk {
 }
 
 impl TerrainChunk {
-    pub fn new(chunk_coord: (i16, i16, i16), fbm: &GeneratorWrapper<SafeNode>) -> Self {
-        let (densities, materials, is_uniform) = generate_densities(&chunk_coord, fbm);
+    pub fn new(
+        fbm: &GeneratorWrapper<SafeNode>,
+        chunk_start: Vec3,
+        first_sample_reuse: f32,
+    ) -> Self {
+        let (densities, materials, is_uniform) =
+            generate_densities(fbm, first_sample_reuse, chunk_start);
         //if it does not have a surface it must be uniform dirt or air
         let is_uniform = if !is_uniform {
             UniformChunk::NonUniform
