@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 
 const BYTES_PER_VOXEL: usize = std::mem::size_of::<i16>() + std::mem::size_of::<u8>();
 const CHUNK_SERIALIZED_SIZE: usize = SAMPLES_PER_CHUNK * BYTES_PER_VOXEL;
+const TOMBSTONE_BYTES: [u8; 6] = [0xFF; 6];
 
 #[derive(Resource)]
 pub struct PlayerDataFile(pub File);
@@ -147,14 +148,13 @@ pub fn load_uniform_chunks(f: &mut File) -> (HashSet<(i16, i16, i16)>, VecDeque<
     f.seek(SeekFrom::Start(0)).unwrap();
     let mut buffer = [0u8; 6];
     let mut offset = 0u64;
-    while let Ok(_) = f.read_exact(&mut buffer) {
-        let x = i16::from_le_bytes([buffer[0], buffer[1]]);
-        let y = i16::from_le_bytes([buffer[2], buffer[3]]);
-        let z = i16::from_le_bytes([buffer[4], buffer[5]]);
-        if (x, y, z) == (0, 0, 0) {
-            // treat (0,0,0) as a deleted slot
+    while f.read_exact(&mut buffer).is_ok() {
+        if buffer == TOMBSTONE_BYTES {
             free_slots.push_back(offset);
         } else {
+            let x = i16::from_le_bytes([buffer[0], buffer[1]]);
+            let y = i16::from_le_bytes([buffer[2], buffer[3]]);
+            let z = i16::from_le_bytes([buffer[4], buffer[5]]);
             uniform_chunks.insert((x, y, z));
         }
         offset += 6;
@@ -181,25 +181,26 @@ pub fn write_uniform_chunk(
     f.flush().unwrap();
 }
 
-// Mark a chunk as deleted by overwriting with zeros
+// Mark a chunk as deleted by overwriting with tombstone bytes
 pub fn remove_uniform_chunk(
     chunk_coord: &(i16, i16, i16),
     f: &mut File,
     free_uniform_slots: &mut VecDeque<u64>,
 ) {
-    let target = chunk_coord;
     f.seek(SeekFrom::Start(0)).unwrap();
     let mut buffer = [0u8; 6];
     let mut offset = 0u64;
     while let Ok(_) = f.read_exact(&mut buffer) {
-        let x = i16::from_le_bytes([buffer[0], buffer[1]]);
-        let y = i16::from_le_bytes([buffer[2], buffer[3]]);
-        let z = i16::from_le_bytes([buffer[4], buffer[5]]);
-        if (x, y, z) == *target {
-            f.seek(SeekFrom::Start(offset)).unwrap();
-            f.write_all(&[0; 6]).unwrap();
-            free_uniform_slots.push_back(offset);
-            break;
+        if buffer != TOMBSTONE_BYTES {
+            let x = i16::from_le_bytes([buffer[0], buffer[1]]);
+            let y = i16::from_le_bytes([buffer[2], buffer[3]]);
+            let z = i16::from_le_bytes([buffer[4], buffer[5]]);
+            if (x, y, z) == *chunk_coord {
+                f.seek(SeekFrom::Start(offset)).unwrap();
+                f.write_all(&TOMBSTONE_BYTES).unwrap();
+                free_uniform_slots.push_back(offset);
+                break;
+            }
         }
         offset += 6;
     }
