@@ -10,7 +10,6 @@ criterion = "0.7.0"
 fastnoise2 = "0.3.2"
 mimalloc = "0.1.48"
 bevy_rapier3d = { git = "https://github.com/Deniskore/bevy_rapier", branch = "bevy-0.17", features = [ "simd-stable", "debug-render" ] }
-rayon = "1.11.0"
 serde_json = "1.0.145"
 serde = "1.0.228"
 flamegraph = "0.6.10"
