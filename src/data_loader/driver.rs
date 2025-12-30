@@ -409,7 +409,7 @@ fn chunk_loader_thread(
                 let chunk_start = calculate_chunk_start(&chunk_coord);
                 let first_sample_reuse = sample_fbm(&fbm, chunk_start.x, chunk_start.z);
                 //conservative heuristic: if the surface height at the first sample is greater than one chunk above the bottom of the chunk, we assume it is uniform air
-                if first_sample_reuse + CHUNK_SIZE * 2.0 < chunk_start.y {
+                if first_sample_reuse + CHUNK_SIZE * 3.0 < chunk_start.y {
                     let mut uniform_air_chunks_lock = uniform_air_chunks_delta.lock().unwrap();
                     uniform_air_chunks_lock.insert(chunk_coord);
                     drop(uniform_air_chunks_lock);
