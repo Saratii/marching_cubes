@@ -1,6 +1,12 @@
-use crate::data_loader::file_loader::{
-    ChunkIndexMapDelta, get_project_root, load_chunk_index_map, load_uniform_chunks,
-    remove_uniform_chunk, update_chunk_file_data,
+use crate::{
+    data_loader::file_loader::{
+        ChunkIndexMapDelta, get_project_root, load_chunk_index_map, load_uniform_chunks,
+        remove_uniform_chunk, update_chunk_file_data,
+    },
+    terrain::{
+        chunk_generator::{calculate_chunk_start, sample_fbm},
+        terrain::CHUNK_SIZE,
+    },
 };
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
@@ -399,10 +405,29 @@ fn chunk_loader_thread(
                     };
                     offset
                 };
+                //check if we even need the sdfs
+                let chunk_start = calculate_chunk_start(&chunk_coord);
+                let first_sample_reuse = sample_fbm(&fbm, chunk_start.x, chunk_start.z);
+                //conservative heuristic: if the surface height at the first sample is greater than one chunk above the bottom of the chunk, we assume it is uniform air
+                if first_sample_reuse + CHUNK_SIZE * 2.0 < chunk_start.y {
+                    let mut uniform_air_chunks_lock = uniform_air_chunks_delta.lock().unwrap();
+                    uniform_air_chunks_lock.insert(chunk_coord);
+                    drop(uniform_air_chunks_lock);
+                    write_sender
+                        .send(WriteCmd::WriteUniformAir { coord: chunk_coord })
+                        .unwrap();
+                    let _ = res_tx.send(ChunkResult {
+                        has_entity: false,
+                        chunk_coord,
+                        load_status: req.load_status,
+                    });
+                    continue;
+                }
                 let chunk_sdfs = if let Some(offset) = file_offset {
                     load_chunk_data(&mut chunk_data_file_read, offset)
                 } else {
-                    let chunk = TerrainChunk::new(chunk_coord, &fbm);
+                    //generate new chunk
+                    let chunk = TerrainChunk::new(&fbm, chunk_start, first_sample_reuse);
                     match chunk.is_uniform {
                         UniformChunk::Air => {
                             let mut uniform_air_chunks_lock =

@@ -10,7 +10,7 @@ use marching_cubes::{
         create_chunk_file_data, load_chunk_data, load_chunk_index_map, update_chunk_file_data,
     },
     terrain::{
-        chunk_generator::generate_densities,
+        chunk_generator::{calculate_chunk_start, generate_densities, sample_fbm},
         terrain::{TerrainChunk, UniformChunk},
     },
 };
@@ -62,7 +62,10 @@ fn benchmark_write_single_existing_chunk(c: &mut Criterion) {
 fn benchmark_write_single_new_chunk(c: &mut Criterion) {
     let noise_function =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
-    let (densities, materials, _) = generate_densities(&(0, 0, 0), &noise_function);
+    let chunk_start = calculate_chunk_start(&(0, 0, 0));
+    let first_sample_reuse = sample_fbm(&noise_function, chunk_start.x, chunk_start.z);
+    let (densities, materials, _) =
+        generate_densities(&noise_function, first_sample_reuse, chunk_start);
     let terrain_chunk = TerrainChunk {
         densities,
         materials,
@@ -128,7 +131,10 @@ fn benchmark_bulk_write_new_chunk(c: &mut Criterion) {
     let mut chunks_data = Vec::new();
     for i in 0..100 {
         let chunk_coord = (1000 + i, 1000, 1000);
-        let (densities, materials, _) = generate_densities(&chunk_coord, &noise_function);
+        let chunk_start = calculate_chunk_start(&chunk_coord);
+        let first_sample_reuse = sample_fbm(&noise_function, chunk_start.x, chunk_start.z);
+        let (densities, materials, _) =
+            generate_densities(&noise_function, first_sample_reuse, chunk_start);
         let terrain_chunk = TerrainChunk {
             densities,
             materials,

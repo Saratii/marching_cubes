@@ -6,10 +6,13 @@ use fastnoise2::{
 use marching_cubes::{
     marching_cubes::mc::mc_mesh_generation,
     terrain::{
-        chunk_compute_pipeline::GpuTerrainGenerator, chunk_generator::{
+        chunk_compute_pipeline::GpuTerrainGenerator,
+        chunk_generator::{
             calculate_chunk_start, chunk_contains_surface, generate_densities,
-            generate_terrain_heights,
-        }, heightmap_compute_pipeline::GpuHeightmapGenerator, terrain::{HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainChunk}
+            generate_terrain_heights, sample_fbm,
+        },
+        heightmap_compute_pipeline::GpuHeightmapGenerator,
+        terrain::{HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainChunk},
     },
 };
 use std::hint::black_box;
@@ -19,9 +22,28 @@ fn benchmark_generate_densities_cpu(c: &mut Criterion) {
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
     c.bench_function("generate_densities_cpu", |b| {
         b.iter(|| {
+            let chunk_start = calculate_chunk_start(&(0, 2, 0));
+            let first_sample_reuse = sample_fbm(&noise_function, chunk_start.x, chunk_start.z);
             black_box(generate_densities(
-                black_box(&(0, 2, 0)),
                 black_box(&noise_function),
+                black_box(first_sample_reuse),
+                black_box(chunk_start),
+            ))
+        })
+    });
+}
+
+fn benchmark_generate_uniform_densities_cpu(c: &mut Criterion) {
+    let noise_function =
+        || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
+    c.bench_function("generate_uniform_densities_cpu", |b| {
+        b.iter(|| {
+            let chunk_start = calculate_chunk_start(&(0, 2000, 0));
+            let first_sample_reuse = sample_fbm(&noise_function, chunk_start.x, chunk_start.z);
+            black_box(generate_densities(
+                black_box(&noise_function),
+                black_box(first_sample_reuse),
+                black_box(chunk_start),
             ))
         })
     });
@@ -43,7 +65,9 @@ fn benchmark_marching_cubes(c: &mut Criterion) {
     let chunk = (0, 2, 0);
     let noise_function =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
-    let chunk = TerrainChunk::new(chunk, &noise_function);
+    let chunk_start = calculate_chunk_start(&chunk);
+    let first_sample_reuse = sample_fbm(&noise_function, chunk_start.x, chunk_start.z);
+    let chunk = TerrainChunk::new(&noise_function, chunk_start, first_sample_reuse);
     assert!(
         chunk_contains_surface(&chunk),
         "Chunk at {:?} should contain a surface",
@@ -65,7 +89,9 @@ fn benchmark_heightmap_single_chunk_cpu(c: &mut Criterion) {
     let chunk_coord = (0, 2, 0);
     let noise_function =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
-    let chunk = TerrainChunk::new(chunk_coord, &noise_function);
+    let chunk_start = calculate_chunk_start(&chunk_coord);
+    let first_sample_reuse = sample_fbm(&noise_function, chunk_start.x, chunk_start.z);
+    let chunk = TerrainChunk::new(&noise_function, chunk_start, first_sample_reuse);
     assert!(
         chunk_contains_surface(&chunk),
         "Chunk at {:?} should contain a surface",
@@ -74,9 +100,11 @@ fn benchmark_heightmap_single_chunk_cpu(c: &mut Criterion) {
     let chunk_start = calculate_chunk_start(&chunk_coord);
     c.bench_function("heightmap_single_cpu", |b| {
         b.iter(|| {
+            let first_sample_reuse = sample_fbm(&noise_function, chunk_start.x, chunk_start.z);
             black_box(generate_terrain_heights(
                 black_box(&chunk_start),
                 black_box(&noise_function),
+                black_box(first_sample_reuse),
             ));
         })
     });
@@ -104,9 +132,12 @@ fn benchmark_heightmap_region_cpu(c: &mut Criterion) {
                 for z in lower.2..=upper.2 {
                     let chunk_coord = (x, lower.1, z);
                     let chunk_start = calculate_chunk_start(&chunk_coord);
+                    let first_sample_reuse =
+                        sample_fbm(&noise_function, chunk_start.x, chunk_start.z);
                     let heights = generate_terrain_heights(
                         black_box(&chunk_start),
                         black_box(&noise_function),
+                        black_box(first_sample_reuse),
                     );
                     results.insert(chunk_coord, heights);
                 }
@@ -136,6 +167,7 @@ criterion_group!(
     benchmark_heightmap_single_chunk_gpu,
     benchmark_heightmap_region_cpu,
     benchmark_heightmap_region_gpu,
+    benchmark_generate_uniform_densities_cpu,
 );
 criterion_main!(benches);
 
