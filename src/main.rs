@@ -11,7 +11,7 @@ use bevy::image::ImageSamplerDescriptor;
 use bevy::pbr::{ExtendedMaterial, PbrPlugin};
 use bevy::prelude::*;
 use bevy::window::PresentMode;
-use bevy::winit::WinitSettings;
+use bevy::winit::{UpdateMode, WinitSettings};
 use bevy_rapier3d::plugin::{NoUserData, PhysicsSet, RapierPhysicsPlugin};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
 use bevy_volumetric_clouds::CloudsPlugin;
@@ -36,6 +36,7 @@ use marching_cubes::player::player::{
     CameraController, KeyBindings, MainCameraTag, camera_look, camera_zoom, cursor_grab,
     initial_grab_cursor, player_movement, spawn_player, sync_player_mutex, toggle_camera,
 };
+use marching_cubes::settings::settings_driver::{load_settings, save_monitor_on_move};
 use marching_cubes::sparse_voxel_octree::sphere_intersects_aabb;
 use marching_cubes::terrain::chunk_generator::{dequantize_i16_to_f32, quantize_f32_to_i16};
 use marching_cubes::terrain::terrain::{
@@ -45,23 +46,17 @@ use marching_cubes::terrain::terrain::{
 use marching_cubes::terrain::terrain_material::TerrainMaterialExtension;
 use marching_cubes::ui::crosshair::spawn_crosshair;
 use marching_cubes::ui::minimap::spawn_minimap;
-use rayon::ThreadPoolBuilder;
 
 fn main() {
-    ThreadPoolBuilder::new()
-        .num_threads(8)
-        .build_global()
-        .unwrap();
+    let settings = load_settings();
+    let window_centered_position = settings.window_centered_position;
     App::new()
+        .insert_resource(settings)
         .insert_resource(KeyBindings::default())
         .insert_resource(CameraController::default())
         .insert_resource(WinitSettings {
-            focused_mode: bevy::winit::UpdateMode::reactive_low_power(Duration::from_secs_f64(
-                1.0 / 240.0,
-            )),
-            unfocused_mode: bevy::winit::UpdateMode::reactive_low_power(Duration::from_secs_f64(
-                1.0 / 240.0,
-            )),
+            focused_mode: UpdateMode::reactive_low_power(Duration::from_secs_f64(1.0 / 240.0)),
+            unfocused_mode: UpdateMode::reactive_low_power(Duration::from_secs_f64(1.0 / 240.0)),
         })
         .insert_resource(NoiseFunction(|| -> GeneratorWrapper<SafeNode> {
             (opensimplex2().fbm(1.0, 0.65, 3, 2.2)).build()
@@ -72,6 +67,9 @@ fn main() {
                     primary_window: Some(Window {
                         present_mode: PresentMode::AutoNoVsync,
                         resolution: (1600, 720).into(),
+                        position: window_centered_position
+                            .map(WindowPosition::At)
+                            .unwrap_or(WindowPosition::Automatic),
                         ..default()
                     }),
                     ..default()
@@ -125,6 +123,7 @@ fn main() {
                 project_downward
                     .after(PhysicsSet::SyncBackend)
                     .run_if(|| !INITIAL_CHUNKS_LOADED.load(Ordering::Relaxed)),
+                save_monitor_on_move,
             ),
         )
         .run();
