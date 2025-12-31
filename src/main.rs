@@ -14,11 +14,11 @@ use bevy::window::PresentMode;
 use bevy::winit::{UpdateMode, WinitSettings};
 use bevy_rapier3d::plugin::{NoUserData, PhysicsSet, RapierPhysicsPlugin};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
+use bevy_rapier3d::render::RapierDebugRenderPlugin;
 use bevy_volumetric_clouds::CloudsPlugin;
 use fastnoise2::SafeNode;
 use fastnoise2::generator::simplex::opensimplex2;
 use fastnoise2::generator::{Generator, GeneratorWrapper};
-// use bevy_rapier3d::render::RapierDebugRenderPlugin;
 use iyes_perf_ui::PerfUiPlugin;
 use iyes_perf_ui::prelude::PerfUiDefaultEntries;
 use marching_cubes::conversions::{
@@ -93,7 +93,7 @@ fn main() {
             MaterialPlugin::<ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>>::default(
             ),
             CloudsPlugin,
-            // RapierDebugRenderPlugin::default(),
+            RapierDebugRenderPlugin::default(),
         ))
         .add_systems(
             Startup,
@@ -163,7 +163,9 @@ pub fn dig_sphere(
             for chunk_z in min_chunk.2..=max_chunk.2 {
                 let chunk_coord = (chunk_x, chunk_y, chunk_z);
                 let mut terrain_chunk_map_lock = terrain_chunk_map.0.lock().unwrap();
-                let terrain_chunk = terrain_chunk_map_lock.get_mut(&chunk_coord).unwrap();
+                let terrain_chunk = terrain_chunk_map_lock.get_mut(&chunk_coord).expect(
+                    "During dig, tried to modify a chunk that does not exist in the terrain chunk map!",
+                );
                 let chunk_modified =
                     modify_chunk_voxels(terrain_chunk, chunk_coord, center, radius, strength);
                 if chunk_modified && !modified_chunks.contains(&chunk_coord) {
