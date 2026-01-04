@@ -10,3 +10,4 @@ Please read the technical docs for more information.
 
 \> 10M triangles
 <img width="1219" height="670" alt="image" src="https://github.com/user-attachments/assets/b611efa3-1447-4e60-8572-9b7deb58f7fa" />
+<img width="813" height="688" alt="Screenshot 2026-01-04 022252" src="https://github.com/user-attachments/assets/f76fbfb4-0388-4589-a10d-c8058d3b2d1c" />
