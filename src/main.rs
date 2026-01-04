@@ -14,7 +14,7 @@ use bevy::window::PresentMode;
 use bevy::winit::{UpdateMode, WinitSettings};
 use bevy_rapier3d::plugin::{NoUserData, PhysicsSet, RapierPhysicsPlugin};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
-use bevy_rapier3d::render::RapierDebugRenderPlugin;
+// use bevy_rapier3d::render::RapierDebugRenderPlugin;
 use bevy_volumetric_clouds::CloudsPlugin;
 use fastnoise2::SafeNode;
 use fastnoise2::generator::simplex::opensimplex2;
@@ -45,6 +45,10 @@ use marching_cubes::terrain::terrain::{
 };
 use marching_cubes::terrain::terrain_material::TerrainMaterialExtension;
 use marching_cubes::ui::crosshair::spawn_crosshair;
+#[cfg(feature = "debug_lines")]
+use marching_cubes::ui::debug_lines::{
+    draw_cluster_debug, draw_collider_debug, spawn_debug_spheres, update_debug_sphere_positions,
+};
 use marching_cubes::ui::minimap::spawn_minimap;
 
 fn main() {
@@ -93,7 +97,7 @@ fn main() {
             MaterialPlugin::<ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>>::default(
             ),
             CloudsPlugin,
-            RapierDebugRenderPlugin::default(),
+            // RapierDebugRenderPlugin::default(),
         ))
         .add_systems(
             Startup,
@@ -107,6 +111,8 @@ fn main() {
                 spawn_player.after(setup_chunk_loading),
                 spawn_minimap.after(spawn_player),
                 initial_grab_cursor,
+                #[cfg(feature = "debug_lines")]
+                spawn_debug_spheres.after(spawn_player),
             ),
         )
         .add_systems(
@@ -124,6 +130,12 @@ fn main() {
                     .after(PhysicsSet::SyncBackend)
                     .run_if(|| !INITIAL_CHUNKS_LOADED.load(Ordering::Relaxed)),
                 save_monitor_on_move,
+                #[cfg(feature = "debug_lines")]
+                update_debug_sphere_positions,
+                #[cfg(feature = "debug_lines")]
+                draw_cluster_debug,
+                #[cfg(feature = "debug_lines")]
+                draw_collider_debug,
             ),
         )
         .run();
