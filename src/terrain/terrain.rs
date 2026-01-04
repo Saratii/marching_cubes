@@ -25,7 +25,7 @@ pub const SAMPLES_PER_CHUNK: usize =
     SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM;
 pub const SAMPLES_PER_CHUNK_DIM_M1: usize = SAMPLES_PER_CHUNK_DIM - 1;
 pub const HALF_CHUNK: f32 = CHUNK_SIZE / 2.0;
-pub const Z0_RADIUS: f32 = 50.0; //in world units. Distance where everything is loaded at all times and physically simulated.
+pub const Z0_RADIUS: f32 = 80.0; //in world units. Distance where everything is loaded at all times and physically simulated.
 pub const Z0_RADIUS_SQUARED: f32 = Z0_RADIUS * Z0_RADIUS;
 pub const Z1_RADIUS: f32 = 100.0; //in world units. Distance where chunks are loaded at full res but not stored in memory.
 pub const Z1_RADIUS_SQUARED: f32 = Z1_RADIUS * Z1_RADIUS;
@@ -49,7 +49,7 @@ pub struct TerrainMaterialHandle(
 #[derive(Resource)]
 pub struct TextureAtlasHandle(pub Handle<Image>);
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy)]
 pub enum UniformChunk {
     NonUniform,
     Dirt,

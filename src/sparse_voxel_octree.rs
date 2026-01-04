@@ -1,12 +1,12 @@
-use std::collections::HashSet;
-
 use bevy::prelude::*;
+use rustc_hash::FxHashSet;
 
 use crate::{
-    conversions::chunk_coord_to_world_pos,
+    conversions::{cluster_coord_to_world_center, cluster_coord_to_world_pos},
     data_loader::driver::ChunkRequest,
     terrain::terrain::{
-        HALF_CHUNK, MAX_RADIUS_SQUARED, Z0_RADIUS_SQUARED, Z1_RADIUS_SQUARED, Z2_RADIUS_SQUARED,
+        CHUNK_SIZE, CLUSTER_SIZE, MAX_RADIUS_SQUARED, Z0_RADIUS_SQUARED, Z1_RADIUS_SQUARED,
+        Z2_RADIUS_SQUARED,
     },
 };
 
@@ -29,21 +29,21 @@ impl ChunkSvo {
 
 #[derive(Debug)]
 pub struct SvoNode {
-    pub lower_chunk_coord: (i16, i16, i16), // chunk coord of lower corner
-    pub size: i16,                          // region size in chunks (power of 2)
+    pub lower_cluster_coord: (i16, i16, i16), // cluster coord of lower corner (RENAMED)
+    pub size: i16,                            // region size in clusters (power of 2)
     pub children: Option<Box<[Option<SvoNode>; 8]>>,
-    pub chunk: Option<(bool, u8)>, // (has_entity, chunk data, load status)
+    pub chunk: Option<([bool; CLUSTER_SIZE * CLUSTER_SIZE * CLUSTER_SIZE], u8)>, // (has_entity, load status)
     pub node_min: Vec3,
     pub node_max: Vec3,
 }
 
 impl SvoNode {
-    pub fn new(lower_chunk_coord: (i16, i16, i16), size: i16) -> Self {
-        let chunk_center = chunk_coord_to_world_pos(&lower_chunk_coord);
-        let node_min = chunk_center - Vec3::splat(HALF_CHUNK);
-        let node_max = node_min + Vec3::splat(size as f32 * (HALF_CHUNK * 2.0));
+    pub fn new(lower_cluster_coord: (i16, i16, i16), size: i16) -> Self {
+        let cluster_size_world = CHUNK_SIZE * CLUSTER_SIZE as f32;
+        let node_min = cluster_coord_to_world_pos(&lower_cluster_coord);
+        let node_max = node_min + Vec3::splat(size as f32 * cluster_size_world);
         Self {
-            lower_chunk_coord,
+            lower_cluster_coord,
             size,
             children: None,
             chunk: None,
@@ -61,19 +61,22 @@ impl SvoNode {
     fn child_index(&self, chunk_coord: &(i16, i16, i16)) -> usize {
         let half = self.size / 2;
         let mut index = 0;
-        if chunk_coord.0 >= self.lower_chunk_coord.0 + half {
+        if chunk_coord.0 >= self.lower_cluster_coord.0 + half {
             index |= 1;
         }
-        if chunk_coord.1 >= self.lower_chunk_coord.1 + half {
+        if chunk_coord.1 >= self.lower_cluster_coord.1 + half {
             index |= 2;
         }
-        if chunk_coord.2 >= self.lower_chunk_coord.2 + half {
+        if chunk_coord.2 >= self.lower_cluster_coord.2 + half {
             index |= 4;
         }
         index
     }
 
-    pub fn get(&self, coord: (i16, i16, i16)) -> Option<&(bool, u8)> {
+    pub fn get(
+        &self,
+        coord: (i16, i16, i16),
+    ) -> Option<&([bool; CLUSTER_SIZE * CLUSTER_SIZE * CLUSTER_SIZE], u8)> {
         if self.size == 1 {
             return self.chunk.as_ref();
         }
@@ -82,7 +85,10 @@ impl SvoNode {
         children[idx].as_ref()?.get(coord)
     }
 
-    pub fn get_mut(&mut self, coord: (i16, i16, i16)) -> Option<&mut (bool, u8)> {
+    pub fn get_mut(
+        &mut self,
+        coord: (i16, i16, i16),
+    ) -> Option<&mut ([bool; CLUSTER_SIZE * CLUSTER_SIZE * CLUSTER_SIZE], u8)> {
         if self.size == 1 {
             return self.chunk.as_mut();
         }
@@ -91,7 +97,12 @@ impl SvoNode {
         children[idx].as_mut()?.get_mut(coord)
     }
 
-    pub fn insert(&mut self, coord: (i16, i16, i16), load_status: u8, has_entity: bool) {
+    pub fn insert(
+        &mut self,
+        coord: (i16, i16, i16),
+        load_status: u8,
+        has_entity: [bool; CLUSTER_SIZE * CLUSTER_SIZE * CLUSTER_SIZE],
+    ) {
         if self.size == 1 {
             debug_assert!(
                 self.chunk.is_none(),
@@ -109,9 +120,9 @@ impl SvoNode {
         if children[index].is_none() {
             let half = self.size / 2;
             let child_pos = (
-                self.lower_chunk_coord.0 + if (index & 1) != 0 { half } else { 0 },
-                self.lower_chunk_coord.1 + if (index & 2) != 0 { half } else { 0 },
-                self.lower_chunk_coord.2 + if (index & 4) != 0 { half } else { 0 },
+                self.lower_cluster_coord.0 + if (index & 1) != 0 { half } else { 0 },
+                self.lower_cluster_coord.1 + if (index & 2) != 0 { half } else { 0 },
+                self.lower_cluster_coord.2 + if (index & 4) != 0 { half } else { 0 },
             );
             children[index] = Some(SvoNode::new(child_pos, self.size / 2));
         }
@@ -121,24 +132,24 @@ impl SvoNode {
             .insert(coord, load_status, has_entity);
     }
 
-    pub fn contains(&self, chunk_coord: &(i16, i16, i16)) -> bool {
-        if chunk_coord.0 < self.lower_chunk_coord.0
-            || chunk_coord.1 < self.lower_chunk_coord.1
-            || chunk_coord.2 < self.lower_chunk_coord.2
-            || chunk_coord.0 >= self.lower_chunk_coord.0 + self.size
-            || chunk_coord.1 >= self.lower_chunk_coord.1 + self.size
-            || chunk_coord.2 >= self.lower_chunk_coord.2 + self.size
+    pub fn contains(&self, cluster_coord: &(i16, i16, i16)) -> bool {
+        if cluster_coord.0 < self.lower_cluster_coord.0
+            || cluster_coord.1 < self.lower_cluster_coord.1
+            || cluster_coord.2 < self.lower_cluster_coord.2
+            || cluster_coord.0 >= self.lower_cluster_coord.0 + self.size
+            || cluster_coord.1 >= self.lower_cluster_coord.1 + self.size
+            || cluster_coord.2 >= self.lower_cluster_coord.2 + self.size
         {
             return false;
         }
         if self.size == 1 {
             return self.chunk.is_some();
         }
-        let index = self.child_index(chunk_coord);
+        let index = self.child_index(cluster_coord);
         match &self.children {
             Some(children) => {
                 if let Some(child) = &children[index] {
-                    child.contains(chunk_coord)
+                    child.contains(cluster_coord)
                 } else {
                     false
                 }
@@ -188,7 +199,7 @@ impl SvoNode {
         &mut self,
         center: &Vec3,
         radius: f32,
-        chunks_being_loaded: &mut HashSet<(i16, i16, i16)>,
+        chunks_being_loaded: &mut FxHashSet<(i16, i16, i16)>,
         request_buffer: &mut Vec<ChunkRequest>,
     ) {
         if !sphere_intersects_aabb(center, radius, &self.node_min, &self.node_max) {
@@ -196,30 +207,30 @@ impl SvoNode {
         }
         if self.children.is_none() {
             if self.size == 1 {
-                let chunk_coord = self.lower_chunk_coord;
-                if self.chunk.is_none() && !chunks_being_loaded.contains(&chunk_coord) {
-                    let distance_squared =
-                        center.distance_squared(chunk_coord_to_world_pos(&chunk_coord));
+                if self.chunk.is_none() && !chunks_being_loaded.contains(&self.lower_cluster_coord)
+                {
+                    let distance_squared = center
+                        .distance_squared(cluster_coord_to_world_center(&self.lower_cluster_coord));
                     if distance_squared > MAX_RADIUS_SQUARED {
                         return; //skip chunks where the sphere intersects but chunk center is outside max radius
                     }
-                    chunks_being_loaded.insert(chunk_coord);
+                    chunks_being_loaded.insert(self.lower_cluster_coord);
                     let load_priority = get_load_priority(distance_squared);
                     request_buffer.push(ChunkRequest {
-                        position: chunk_coord,
+                        position: self.lower_cluster_coord,
                         load_status: load_priority,
                         upgrade: false,
                         distance_squared: distance_squared.round() as u32,
                     });
-                } else if !chunks_being_loaded.contains(&chunk_coord) {
+                } else if !chunks_being_loaded.contains(&self.lower_cluster_coord) {
                     let current_load_status = self.chunk.as_ref().unwrap().1;
-                    let distance_squared =
-                        center.distance_squared(chunk_coord_to_world_pos(&chunk_coord));
+                    let distance_squared = center
+                        .distance_squared(cluster_coord_to_world_center(&self.lower_cluster_coord));
                     let desired_load_status = get_load_priority(distance_squared);
                     if desired_load_status < current_load_status {
-                        chunks_being_loaded.insert(chunk_coord);
+                        chunks_being_loaded.insert(self.lower_cluster_coord);
                         request_buffer.push(ChunkRequest {
-                            position: chunk_coord,
+                            position: self.lower_cluster_coord,
                             load_status: desired_load_status,
                             upgrade: true,
                             distance_squared: distance_squared.round() as u32,
@@ -235,14 +246,16 @@ impl SvoNode {
             let half = self.size / 2;
             for i in 0..8 {
                 let child_pos = (
-                    self.lower_chunk_coord.0 + if (i & 1) != 0 { half } else { 0 },
-                    self.lower_chunk_coord.1 + if (i & 2) != 0 { half } else { 0 },
-                    self.lower_chunk_coord.2 + if (i & 4) != 0 { half } else { 0 },
+                    self.lower_cluster_coord.0 + if (i & 1) != 0 { half } else { 0 },
+                    self.lower_cluster_coord.1 + if (i & 2) != 0 { half } else { 0 },
+                    self.lower_cluster_coord.2 + if (i & 4) != 0 { half } else { 0 },
                 );
                 if children[i].is_none() {
-                    let child_center = chunk_coord_to_world_pos(&child_pos);
-                    let child_min = child_center - Vec3::splat(HALF_CHUNK);
-                    let child_max = child_min + Vec3::splat(half as f32 * (HALF_CHUNK * 2.0));
+                    let child_center = cluster_coord_to_world_pos(&child_pos);
+                    let cluster_size_world = CHUNK_SIZE * CLUSTER_SIZE as f32;
+                    let half_cluster = cluster_size_world * 0.5;
+                    let child_min = child_center - Vec3::splat(half_cluster);
+                    let child_max = child_min + Vec3::splat(half as f32 * cluster_size_world);
                     if sphere_intersects_aabb(center, radius, &child_min, &child_max) {
                         children[i] = Some(SvoNode::new(child_pos, half));
                     }
@@ -265,7 +278,10 @@ impl SvoNode {
     pub fn query_chunks_outside_sphere(
         &self,
         center: &Vec3,
-        results: &mut Vec<((i16, i16, i16), bool)>,
+        results: &mut Vec<(
+            (i16, i16, i16),
+            [bool; CLUSTER_SIZE * CLUSTER_SIZE * CLUSTER_SIZE],
+        )>,
     ) {
         // Quick prune: if the node’s nearest point is still beyond MAX_RADIUS, skip this node entirely.
         let node_center_to_sphere = {
@@ -297,10 +313,10 @@ impl SvoNode {
         }
         if self.size == 1 {
             if let Some((has_entity, _)) = &self.chunk {
-                let chunk_center = chunk_coord_to_world_pos(&self.lower_chunk_coord);
+                let chunk_center = cluster_coord_to_world_center(&self.lower_cluster_coord);
                 let dist_sq = center.distance_squared(chunk_center);
                 if dist_sq > MAX_RADIUS_SQUARED {
-                    results.push((self.lower_chunk_coord, *has_entity));
+                    results.push((self.lower_cluster_coord, *has_entity));
                 }
             }
             return;
@@ -312,10 +328,16 @@ impl SvoNode {
         }
     }
 
-    fn collect_all_chunks(&self, results: &mut Vec<((i16, i16, i16), bool)>) {
+    fn collect_all_chunks(
+        &self,
+        results: &mut Vec<(
+            (i16, i16, i16),
+            [bool; CLUSTER_SIZE * CLUSTER_SIZE * CLUSTER_SIZE],
+        )>,
+    ) {
         if self.size == 1 {
             if let Some((has_entity, _)) = &self.chunk {
-                results.push((self.lower_chunk_coord, *has_entity));
+                results.push((self.lower_cluster_coord, *has_entity));
             }
             return;
         }

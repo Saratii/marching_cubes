@@ -1,11 +1,12 @@
 use crate::{
+    conversions::{chunk_coord_to_cluster_coord, cluster_coord_to_min_chunk_coord},
     data_loader::file_loader::{
         ChunkIndexMapDelta, get_project_root, load_chunk_index_map, load_uniform_chunks,
         remove_uniform_chunk, update_chunk_file_data,
     },
     terrain::{
         chunk_generator::{calculate_chunk_start, sample_fbm},
-        terrain::CHUNK_SIZE,
+        terrain::{CHUNK_SIZE, CLUSTER_SIZE},
     },
 };
 use bevy::prelude::*;
@@ -19,10 +20,10 @@ use rustc_hash::{FxHashMap, FxHashSet};
 #[cfg(feature = "timers")]
 use std::io::Write;
 use std::{
-    collections::{BinaryHeap, HashMap, HashSet, VecDeque},
+    collections::{BinaryHeap, VecDeque},
     fs::{File, OpenOptions},
     sync::{
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     thread,
@@ -61,7 +62,7 @@ pub struct NoiseGenerator(pub GeneratorWrapper<SafeNode>);
 
 //stores the data for all chunks in Z0 radius on the bevy thread. Chunk loader can write to the mutex and bevy can modify it for digging operations.
 #[derive(Resource)]
-pub struct TerrainChunkMap(pub Arc<Mutex<HashMap<(i16, i16, i16), TerrainChunk>>>);
+pub struct TerrainChunkMap(pub Arc<Mutex<FxHashMap<(i16, i16, i16), TerrainChunk>>>);
 
 pub enum ChunkSpawnResult {
     ToSpawn(((i16, i16, i16), Option<Collider>, Mesh)),
@@ -128,7 +129,7 @@ impl PartialOrd for ChunkRequest {
 }
 
 struct ChunkResult {
-    has_entity: bool,
+    has_entity: [bool; CLUSTER_SIZE * CLUSTER_SIZE * CLUSTER_SIZE],
     chunk_coord: (i16, i16, i16),
     load_status: u8,
 }
@@ -150,12 +151,10 @@ pub fn setup_chunk_driver(
     commands.insert_resource(LogicalProcesors(num_processors));
     let player_translation_arc = Arc::clone(&player_translation_mutex_handle.0);
     let (chunk_spawn_sender, chunk_spawn_reciever) = unbounded::<ChunkSpawnResult>();
-    let terrain_chunk_map = Arc::new(Mutex::new(HashMap::new()));
+    let terrain_chunk_map = Arc::new(Mutex::new(FxHashMap::default()));
     let terrain_chunk_map_arc = Arc::clone(&terrain_chunk_map);
-    let (req_tx, req_rx) = unbounded::<ChunkRequest>();
     let (res_tx, res_rx) = unbounded::<ChunkResult>();
     let svo = Arc::new(Mutex::new(ChunkSvo::new()));
-    commands.insert_resource(TerrainChunkMap(terrain_chunk_map));
     commands.insert_resource(ChunkSpawnReciever(chunk_spawn_reciever));
     let root = get_project_root();
     let mut air_compression_file = OpenOptions::new()
@@ -189,8 +188,8 @@ pub fn setup_chunk_driver(
     let fbm =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
     commands.insert_resource(NoiseGenerator(fbm.clone()));
-    let uniform_air_chunk_deltas = Arc::new(Mutex::new(HashSet::new()));
-    let uniform_dirt_chunk_deltas = Arc::new(Mutex::new(HashSet::new()));
+    let uniform_air_chunk_deltas = Arc::new(Mutex::new(FxHashSet::default()));
+    let uniform_dirt_chunk_deltas = Arc::new(Mutex::new(FxHashSet::default()));
     let (write_tx, write_rx) = crossbeam_channel::unbounded();
     let index_map_delta_arc = Arc::clone(&index_map_delta.0);
     let data_file_write = OpenOptions::new()
@@ -224,6 +223,7 @@ pub fn setup_chunk_driver(
             empty_dirt_offsets,
         );
     });
+    let priority_queue = Arc::new((Mutex::new(BinaryHeap::new()), Condvar::new()));
     for thread_idx in 0..num_processors.saturating_sub(2) {
         //leave one processor free for main thread and one for svo manager <- might be wrong
         let index_map_read = Arc::clone(&index_map_read);
@@ -234,7 +234,6 @@ pub fn setup_chunk_driver(
             .read(true)
             .open(root.join("data/chunk_data.txt"))
             .unwrap();
-        let req_rx_clone = req_rx.clone();
         let res_tx_clone = res_tx.clone();
         let terrain_chunk_map_arc = Arc::clone(&terrain_chunk_map_arc);
         let svo_arc = Arc::clone(&svo);
@@ -243,10 +242,10 @@ pub fn setup_chunk_driver(
         let uniform_air_chunks_read_only = Arc::clone(&uniform_air_chunks);
         let uniform_dirt_chunks_read_only = Arc::clone(&uniform_dirt_chunks);
         let write_sender_clone = write_tx.clone();
+        let priority_queue_arc = Arc::clone(&priority_queue);
         thread::spawn(move || {
             chunk_loader_thread(
                 thread_idx,
-                req_rx_clone,
                 res_tx_clone,
                 index_map_read,
                 index_map_delta,
@@ -260,20 +259,28 @@ pub fn setup_chunk_driver(
                 uniform_air_chunks_read_only,
                 uniform_dirt_chunks_read_only,
                 write_sender_clone,
+                priority_queue_arc,
             );
         });
     }
+    let terrain_chunk_map_arc = Arc::clone(&terrain_chunk_map_arc);
     thread::spawn(move || {
         svo_manager_thread(
             res_rx,
             player_translation_arc,
             chunk_spawn_sender,
-            req_tx,
             svo,
+            Arc::clone(&uniform_air_chunks),
+            Arc::clone(&uniform_dirt_chunks),
+            uniform_air_chunk_deltas,
+            uniform_dirt_chunk_deltas,
+            priority_queue,
+            terrain_chunk_map_arc,
         );
     });
     commands.insert_resource(WriteCmdSender(write_tx));
     commands.insert_resource(ChunkIndexMapRead(index_map_read));
+    commands.insert_resource(TerrainChunkMap(terrain_chunk_map));
 }
 
 fn dedicated_write_thread(
@@ -319,24 +326,25 @@ fn dedicated_write_thread(
 
 //compute thread for loading chunks from disk
 //recieves chunk load requests from svo_manager_thread and returns the data
+// - no uniform clusters should enter this thread
 fn chunk_loader_thread(
     #[cfg_attr(not(feature = "timers"), allow(unused_variables))] thread_idx: usize,
-    req_rx: Receiver<ChunkRequest>,
     res_tx: Sender<ChunkResult>,
     index_map_read: Arc<FxHashMap<(i16, i16, i16), u64>>,
     index_map_delta: Arc<Mutex<FxHashMap<(i16, i16, i16), u64>>>,
-    uniform_air_chunks_delta: Arc<Mutex<HashSet<(i16, i16, i16)>>>,
-    uniform_dirt_chunks_delta: Arc<Mutex<HashSet<(i16, i16, i16)>>>,
+    uniform_air_chunks_delta: Arc<Mutex<FxHashSet<(i16, i16, i16)>>>,
+    uniform_dirt_chunks_delta: Arc<Mutex<FxHashSet<(i16, i16, i16)>>>,
     mut chunk_data_file_read: File,
-    terrain_chunk_map: Arc<Mutex<HashMap<(i16, i16, i16), TerrainChunk>>>,
+    terrain_chunk_map: Arc<Mutex<FxHashMap<(i16, i16, i16), TerrainChunk>>>,
     svo: Arc<Mutex<ChunkSvo>>,
     chunk_spawn_channel: Sender<ChunkSpawnResult>,
     fbm: GeneratorWrapper<SafeNode>,
     uniform_air_chunks_read_only: Arc<FxHashSet<(i16, i16, i16)>>,
     uniform_dirt_chunks_read_only: Arc<FxHashSet<(i16, i16, i16)>>,
     write_sender: Sender<WriteCmd>,
+    priority_queue: Arc<(Mutex<BinaryHeap<ChunkRequest>>, Condvar)>,
 ) {
-    let mut priority_queue = BinaryHeap::new();
+    let mut internal_queue = Vec::with_capacity(32);
     #[cfg(feature = "timers")]
     let mut chunks_generated = 0;
     #[cfg(feature = "timers")]
@@ -360,201 +368,233 @@ fn chunk_loader_thread(
     #[cfg(feature = "timers")]
     writeln!(queue_size_file, "time_seconds,queue_size").unwrap();
     loop {
-        if priority_queue.is_empty() {
-            priority_queue.push(req_rx.recv().expect("channel closed"));
+        let (lock, cv) = &*priority_queue;
+        let mut heap = lock.lock().unwrap();
+        while heap.is_empty() {
+            heap = cv.wait(heap).unwrap();
         }
-        while let Ok(req) = req_rx.try_recv() {
-            priority_queue.push(req);
+        let bound = heap.len().min(64);
+        for _ in 0..bound {
+            internal_queue.push(heap.pop().unwrap());
         }
-        if let Some(req) = priority_queue.pop() {
-            let chunk_coord = req.position;
-            //first search the read only without locking
-            let mut is_uniform_air = uniform_air_chunks_read_only.contains(&chunk_coord);
-            let mut is_uniform_dirt = if is_uniform_air {
-                false
-            } else {
-                uniform_dirt_chunks_read_only.contains(&chunk_coord)
-            };
-            //if neither, lock and double check the runtime uniform deltas
-            if !is_uniform_air && !is_uniform_dirt {
-                let uniform_air_chunks_lock = uniform_air_chunks_delta.lock().unwrap();
-                is_uniform_air = uniform_air_chunks_lock.contains(&chunk_coord);
-                drop(uniform_air_chunks_lock);
-                if !is_uniform_air {
-                    let uniform_dirt_chunks_lock = uniform_dirt_chunks_delta.lock().unwrap();
-                    is_uniform_dirt = uniform_dirt_chunks_lock.contains(&chunk_coord);
-                    drop(uniform_dirt_chunks_lock);
+        drop(heap);
+        for request in internal_queue.drain(..) {
+            let mut has_entity_buffer = [false; CLUSTER_SIZE * CLUSTER_SIZE * CLUSTER_SIZE];
+            let mut rolling = 0;
+            let min_chunk = cluster_coord_to_min_chunk_coord(&request.position);
+            for chunk_x in min_chunk.0..min_chunk.0 + CLUSTER_SIZE as i16 {
+                for chunk_y in min_chunk.1..min_chunk.1 + CLUSTER_SIZE as i16 {
+                    for chunk_z in min_chunk.2..min_chunk.2 + CLUSTER_SIZE as i16 {
+                        let chunk_coord = (chunk_x, chunk_y, chunk_z);
+                        //first search the read only without locking
+                        let mut is_uniform_air =
+                            uniform_air_chunks_read_only.contains(&chunk_coord);
+                        let mut is_uniform_dirt = if is_uniform_air {
+                            false
+                        } else {
+                            uniform_dirt_chunks_read_only.contains(&chunk_coord)
+                        };
+                        //if neither, lock and double check the runtime uniform deltas
+                        if !is_uniform_air && !is_uniform_dirt {
+                            let uniform_air_chunks_lock = uniform_air_chunks_delta.lock().unwrap();
+                            is_uniform_air = uniform_air_chunks_lock.contains(&chunk_coord);
+                            drop(uniform_air_chunks_lock);
+                            if !is_uniform_air {
+                                let uniform_dirt_chunks_lock =
+                                    uniform_dirt_chunks_delta.lock().unwrap();
+                                is_uniform_dirt = uniform_dirt_chunks_lock.contains(&chunk_coord);
+                                drop(uniform_dirt_chunks_lock);
+                            }
+                        }
+                        let has_mesh = if is_uniform_air || is_uniform_dirt {
+                            if request.load_status == 0 {
+                                let data = if is_uniform_air {
+                                    TerrainChunk {
+                                        densities: Box::new([i16::MAX; SAMPLES_PER_CHUNK]),
+                                        materials: Box::new([0; SAMPLES_PER_CHUNK]),
+                                        is_uniform: UniformChunk::Air,
+                                    }
+                                } else {
+                                    TerrainChunk {
+                                        densities: Box::new([i16::MIN; SAMPLES_PER_CHUNK]),
+                                        materials: Box::new([1; SAMPLES_PER_CHUNK]),
+                                        is_uniform: UniformChunk::Dirt,
+                                    }
+                                };
+                                terrain_chunk_map.lock().unwrap().insert(chunk_coord, data);
+                            }
+                            false
+                        } else {
+                            //first check read only initial copy
+                            let file_offset =
+                                index_map_read.get(&chunk_coord).copied().or_else(|| {
+                                    index_map_delta.lock().unwrap().get(&chunk_coord).copied()
+                                });
+                            //check if we even need the sdfs
+                            let chunk_start = calculate_chunk_start(&chunk_coord);
+                            let first_sample_reuse = sample_fbm(&fbm, chunk_start.x, chunk_start.z);
+                            //conservative heuristic: if the surface height at the first sample is greater than one chunk above the bottom of the chunk, we assume it is uniform air
+                            let has_mesh = if first_sample_reuse + CHUNK_SIZE * 3.0 < chunk_start.y
+                            {
+                                let mut uniform_air_chunks_lock =
+                                    uniform_air_chunks_delta.lock().unwrap();
+                                uniform_air_chunks_lock.insert(chunk_coord);
+                                drop(uniform_air_chunks_lock);
+                                write_sender
+                                    .send(WriteCmd::WriteUniformAir { coord: chunk_coord })
+                                    .unwrap();
+                                false
+                            } else {
+                                let chunk_sdfs = if let Some(offset) = file_offset {
+                                    load_chunk_data(&mut chunk_data_file_read, offset)
+                                } else {
+                                    //generate new chunk
+                                    let chunk =
+                                        TerrainChunk::new(&fbm, chunk_start, first_sample_reuse);
+                                    match chunk.is_uniform {
+                                        UniformChunk::Air => {
+                                            let mut uniform_air_chunks_lock =
+                                                uniform_air_chunks_delta.lock().unwrap();
+                                            uniform_air_chunks_lock.insert(chunk_coord);
+                                            drop(uniform_air_chunks_lock);
+                                            write_sender
+                                                .send(WriteCmd::WriteUniformAir {
+                                                    coord: chunk_coord,
+                                                })
+                                                .unwrap();
+                                        }
+                                        UniformChunk::Dirt => {
+                                            let mut uniform_dirt_chunks_lock =
+                                                uniform_dirt_chunks_delta.lock().unwrap();
+                                            uniform_dirt_chunks_lock.insert(chunk_coord);
+                                            drop(uniform_dirt_chunks_lock);
+                                            write_sender
+                                                .send(WriteCmd::WriteUniformDirt {
+                                                    coord: chunk_coord,
+                                                })
+                                                .unwrap();
+                                        }
+                                        UniformChunk::NonUniform => {
+                                            write_sender
+                                                .send(WriteCmd::WriteNonUniform {
+                                                    chunk: chunk.clone(),
+                                                    coord: chunk_coord,
+                                                })
+                                                .unwrap();
+                                        }
+                                    }
+                                    chunk
+                                };
+                                let has_mesh = chunk_contains_surface(&chunk_sdfs);
+                                let has_collider = has_mesh && request.load_status == 0;
+                                let (collider, mesh) = if has_mesh {
+                                    let (vertices, normals, material_ids, indices) =
+                                        mc_mesh_generation(
+                                            &chunk_sdfs.densities,
+                                            &chunk_sdfs.materials,
+                                            SAMPLES_PER_CHUNK_DIM,
+                                            HALF_CHUNK,
+                                        );
+                                    let mesh = generate_bevy_mesh(
+                                        vertices,
+                                        normals,
+                                        material_ids,
+                                        indices,
+                                    );
+                                    let collider = if has_collider {
+                                        Some(
+                                            Collider::from_bevy_mesh(
+                                                &mesh,
+                                                &ComputedColliderShape::TriMesh(
+                                                    TriMeshFlags::default(),
+                                                ),
+                                            )
+                                            .unwrap(),
+                                        )
+                                    } else {
+                                        None
+                                    };
+                                    (collider, Some(mesh))
+                                } else {
+                                    (None, None)
+                                };
+                                if request.load_status == 0 {
+                                    let mut terrain_chunk_map_lock =
+                                        terrain_chunk_map.lock().unwrap();
+                                    terrain_chunk_map_lock.insert(chunk_coord, chunk_sdfs);
+                                    drop(terrain_chunk_map_lock);
+                                }
+                                if has_collider {
+                                    if request.upgrade {
+                                        let mut svo_lock = svo.lock().unwrap();
+                                        let cluster_coord =
+                                            chunk_coord_to_cluster_coord(&chunk_coord);
+                                        let (_has_entity, load_status) =
+                                            svo_lock.root.get_mut(cluster_coord).unwrap();
+                                        *load_status = request.load_status;
+                                        drop(svo_lock);
+                                        chunk_spawn_channel
+                                            .send(ChunkSpawnResult::ToGiveCollider((
+                                                chunk_coord,
+                                                collider.unwrap(),
+                                            )))
+                                            .unwrap();
+                                    } else {
+                                        chunk_spawn_channel
+                                            .send(ChunkSpawnResult::ToSpawn((
+                                                chunk_coord,
+                                                collider,
+                                                mesh.unwrap(),
+                                            )))
+                                            .unwrap();
+                                    }
+                                } else {
+                                    if !request.upgrade {
+                                        if has_mesh {
+                                            chunk_spawn_channel
+                                                .send(ChunkSpawnResult::ToSpawn((
+                                                    chunk_coord,
+                                                    None,
+                                                    mesh.unwrap(),
+                                                )))
+                                                .unwrap();
+                                        }
+                                    }
+                                }
+                                has_mesh
+                            };
+                            has_mesh
+                        };
+                        has_entity_buffer[rolling] = has_mesh;
+                        rolling += 1;
+                        #[cfg(feature = "timers")]
+                        {
+                            if has_mesh {
+                                chunks_with_entities += 1;
+                            }
+                            chunks_generated += 1;
+                        }
+                    }
                 }
             }
-            let has_mesh = if is_uniform_air || is_uniform_dirt {
-                if req.load_status == 0 {
-                    let data = if is_uniform_air {
-                        TerrainChunk {
-                            densities: Box::new([i16::MAX; SAMPLES_PER_CHUNK]),
-                            materials: Box::new([0; SAMPLES_PER_CHUNK]),
-                            is_uniform: UniformChunk::Air,
-                        }
-                    } else {
-                        TerrainChunk {
-                            densities: Box::new([i16::MIN; SAMPLES_PER_CHUNK]),
-                            materials: Box::new([1; SAMPLES_PER_CHUNK]),
-                            is_uniform: UniformChunk::Dirt,
-                        }
-                    };
-                    terrain_chunk_map.lock().unwrap().insert(chunk_coord, data);
-                }
-                false
-            } else {
-                //first check read only initial copy
-                let file_offset = {
-                    let offset = index_map_read.get(&chunk_coord).cloned();
-                    //if index isnt there maybe its in delta per chance
-                    let offset = if offset.is_none() {
-                        let index_map_lock = index_map_delta.lock().unwrap();
-                        index_map_lock.get(&chunk_coord).cloned().clone()
-                    } else {
-                        offset
-                    };
-                    offset
-                };
-                //check if we even need the sdfs
-                let chunk_start = calculate_chunk_start(&chunk_coord);
-                let first_sample_reuse = sample_fbm(&fbm, chunk_start.x, chunk_start.z);
-                //conservative heuristic: if the surface height at the first sample is greater than one chunk above the bottom of the chunk, we assume it is uniform air
-                if first_sample_reuse + CHUNK_SIZE * 3.0 < chunk_start.y {
-                    let mut uniform_air_chunks_lock = uniform_air_chunks_delta.lock().unwrap();
-                    uniform_air_chunks_lock.insert(chunk_coord);
-                    drop(uniform_air_chunks_lock);
-                    write_sender
-                        .send(WriteCmd::WriteUniformAir { coord: chunk_coord })
-                        .unwrap();
-                    let _ = res_tx.send(ChunkResult {
-                        has_entity: false,
-                        chunk_coord,
-                        load_status: req.load_status,
-                    });
-                    continue;
-                }
-                let chunk_sdfs = if let Some(offset) = file_offset {
-                    load_chunk_data(&mut chunk_data_file_read, offset)
-                } else {
-                    //generate new chunk
-                    let chunk = TerrainChunk::new(&fbm, chunk_start, first_sample_reuse);
-                    match chunk.is_uniform {
-                        UniformChunk::Air => {
-                            let mut uniform_air_chunks_lock =
-                                uniform_air_chunks_delta.lock().unwrap();
-                            uniform_air_chunks_lock.insert(chunk_coord);
-                            drop(uniform_air_chunks_lock);
-                            write_sender
-                                .send(WriteCmd::WriteUniformAir { coord: chunk_coord })
-                                .unwrap();
-                        }
-                        UniformChunk::Dirt => {
-                            let mut uniform_dirt_chunks_lock =
-                                uniform_dirt_chunks_delta.lock().unwrap();
-                            uniform_dirt_chunks_lock.insert(chunk_coord);
-                            drop(uniform_dirt_chunks_lock);
-                            write_sender
-                                .send(WriteCmd::WriteUniformDirt { coord: chunk_coord })
-                                .unwrap();
-                        }
-                        UniformChunk::NonUniform => {
-                            write_sender
-                                .send(WriteCmd::WriteNonUniform {
-                                    chunk: chunk.clone(),
-                                    coord: chunk_coord,
-                                })
-                                .unwrap();
-                        }
-                    }
-                    chunk
-                };
-                let has_mesh = chunk_contains_surface(&chunk_sdfs);
-                let has_collider = has_mesh && req.load_status == 0;
-                let (collider, mesh) = if has_mesh {
-                    let (vertices, normals, material_ids, indices) = mc_mesh_generation(
-                        &chunk_sdfs.densities,
-                        &chunk_sdfs.materials,
-                        SAMPLES_PER_CHUNK_DIM,
-                        HALF_CHUNK,
-                    );
-                    let mesh = generate_bevy_mesh(vertices, normals, material_ids, indices);
-                    let collider = if has_collider {
-                        Some(
-                            Collider::from_bevy_mesh(
-                                &mesh,
-                                &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
-                            )
-                            .unwrap(),
-                        )
-                    } else {
-                        None
-                    };
-                    (collider, Some(mesh))
-                } else {
-                    (None, None)
-                };
-                if req.load_status == 0 {
-                    let mut terrain_chunk_map_lock = terrain_chunk_map.lock().unwrap();
-                    terrain_chunk_map_lock.insert(chunk_coord, chunk_sdfs);
-                    drop(terrain_chunk_map_lock);
-                }
-                if has_collider {
-                    if req.upgrade {
-                        let mut svo_lock = svo.lock().unwrap();
-                        let (_has_entity, load_status) =
-                            svo_lock.root.get_mut(chunk_coord).unwrap();
-                        *load_status = req.load_status;
-                        drop(svo_lock);
-                        chunk_spawn_channel
-                            .send(ChunkSpawnResult::ToGiveCollider((
-                                chunk_coord,
-                                collider.unwrap(),
-                            )))
-                            .unwrap();
-                    } else {
-                        chunk_spawn_channel
-                            .send(ChunkSpawnResult::ToSpawn((
-                                chunk_coord,
-                                collider,
-                                mesh.unwrap(),
-                            )))
-                            .unwrap();
-                    }
-                } else {
-                    if !req.upgrade {
-                        if has_mesh {
-                            chunk_spawn_channel
-                                .send(ChunkSpawnResult::ToSpawn((
-                                    chunk_coord,
-                                    None,
-                                    mesh.unwrap(),
-                                )))
-                                .unwrap();
-                        }
-                    }
-                }
-                has_mesh
-            };
+
             let _ = res_tx.send(ChunkResult {
-                has_entity: has_mesh,
-                chunk_coord,
-                load_status: req.load_status,
+                has_entity: has_entity_buffer,
+                chunk_coord: request.position,
+                load_status: request.load_status,
             });
             #[cfg(feature = "timers")]
             {
-                chunks_generated += 1;
-                if has_mesh {
-                    chunks_with_entities += 1;
-                }
                 let elapsed = Instant::now().duration_since(last_record_time);
                 if elapsed.as_secs() >= 1 {
                     let time_seconds = Instant::now().duration_since(start_time).as_secs_f64();
                     let chunks_per_second = chunks_generated as f64 / elapsed.as_secs_f64();
                     let entity_chunks_per_second =
                         chunks_with_entities as f64 / elapsed.as_secs_f64();
-                    let queue_size = priority_queue.len();
+                    let queue_size = {
+                        let (lock, _cv) = &*priority_queue;
+                        lock.lock().unwrap().len()
+                    };
                     writeln!(
                         &mut throughput_file,
                         "{},{},{}",
@@ -579,8 +619,13 @@ fn svo_manager_thread(
     results_channel: Receiver<ChunkResult>,
     player_translation: Arc<Mutex<Vec3>>,
     chunk_spawn_channel: Sender<ChunkSpawnResult>,
-    load_request_channel: Sender<ChunkRequest>,
     svo: Arc<Mutex<ChunkSvo>>,
+    uniform_air_chunks_read_only: Arc<FxHashSet<(i16, i16, i16)>>,
+    uniform_dirt_chunks_read_only: Arc<FxHashSet<(i16, i16, i16)>>,
+    uniform_air_chunks_delta: Arc<Mutex<FxHashSet<(i16, i16, i16)>>>,
+    uniform_dirt_chunks_delta: Arc<Mutex<FxHashSet<(i16, i16, i16)>>>,
+    priority_queue: Arc<(Mutex<BinaryHeap<ChunkRequest>>, Condvar)>,
+    terrain_chunk_map: Arc<Mutex<FxHashMap<(i16, i16, i16), TerrainChunk>>>,
 ) {
     #[cfg(feature = "timers")]
     let t0 = Instant::now();
@@ -588,7 +633,7 @@ fn svo_manager_thread(
     let mut first_completion_printed = false;
     let mut request_buffer = Vec::new();
     //do initial z0 load so player can start moving
-    let mut chunks_being_loaded = HashSet::new();
+    let mut chunks_being_loaded = FxHashSet::default();
     let mut svo_lock = svo.lock().unwrap();
     let player_translation_lock = player_translation.lock().unwrap();
     let initial_player_translation = *player_translation_lock;
@@ -600,15 +645,101 @@ fn svo_manager_thread(
         &mut request_buffer,
     );
     drop(svo_lock);
+    let mut pending_requests = Vec::new();
+    let mut uniform_stuff = [UniformChunk::Air; CLUSTER_SIZE * CLUSTER_SIZE * CLUSTER_SIZE];
     for request in request_buffer.drain(..) {
-        let _ = load_request_channel.send(request);
+        let mut uniform_len = 0;
+        //dont send uniform clusters
+        let min_chunk = cluster_coord_to_min_chunk_coord(&request.position);
+        let mut all_uniform = true;
+        for chunk_x in min_chunk.0..min_chunk.0 + CLUSTER_SIZE as i16 {
+            for chunk_y in min_chunk.1..min_chunk.1 + CLUSTER_SIZE as i16 {
+                for chunk_z in min_chunk.2..min_chunk.2 + CLUSTER_SIZE as i16 {
+                    let chunk_coord = (chunk_x, chunk_y, chunk_z);
+                    //first search the read only without locking
+                    let mut is_uniform_air = uniform_air_chunks_read_only.contains(&chunk_coord);
+                    let mut is_uniform_dirt = if is_uniform_air {
+                        false
+                    } else {
+                        uniform_dirt_chunks_read_only.contains(&chunk_coord)
+                    };
+                    //if neither, lock and double check the runtime uniform deltas
+                    if !is_uniform_air && !is_uniform_dirt {
+                        let uniform_air_chunks_lock = uniform_air_chunks_delta.lock().unwrap();
+                        is_uniform_air = uniform_air_chunks_lock.contains(&chunk_coord);
+                        drop(uniform_air_chunks_lock);
+                        if !is_uniform_air {
+                            let uniform_dirt_chunks_lock =
+                                uniform_dirt_chunks_delta.lock().unwrap();
+                            is_uniform_dirt = uniform_dirt_chunks_lock.contains(&chunk_coord);
+                            drop(uniform_dirt_chunks_lock);
+                        }
+                    }
+                    if !is_uniform_air && !is_uniform_dirt {
+                        all_uniform = false;
+                    } else if is_uniform_air {
+                        uniform_stuff[uniform_len] = UniformChunk::Air;
+                        uniform_len += 1;
+                    } else if is_uniform_dirt {
+                        uniform_stuff[uniform_len] = UniformChunk::Dirt;
+                        uniform_len += 1;
+                    }
+                }
+            }
+        }
+        if all_uniform {
+            let mut svo_lock = svo.lock().unwrap();
+            svo_lock.root.insert(
+                request.position,
+                request.load_status,
+                [false; CLUSTER_SIZE * CLUSTER_SIZE * CLUSTER_SIZE],
+            );
+            drop(svo_lock);
+            chunks_being_loaded.remove(&request.position);
+            if request.load_status == 0 {
+                let mut map = terrain_chunk_map.lock().unwrap();
+                let mut idx = 0;
+                for chunk_x in min_chunk.0..min_chunk.0 + CLUSTER_SIZE as i16 {
+                    for chunk_y in min_chunk.1..min_chunk.1 + CLUSTER_SIZE as i16 {
+                        for chunk_z in min_chunk.2..min_chunk.2 + CLUSTER_SIZE as i16 {
+                            let chunk_coord = (chunk_x, chunk_y, chunk_z);
+                            map.entry(chunk_coord)
+                                .or_insert_with(|| match uniform_stuff[idx] {
+                                    UniformChunk::Air => TerrainChunk {
+                                        densities: Box::new([i16::MAX; SAMPLES_PER_CHUNK]),
+                                        materials: Box::new([0; SAMPLES_PER_CHUNK]),
+                                        is_uniform: UniformChunk::Air,
+                                    },
+                                    UniformChunk::Dirt => TerrainChunk {
+                                        densities: Box::new([i16::MIN; SAMPLES_PER_CHUNK]),
+                                        materials: Box::new([1; SAMPLES_PER_CHUNK]),
+                                        is_uniform: UniformChunk::Dirt,
+                                    },
+                                    UniformChunk::NonUniform => unreachable!(),
+                                });
+                            idx += 1;
+                        }
+                    }
+                }
+            }
+        } else {
+            pending_requests.push(request);
+        }
+    }
+    if !pending_requests.is_empty() {
+        let (lock, cv) = &*priority_queue;
+        {
+            let mut heap = lock.lock().unwrap();
+            for req in pending_requests.drain(..) {
+                heap.push(req);
+            }
+        }
+        cv.notify_all();
     }
     let mut results_batch = Vec::new();
     loop {
-        let svo_lock = svo.lock().unwrap();
-        drop(svo_lock);
         while let Ok(result) = results_channel.try_recv() {
-            //this channel creates a 1000x improvement in performance at high thread count cause of magic
+            //this channel creates a 1000x improvement in performance at high thread count cause of lock contention
             results_batch.push(result);
         }
         if !results_batch.is_empty() {
@@ -633,14 +764,28 @@ fn svo_manager_thread(
             svo_lock.root.delete(*chunk_coord);
         }
         drop(svo_lock);
-        for (chunk_coord, has_entity) in &chunks_to_deallocate {
-            if *has_entity {
-                chunk_spawn_channel
-                    .send(ChunkSpawnResult::ToDespawn(*chunk_coord))
-                    .unwrap();
+        let mut roller = 0;
+        let mut terrain_map_lock = terrain_chunk_map.lock().unwrap();
+        for (cluster_coord, has_entity) in &chunks_to_deallocate {
+            let min_chunk = cluster_coord_to_min_chunk_coord(cluster_coord);
+            for chunk_x in min_chunk.0..min_chunk.0 + CLUSTER_SIZE as i16 {
+                for chunk_y in min_chunk.1..min_chunk.1 + CLUSTER_SIZE as i16 {
+                    for chunk_z in min_chunk.2..min_chunk.2 + CLUSTER_SIZE as i16 {
+                        let chunk_coord = (chunk_x, chunk_y, chunk_z);
+                        if has_entity[roller] {
+                            chunk_spawn_channel
+                                .send(ChunkSpawnResult::ToDespawn(chunk_coord))
+                                .unwrap();
+                        }
+                        terrain_map_lock.remove(&chunk_coord);
+                        roller += 1;
+                    }
+                }
             }
-            chunks_being_loaded.remove(chunk_coord);
+            chunks_being_loaded.remove(cluster_coord);
+            roller = 0;
         }
+        drop(terrain_map_lock);
         let mut svo_lock = svo.lock().unwrap();
         svo_lock.root.fill_missing_chunks_in_radius(
             &player_translation,
@@ -650,7 +795,95 @@ fn svo_manager_thread(
         );
         drop(svo_lock);
         for request in request_buffer.drain(..) {
-            let _ = load_request_channel.send(request);
+            let mut uniform_len = 0;
+            //dont send uniform clusters
+            let min_chunk = cluster_coord_to_min_chunk_coord(&request.position);
+            let mut all_uniform = true;
+            for chunk_x in min_chunk.0..min_chunk.0 + CLUSTER_SIZE as i16 {
+                for chunk_y in min_chunk.1..min_chunk.1 + CLUSTER_SIZE as i16 {
+                    for chunk_z in min_chunk.2..min_chunk.2 + CLUSTER_SIZE as i16 {
+                        let chunk_coord = (chunk_x, chunk_y, chunk_z);
+                        //first search the read only without locking
+                        let mut is_uniform_air =
+                            uniform_air_chunks_read_only.contains(&chunk_coord);
+                        let mut is_uniform_dirt = if is_uniform_air {
+                            false
+                        } else {
+                            uniform_dirt_chunks_read_only.contains(&chunk_coord)
+                        };
+                        //if neither, lock and double check the runtime uniform deltas
+                        if !is_uniform_air && !is_uniform_dirt {
+                            let uniform_air_chunks_lock = uniform_air_chunks_delta.lock().unwrap();
+                            is_uniform_air = uniform_air_chunks_lock.contains(&chunk_coord);
+                            drop(uniform_air_chunks_lock);
+                            if !is_uniform_air {
+                                let uniform_dirt_chunks_lock =
+                                    uniform_dirt_chunks_delta.lock().unwrap();
+                                is_uniform_dirt = uniform_dirt_chunks_lock.contains(&chunk_coord);
+                                drop(uniform_dirt_chunks_lock);
+                            }
+                        }
+                        if !is_uniform_air && !is_uniform_dirt {
+                            all_uniform = false;
+                        } else if is_uniform_air {
+                            uniform_stuff[uniform_len] = UniformChunk::Air;
+                            uniform_len += 1;
+                        } else if is_uniform_dirt {
+                            uniform_stuff[uniform_len] = UniformChunk::Dirt;
+                            uniform_len += 1;
+                        }
+                    }
+                }
+            }
+            if all_uniform {
+                let mut svo_lock = svo.lock().unwrap();
+                svo_lock.root.insert(
+                    request.position,
+                    request.load_status,
+                    [false; CLUSTER_SIZE * CLUSTER_SIZE * CLUSTER_SIZE],
+                );
+                drop(svo_lock);
+                chunks_being_loaded.remove(&request.position);
+                if request.load_status == 0 {
+                    let mut map = terrain_chunk_map.lock().unwrap();
+                    let mut idx = 0;
+                    for chunk_x in min_chunk.0..min_chunk.0 + CLUSTER_SIZE as i16 {
+                        for chunk_y in min_chunk.1..min_chunk.1 + CLUSTER_SIZE as i16 {
+                            for chunk_z in min_chunk.2..min_chunk.2 + CLUSTER_SIZE as i16 {
+                                let chunk_coord = (chunk_x, chunk_y, chunk_z);
+                                map.entry(chunk_coord).or_insert_with(|| {
+                                    match uniform_stuff[idx] {
+                                        UniformChunk::Air => TerrainChunk {
+                                            densities: Box::new([i16::MAX; SAMPLES_PER_CHUNK]),
+                                            materials: Box::new([0; SAMPLES_PER_CHUNK]),
+                                            is_uniform: UniformChunk::Air,
+                                        },
+                                        UniformChunk::Dirt => TerrainChunk {
+                                            densities: Box::new([i16::MIN; SAMPLES_PER_CHUNK]),
+                                            materials: Box::new([1; SAMPLES_PER_CHUNK]),
+                                            is_uniform: UniformChunk::Dirt,
+                                        },
+                                        UniformChunk::NonUniform => unreachable!(),
+                                    }
+                                });
+                                idx += 1;
+                            }
+                        }
+                    }
+                }
+            } else {
+                pending_requests.push(request);
+            }
+        }
+        if !pending_requests.is_empty() {
+            let (lock, cv) = &*priority_queue;
+            {
+                let mut heap = lock.lock().unwrap();
+                for req in pending_requests.drain(..) {
+                    heap.push(req);
+                }
+            }
+            cv.notify_all();
         }
         #[cfg(feature = "timers")]
         {
@@ -658,7 +891,6 @@ fn svo_manager_thread(
                 let run_time = Instant::now().duration_since(t0).as_millis();
                 println!("SVO Manager First Completion Time: {:?} ms", run_time);
                 first_completion_printed = true;
-                INITIAL_CHUNKS_LOADED.store(true, Ordering::Relaxed);
             }
         }
     }
@@ -671,7 +903,6 @@ pub fn chunk_spawn_reciever(
     mut meshes: ResMut<Assets<Mesh>>,
     req_rx: Res<ChunkSpawnReciever>,
     mut chunk_entity_map: ResMut<ChunkEntityMap>,
-    terrain_chunk_map: Res<TerrainChunkMap>,
 ) {
     let mut count = 0;
     while let Ok(req) = req_rx.0.try_recv() {
@@ -709,9 +940,6 @@ pub fn chunk_spawn_reciever(
                 commands
                     .entity(chunk_entity_map.0.remove(&chunk_coord).unwrap())
                     .despawn();
-                let mut terrain_chunk_map_lock = terrain_chunk_map.0.lock().unwrap();
-                terrain_chunk_map_lock.remove(&chunk_coord);
-                drop(terrain_chunk_map_lock);
             }
         }
         if count >= 40 {
