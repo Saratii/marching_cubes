@@ -73,7 +73,7 @@ fn main() {
                 })
                 .set(PbrPlugin { ..default() })
                 .set(AssetPlugin {
-                    unapproved_path_mode: UnapprovedPathMode::Allow, //because bevy is made by morons who don't know how CWD works
+                    unapproved_path_mode: UnapprovedPathMode::Allow,
                     ..default()
                 }),
             FrameTimeDiagnosticsPlugin::default(),

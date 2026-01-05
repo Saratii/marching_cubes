@@ -6,9 +6,7 @@ use fastnoise2::{
     generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
 };
 use marching_cubes::{
-    data_loader::file_loader::{
-        create_chunk_file_data, load_chunk_data, load_chunk_index_map, update_chunk_file_data,
-    },
+    data_loader::file_loader::{load_chunk, load_chunk_index_map, update_chunk, write_chunk},
     terrain::{
         chunk_generator::{calculate_chunk_start, generate_densities, sample_fbm},
         terrain::{TerrainChunk, UniformChunk},
@@ -29,7 +27,7 @@ fn benchmark_read_single_chunk(c: &mut Criterion) {
     let offset = index_map.get(&(0, 0, 0)).unwrap();
     c.bench_function("read_single_chunk", |b| {
         b.iter(|| {
-            let chunk = load_chunk_data(black_box(&mut data_file), black_box(*offset));
+            let chunk = load_chunk(black_box(&mut data_file), black_box(*offset));
             black_box(chunk);
         })
     });
@@ -48,10 +46,10 @@ fn benchmark_write_single_existing_chunk(c: &mut Criterion) {
     let index_map = load_chunk_index_map(&mut index_file);
     let first_chunk_coord = *index_map.keys().next().unwrap();
     let byte_offset = index_map.get(&first_chunk_coord).unwrap();
-    let chunk = load_chunk_data(&mut data_file, *byte_offset);
+    let chunk = load_chunk(&mut data_file, *byte_offset);
     c.bench_function("write_single_existing_chunk", |b| {
         b.iter(|| {
-            update_chunk_file_data(
+            update_chunk(
                 black_box(*byte_offset),
                 black_box(&chunk),
                 black_box(&mut data_file),
@@ -86,14 +84,16 @@ fn benchmark_write_single_new_chunk(c: &mut Criterion) {
         .append(true)
         .open("data/benchmark_chunk_index_data.txt")
         .unwrap();
+    let mut buffer_reuse = Vec::with_capacity(14); //sizeof (i16, i16, i16, u64)
     c.bench_function("write_single_new_chunk", |b| {
         b.iter(|| {
-            create_chunk_file_data(
+            write_chunk(
                 black_box(&terrain_chunk),
                 black_box(&chunk_coord),
                 black_box(&mut index_map),
                 black_box(&mut data_file),
                 black_box(&mut index_file),
+                black_box(&mut buffer_reuse),
             );
         })
     });
@@ -118,7 +118,7 @@ fn benchmark_bulk_read_chunks(c: &mut Criterion) {
         b.iter(|| {
             let mut chunks = Vec::new();
             for &offset in &offsets {
-                let chunk = load_chunk_data(black_box(&mut data_file), black_box(offset));
+                let chunk = load_chunk(black_box(&mut data_file), black_box(offset));
                 chunks.push(chunk);
             }
             black_box(chunks);
@@ -143,6 +143,7 @@ fn benchmark_bulk_write_new_chunk(c: &mut Criterion) {
         };
         chunks_data.push((terrain_chunk, chunk_coord));
     }
+    let mut buffer_reuse = Vec::with_capacity(14); //sizeof (i16, i16, i16, u64)
     c.bench_function("bulk_write_new_chunks", |b| {
         b.iter(|| {
             let mut index_map = FxHashMap::default();
@@ -159,12 +160,13 @@ fn benchmark_bulk_write_new_chunk(c: &mut Criterion) {
                 .open("data/benchmark_chunk_index_data.txt")
                 .unwrap();
             for (terrain_chunk, chunk_coord) in &chunks_data {
-                create_chunk_file_data(
+                write_chunk(
                     black_box(terrain_chunk),
                     black_box(chunk_coord),
                     black_box(&mut index_map),
                     black_box(&mut data_file),
                     black_box(&mut index_file),
+                    black_box(&mut buffer_reuse),
                 );
             }
         })

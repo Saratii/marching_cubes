@@ -1,8 +1,7 @@
 use crate::{
     conversions::{chunk_coord_to_cluster_coord, cluster_coord_to_min_chunk_coord},
     data_loader::file_loader::{
-        ChunkIndexMapDelta, get_project_root, load_chunk_index_map, load_uniform_chunks,
-        remove_uniform_chunk, update_chunk_file_data,
+        ChunkIndexMapDelta, get_project_root, load_chunk, load_chunk_index_map, load_uniform_chunks, remove_uniform_chunk, update_chunk, write_chunk
     },
     terrain::{
         chunk_generator::{calculate_chunk_start, sample_fbm},
@@ -32,10 +31,7 @@ use std::{
 
 use crate::{
     conversions::{chunk_coord_to_world_pos, world_pos_to_chunk_coord},
-    data_loader::file_loader::{
-        ChunkEntityMap, ChunkIndexMapRead, create_chunk_file_data, load_chunk_data,
-        write_uniform_chunk,
-    },
+    data_loader::file_loader::{ChunkEntityMap, ChunkIndexMapRead, write_uniform_chunk},
     marching_cubes::mc::mc_mesh_generation,
     player::player::PlayerTag,
     sparse_voxel_octree::ChunkSvo,
@@ -293,20 +289,22 @@ fn dedicated_write_thread(
     mut air_empty_offsets: VecDeque<u64>,
     mut dirt_empty_offsets: VecDeque<u64>,
 ) {
+    let mut chunk_write_reuse = Vec::with_capacity(14); //sizeof (i16, i16, i16, u64)
     while let Ok(cmd) = rx.recv() {
         match cmd {
             WriteCmd::WriteNonUniform { chunk, coord } => {
                 let mut index_map = index_map_delta.lock().unwrap();
-                create_chunk_file_data(
+                write_chunk(
                     &chunk,
                     &coord,
                     &mut index_map,
                     &mut chunk_data_file,
                     &mut chunk_index_file,
+                    &mut chunk_write_reuse,
                 );
             }
             WriteCmd::UpdateNonUniform { offset, chunk } => {
-                update_chunk_file_data(offset, &chunk, &mut chunk_data_file);
+                update_chunk(offset, &chunk, &mut chunk_data_file);
             }
             WriteCmd::WriteUniformAir { coord } => {
                 write_uniform_chunk(&coord, &mut air_file, &mut air_empty_offsets);
@@ -446,7 +444,7 @@ fn chunk_loader_thread(
                                 false
                             } else {
                                 let chunk_sdfs = if let Some(offset) = file_offset {
-                                    load_chunk_data(&mut chunk_data_file_read, offset)
+                                    load_chunk(&mut chunk_data_file_read, offset)
                                 } else {
                                     //generate new chunk
                                     let chunk =
