@@ -58,36 +58,39 @@ pub fn deserialize_chunk_data(data: &[u8]) -> TerrainChunk {
     }
 }
 
-pub fn create_chunk_file_data(
+pub fn write_chunk(
     chunk: &TerrainChunk,
     chunk_coord: &(i16, i16, i16),
-    chunk_index_map: &mut FxHashMap<(i16, i16, i16), u64>,
+    index_map_delta: &mut FxHashMap<(i16, i16, i16), u64>,
     chunk_data_file: &mut File,
     chunk_index_file: &mut File,
+    index_buffer_allocation: &mut Vec<u8>,
 ) {
+    index_buffer_allocation.clear();
     let byte_offset = chunk_data_file.seek(SeekFrom::End(0)).unwrap();
     let buffer = serialize_chunk_data(chunk);
     chunk_data_file.write_all(&buffer).unwrap();
     chunk_data_file.flush().unwrap();
     chunk_index_file.seek(SeekFrom::End(0)).unwrap();
-    let mut index_buffer = Vec::with_capacity(14); //sizeof (i16, i16, i16, u64)
-    index_buffer.extend_from_slice(&chunk_coord.0.to_le_bytes());
-    index_buffer.extend_from_slice(&chunk_coord.1.to_le_bytes());
-    index_buffer.extend_from_slice(&chunk_coord.2.to_le_bytes());
-    index_buffer.extend_from_slice(&byte_offset.to_le_bytes());
-    chunk_index_file.write_all(&index_buffer).unwrap();
+    index_buffer_allocation.extend_from_slice(&chunk_coord.0.to_le_bytes());
+    index_buffer_allocation.extend_from_slice(&chunk_coord.1.to_le_bytes());
+    index_buffer_allocation.extend_from_slice(&chunk_coord.2.to_le_bytes());
+    index_buffer_allocation.extend_from_slice(&byte_offset.to_le_bytes());
+    chunk_index_file
+        .write_all(&index_buffer_allocation)
+        .unwrap();
     chunk_index_file.flush().unwrap();
-    chunk_index_map.insert(*chunk_coord, byte_offset);
+    index_map_delta.insert(*chunk_coord, byte_offset);
 }
 
-pub fn update_chunk_file_data(byte_offset: u64, chunk: &TerrainChunk, chunk_data_file: &mut File) {
+pub fn update_chunk(byte_offset: u64, chunk: &TerrainChunk, chunk_data_file: &mut File) {
     let buffer = serialize_chunk_data(chunk);
     chunk_data_file.seek(SeekFrom::Start(byte_offset)).unwrap();
     chunk_data_file.write_all(&buffer).unwrap();
     chunk_data_file.flush().unwrap();
 }
 
-pub fn load_chunk_data(chunk_data_file: &mut File, byte_offset: u64) -> TerrainChunk {
+pub fn load_chunk(chunk_data_file: &mut File, byte_offset: u64) -> TerrainChunk {
     let total_size = SAMPLES_PER_CHUNK * 2 + SAMPLES_PER_CHUNK; // i16 sdfs (2 bytes) + u8 materials (1 byte)
     chunk_data_file.seek(SeekFrom::Start(byte_offset)).unwrap();
     let mut buffer = vec![0u8; total_size];
