@@ -20,6 +20,7 @@ wgpu = "26.0.1"
 pollster = "0.4.0"
 rustc-hash = "2.1.1"
 bevy-volumetric-clouds = { path = "C:/Programming/bevy-volumetric-clouds" }
+parking_lot = "0.12.5"
 
 [[bench]]
 name = "chunk_generation"

@@ -1,4 +1,4 @@
-use bevy::math::Vec3;
+use bevy::prelude::*;
 use fastnoise2::{SafeNode, generator::GeneratorWrapper};
 
 use crate::terrain::terrain::{
@@ -9,30 +9,27 @@ pub const NOISE_SEED: i32 = 100; // Seed for noise generation
 pub const NOISE_FREQUENCY: f32 = 0.02; // Frequency of the noise
 pub const NOISE_AMPLITUDE: f32 = 120.0; // Amplitude of the noise
 pub const HEIGHT_SCALE: f32 = 50.0; // Scale factor for heightmap
-const HEIGHT_MAP_GRID_SIZE: usize = SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM;
-const NOISE_SAMPLES_PER_SIDE: usize = 9;
-const NOISE_SAMPLES_M1: usize = NOISE_SAMPLES_PER_SIDE - 1;
-const SAMPLES_M1: usize = SAMPLES_PER_CHUNK_DIM - 1;
+pub const HEIGHT_MAP_GRID_SIZE: usize = SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM;
+pub const NOISE_SAMPLES_PER_SIDE: usize = 9;
+pub const NOISE_SAMPLES_M1: usize = NOISE_SAMPLES_PER_SIDE - 1;
+pub const SAMPLES_M1: usize = SAMPLES_PER_CHUNK_DIM - 1;
 
 pub fn generate_densities(
     fbm: &GeneratorWrapper<SafeNode>,
     first_sample_reuse: f32,
     chunk_start: Vec3,
 ) -> (Box<[i16]>, Box<[u8]>, bool) {
-    let mut densities = vec![0; SAMPLES_PER_CHUNK];
-    let mut materials = vec![0; SAMPLES_PER_CHUNK];
-    let terrain_heights = generate_terrain_heights(&chunk_start, fbm, first_sample_reuse);
+    let mut densities = [0; SAMPLES_PER_CHUNK];
+    let mut materials = [0; SAMPLES_PER_CHUNK];
+    let terrain_heights =
+        generate_terrain_heights(chunk_start.x, chunk_start.z, fbm, first_sample_reuse);
     let is_uniform = fill_voxel_densities(
         &mut densities,
         &mut materials,
         &chunk_start,
         &terrain_heights,
     );
-    (
-        densities.try_into().unwrap(),
-        materials.try_into().unwrap(),
-        is_uniform,
-    )
+    (Box::new(densities), Box::new(materials), is_uniform)
 }
 
 pub fn calculate_chunk_start(chunk_coord: &(i16, i16, i16)) -> Vec3 {
@@ -93,22 +90,23 @@ pub fn sample_fbm(fbm: &GeneratorWrapper<SafeNode>, x: f32, z: f32) -> f32 {
 
 //Sample the fbm noise at a higher resolution and then bilinearly interpolate to get smooth terrain heights
 pub fn generate_terrain_heights(
-    chunk_start: &Vec3,
+    chunk_start_x: f32,
+    chunk_start_z: f32,
     fbm: &GeneratorWrapper<SafeNode>,
     first_sample_reuse: f32,
-) -> Vec<f32> {
-    let mut out = vec![0.0; HEIGHT_MAP_GRID_SIZE];
-    let mut noise_samples = vec![0.0; NOISE_SAMPLES_PER_SIDE * NOISE_SAMPLES_PER_SIDE];
+) -> [f32; HEIGHT_MAP_GRID_SIZE] {
+    let mut out = [0.0; HEIGHT_MAP_GRID_SIZE];
+    let mut noise_samples = [0.0; NOISE_SAMPLES_PER_SIDE * NOISE_SAMPLES_PER_SIDE];
     noise_samples[0] = first_sample_reuse;
     for nz in 0..NOISE_SAMPLES_PER_SIDE {
         let tz = nz as f32 / NOISE_SAMPLES_M1 as f32;
-        let wz = chunk_start.z + tz * CHUNK_SIZE;
+        let wz = chunk_start_z + tz * CHUNK_SIZE;
         for nx in 0..NOISE_SAMPLES_PER_SIDE {
             if nz == 0 && nx == 0 {
                 continue;
             }
             let tx = nx as f32 / NOISE_SAMPLES_M1 as f32;
-            let wx = chunk_start.x + tx * CHUNK_SIZE;
+            let wx = chunk_start_x + tx * CHUNK_SIZE;
             noise_samples[nz * NOISE_SAMPLES_PER_SIDE + nx] = sample_fbm(fbm, wx, wz);
         }
     }
@@ -141,7 +139,7 @@ pub fn generate_terrain_heights(
     out
 }
 
-fn fill_voxel_densities(
+pub fn fill_voxel_densities(
     densities: &mut [i16],
     materials: &mut [u8],
     chunk_start: &Vec3,
