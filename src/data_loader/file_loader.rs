@@ -91,9 +91,9 @@ pub fn update_chunk(byte_offset: u64, chunk: &TerrainChunk, chunk_data_file: &mu
 }
 
 pub fn load_chunk(chunk_data_file: &mut File, byte_offset: u64) -> TerrainChunk {
-    let total_size = SAMPLES_PER_CHUNK * 2 + SAMPLES_PER_CHUNK; // i16 sdfs (2 bytes) + u8 materials (1 byte)
+    const TOTAL_SIZE: usize = SAMPLES_PER_CHUNK * 2 + SAMPLES_PER_CHUNK; // i16 sdfs (2 bytes) + u8 materials (1 byte)
     chunk_data_file.seek(SeekFrom::Start(byte_offset)).unwrap();
-    let mut buffer = vec![0u8; total_size];
+    let mut buffer = [0u8; TOTAL_SIZE];
     chunk_data_file.read_exact(&mut buffer).unwrap();
     deserialize_chunk_data(&buffer)
 }

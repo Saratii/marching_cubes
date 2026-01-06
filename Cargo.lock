@@ -3898,6 +3898,7 @@ dependencies = [
  "flamegraph",
  "iyes_perf_ui",
  "mimalloc",
+ "parking_lot",
  "pollster",
  "rand",
  "rustc-hash 2.1.1",

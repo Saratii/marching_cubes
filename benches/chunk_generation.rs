@@ -1,9 +1,11 @@
+use bevy::math::Vec3;
 use criterion::{Criterion, criterion_group, criterion_main};
 use fastnoise2::{
     SafeNode,
     generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
 };
 use marching_cubes::{
+    conversions::{chunk_coord_to_cluster_coord, world_pos_to_chunk_coord},
     marching_cubes::mc::mc_mesh_generation,
     terrain::{
         chunk_compute_pipeline::GpuTerrainGenerator,
@@ -12,10 +14,10 @@ use marching_cubes::{
             generate_terrain_heights, sample_fbm,
         },
         heightmap_compute_pipeline::GpuHeightmapGenerator,
-        terrain::{HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainChunk},
+        terrain::{CLUSTER_SIZE, HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainChunk},
     },
 };
-use std::hint::black_box;
+use std::{collections::HashMap, hint::black_box};
 
 fn benchmark_generate_densities_cpu(c: &mut Criterion) {
     let noise_function =
@@ -102,7 +104,8 @@ fn benchmark_heightmap_single_chunk_cpu(c: &mut Criterion) {
         b.iter(|| {
             let first_sample_reuse = sample_fbm(&noise_function, chunk_start.x, chunk_start.z);
             black_box(generate_terrain_heights(
-                black_box(&chunk_start),
+                black_box(chunk_start.x),
+                black_box(chunk_start.z),
                 black_box(&noise_function),
                 black_box(first_sample_reuse),
             ));
@@ -120,26 +123,27 @@ fn benchmark_heightmap_single_chunk_gpu(c: &mut Criterion) {
     });
 }
 
-fn benchmark_heightmap_region_cpu(c: &mut Criterion) {
+fn benchmark_cluster_heightmap_cpu(c: &mut Criterion) {
     let noise_function =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
-    let lower = (0, 0, 0);
-    let upper = (10, 0, 10);
-    c.bench_function("heightmap_region_cpu", |b| {
+    let chunk = world_pos_to_chunk_coord(&Vec3::ZERO);
+    let cluster = chunk_coord_to_cluster_coord(&chunk);
+    c.bench_function("cluster_heightmap_cpu", |b| {
         b.iter(|| {
-            let mut results = std::collections::HashMap::new();
-            for x in lower.0..=upper.0 {
-                for z in lower.2..=upper.2 {
-                    let chunk_coord = (x, lower.1, z);
+            let mut results = HashMap::new();
+            for x in cluster.0..cluster.0 + CLUSTER_SIZE as i16 {
+                for z in cluster.2..cluster.2 + CLUSTER_SIZE as i16 {
+                    let chunk_coord = (x, cluster.1, z);
                     let chunk_start = calculate_chunk_start(&chunk_coord);
                     let first_sample_reuse =
                         sample_fbm(&noise_function, chunk_start.x, chunk_start.z);
                     let heights = generate_terrain_heights(
-                        black_box(&chunk_start),
+                        black_box(chunk_start.x),
+                        black_box(chunk_start.z),
                         black_box(&noise_function),
                         black_box(first_sample_reuse),
                     );
-                    results.insert(chunk_coord, heights);
+                    results.insert((chunk_coord.0, chunk_coord.1), heights);
                 }
             }
             black_box(results);
@@ -147,13 +151,32 @@ fn benchmark_heightmap_region_cpu(c: &mut Criterion) {
     });
 }
 
-fn benchmark_heightmap_region_gpu(c: &mut Criterion) {
+fn benchmark_cluster_heightmap_gpu(c: &mut Criterion) {
     let gpu_generator = GpuHeightmapGenerator::new();
-    let lower = (0, 0, 0);
-    let upper = (10, 0, 10);
-    c.bench_function("heightmap_region_gpu", |b| {
+    let chunk = world_pos_to_chunk_coord(&Vec3::ZERO);
+    let cluster = chunk_coord_to_cluster_coord(&chunk);
+    c.bench_function("cluster_heightmap_gpu", |b| {
         b.iter(|| {
-            black_box(gpu_generator.generate_region(black_box(lower), black_box(upper)));
+            black_box(
+                gpu_generator
+                    .generate_cluster(black_box(cluster.0 as i32), black_box(cluster.2 as i32)),
+            );
+        })
+    });
+}
+
+fn benchmark_batch_cluster_heightmaps_gpu(c: &mut Criterion) {
+    let gpu_generator = GpuHeightmapGenerator::new();
+    let mut cluster_coords = Vec::with_capacity(100 * 100);
+    for z in -50..50 {
+        for x in -50..50 {
+            cluster_coords.push((x, z));
+        }
+    }
+
+    c.bench_function("batch_cluster_heightmaps_gpu", |b| {
+        b.iter(|| {
+            black_box(gpu_generator.generate_batch_clusters(black_box(&cluster_coords)));
         })
     });
 }
@@ -165,9 +188,10 @@ criterion_group!(
     benchmark_generate_densities_gpu,
     benchmark_heightmap_single_chunk_cpu,
     benchmark_heightmap_single_chunk_gpu,
-    benchmark_heightmap_region_cpu,
-    benchmark_heightmap_region_gpu,
+    benchmark_cluster_heightmap_cpu,
+    benchmark_cluster_heightmap_gpu,
     benchmark_generate_uniform_densities_cpu,
+    benchmark_batch_cluster_heightmaps_gpu,
 );
 criterion_main!(benches);
 
