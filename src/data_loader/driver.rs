@@ -1,8 +1,8 @@
 use crate::{
     conversions::{chunk_coord_to_cluster_coord, cluster_coord_to_min_chunk_coord},
     data_loader::file_loader::{
-        ChunkIndexMapDelta, get_project_root, load_chunk, load_chunk_index_map,
-        load_uniform_chunks, remove_uniform_chunk, update_chunk, write_chunk,
+        get_project_root, load_chunk, load_chunk_index_map, load_uniform_chunks,
+        remove_uniform_chunk, update_chunk, write_chunk,
     },
     terrain::{
         chunk_generator::{calculate_chunk_start, sample_fbm},
@@ -32,7 +32,7 @@ use std::{
 
 use crate::{
     conversions::{chunk_coord_to_world_pos, world_pos_to_chunk_coord},
-    data_loader::file_loader::{ChunkEntityMap, ChunkIndexMapRead, write_uniform_chunk},
+    data_loader::file_loader::{ChunkEntityMap, write_uniform_chunk},
     marching_cubes::mc::mc_mesh_generation,
     player::player::PlayerTag,
     sparse_voxel_octree::ChunkSvo,
@@ -136,13 +136,13 @@ pub struct WriteCmdSender(pub Sender<WriteCmd>);
 
 pub fn setup_chunk_driver(
     mut commands: Commands,
-    index_map_delta: Res<ChunkIndexMapDelta>,
     player_translation_mutex_handle: Res<PlayerTranslationMutexHandle>,
 ) {
     #[cfg(feature = "timers")]
     {
         std::fs::create_dir_all("plots").unwrap();
     }
+    let index_map_delta = Arc::new(Mutex::new(FxHashMap::default()));
     let num_processors = thread::available_parallelism().unwrap().get();
     info!("Number of Available Processors: {}", num_processors);
     commands.insert_resource(LogicalProcesors(num_processors));
@@ -188,7 +188,7 @@ pub fn setup_chunk_driver(
     let uniform_air_chunk_deltas = Arc::new(Mutex::new(FxHashSet::default()));
     let uniform_dirt_chunk_deltas = Arc::new(Mutex::new(FxHashSet::default()));
     let (write_tx, write_rx) = crossbeam_channel::unbounded();
-    let index_map_delta_arc = Arc::clone(&index_map_delta.0);
+    let index_map_delta_arc = Arc::clone(&index_map_delta);
     let data_file_write = OpenOptions::new()
         .read(true)
         .write(true)
@@ -226,7 +226,7 @@ pub fn setup_chunk_driver(
     for thread_idx in 0..num_processors.saturating_sub(2) {
         //leave one processor free for main thread and one for svo manager <- might be wrong
         let index_map_read = Arc::clone(&index_map_read);
-        let index_map_delta = Arc::clone(&index_map_delta.0);
+        let index_map_delta = Arc::clone(&index_map_delta);
         let uniform_air_chunks_delta = Arc::clone(&uniform_air_chunk_deltas);
         let uniform_dirt_chunks_delta = Arc::clone(&uniform_dirt_chunk_deltas);
         let chunk_data_file_read = OpenOptions::new()
@@ -278,7 +278,6 @@ pub fn setup_chunk_driver(
         );
     });
     commands.insert_resource(WriteCmdSender(write_tx));
-    commands.insert_resource(ChunkIndexMapRead(index_map_read));
     commands.insert_resource(TerrainChunkMap(terrain_chunk_map));
 }
 

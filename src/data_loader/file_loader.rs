@@ -19,12 +19,6 @@ pub struct PlayerDataFile(pub File);
 pub struct StaleCompressionFile(pub Arc<Mutex<File>>);
 
 #[derive(Resource)]
-pub struct ChunkIndexMapRead(pub Arc<FxHashMap<(i16, i16, i16), u64>>);
-
-#[derive(Resource)]
-pub struct ChunkIndexMapDelta(pub Arc<Mutex<FxHashMap<(i16, i16, i16), u64>>>);
-
-#[derive(Resource)]
 pub struct ChunkEntityMap(pub FxHashMap<(i16, i16, i16), Entity>);
 
 // Binary format layout:
@@ -42,19 +36,14 @@ fn serialize_chunk_data(chunk: &TerrainChunk) -> Vec<u8> {
     buffer
 }
 
-pub fn deserialize_chunk_data(data: &[u8]) -> TerrainChunk {
-    let mut densities = Vec::with_capacity(SAMPLES_PER_CHUNK);
-    let mut materials = Vec::with_capacity(SAMPLES_PER_CHUNK);
+//read density and material data into provided buffers
+pub fn deserialize_chunk_data(data: &[u8], density_buffer: &mut [i16], material_buffer: &mut [u8]) {
     let (sdf_bytes, material_bytes) = data.split_at(SAMPLES_PER_CHUNK * 2);
-    for (sdf_chunk, &material) in sdf_bytes.chunks_exact(2).zip(material_bytes) {
+    for (index, (sdf_chunk, &material)) in sdf_bytes.chunks_exact(2).zip(material_bytes).enumerate()
+    {
         let density = i16::from_le_bytes([sdf_chunk[0], sdf_chunk[1]]);
-        densities.push(density);
-        materials.push(material);
-    }
-    TerrainChunk {
-        densities: densities.into_boxed_slice(),
-        materials: materials.into_boxed_slice(),
-        is_uniform: UniformChunk::NonUniform,
+        density_buffer[index] = density;
+        material_buffer[index] = material;
     }
 }
 
@@ -95,7 +84,14 @@ pub fn load_chunk(chunk_data_file: &mut File, byte_offset: u64) -> TerrainChunk 
     chunk_data_file.seek(SeekFrom::Start(byte_offset)).unwrap();
     let mut buffer = [0u8; TOTAL_SIZE];
     chunk_data_file.read_exact(&mut buffer).unwrap();
-    deserialize_chunk_data(&buffer)
+    let mut densities = [0; SAMPLES_PER_CHUNK];
+    let mut materials = [0; SAMPLES_PER_CHUNK];
+    deserialize_chunk_data(&buffer, &mut densities, &mut materials);
+    TerrainChunk {
+        densities: Box::new(densities),
+        materials: Box::new(materials),
+        is_uniform: UniformChunk::NonUniform,
+    }
 }
 
 pub fn load_chunk_index_map(index_file: &mut File) -> FxHashMap<(i16, i16, i16), u64> {
@@ -144,9 +140,6 @@ pub fn setup_chunk_loading(mut commands: Commands) {
         .create(true)
         .open(root.join("data/stale_chunks.txt"))
         .unwrap();
-    commands.insert_resource(ChunkIndexMapDelta(Arc::new(Mutex::new(
-        FxHashMap::default(),
-    ))));
 }
 
 // Load all chunk coords and track empty slots
