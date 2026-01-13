@@ -147,8 +147,8 @@ pub fn fill_voxel_densities(
 ) -> bool {
     let solid_threshold = quantize_f32_to_i16(-1.0);
     let mut is_uniform = true;
-    let mut init_distance = 0i16;
-    let mut init_material = 0u8;
+    let mut init_distance = 0;
+    let mut init_material = 0;
     let mut has_init = false;
     for z in 0..SAMPLES_PER_CHUNK_DIM {
         let height_base = z * SAMPLES_PER_CHUNK_DIM;

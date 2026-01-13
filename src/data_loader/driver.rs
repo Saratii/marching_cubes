@@ -1,7 +1,8 @@
 use crate::{
     conversions::{chunk_coord_to_cluster_coord, cluster_coord_to_min_chunk_coord},
     data_loader::file_loader::{
-        ChunkIndexMapDelta, get_project_root, load_chunk, load_chunk_index_map, load_uniform_chunks, remove_uniform_chunk, update_chunk, write_chunk
+        ChunkIndexMapDelta, get_project_root, load_chunk, load_chunk_index_map,
+        load_uniform_chunks, remove_uniform_chunk, update_chunk, write_chunk,
     },
     terrain::{
         chunk_generator::{calculate_chunk_start, sample_fbm},
@@ -72,7 +73,7 @@ pub enum WriteCmd {
         coord: (i16, i16, i16),
     },
     UpdateNonUniform {
-        offset: u64,
+        coord: (i16, i16, i16),
         chunk: TerrainChunk,
     },
     WriteUniformAir {
@@ -202,6 +203,7 @@ pub fn setup_chunk_driver(
         .unwrap();
     let t0 = Instant::now();
     let index_map_read = Arc::new(load_chunk_index_map(&mut chunk_index_file));
+    let index_map_read_arc = Arc::clone(&index_map_read);
     println!(
         "Loaded {} chunks into index map in {} ms.",
         index_map_read.len(),
@@ -217,6 +219,7 @@ pub fn setup_chunk_driver(
             dirt_compression_file,
             empty_air_offsets,
             empty_dirt_offsets,
+            index_map_read_arc,
         );
     });
     let priority_queue = Arc::new((Mutex::new(BinaryHeap::new()), Condvar::new()));
@@ -288,6 +291,7 @@ fn dedicated_write_thread(
     mut dirt_file: File,
     mut air_empty_offsets: VecDeque<u64>,
     mut dirt_empty_offsets: VecDeque<u64>,
+    chunk_index_map_read: Arc<FxHashMap<(i16, i16, i16), u64>>,
 ) {
     let mut chunk_write_reuse = Vec::with_capacity(14); //sizeof (i16, i16, i16, u64)
     while let Ok(cmd) = rx.recv() {
@@ -303,7 +307,19 @@ fn dedicated_write_thread(
                     &mut chunk_write_reuse,
                 );
             }
-            WriteCmd::UpdateNonUniform { offset, chunk } => {
+            WriteCmd::UpdateNonUniform { coord, chunk } => {
+                //offset lookup must be async to avoid situation where we try to update a chunk that isnt written
+                //because the channel is ordered, the write should always process before the update
+                let offset = chunk_index_map_read
+                                .get(&coord)
+                                .cloned()
+                                .or_else(|| {
+                                        index_map_delta
+                                        .lock()
+                                        .unwrap()
+                                        .get(&coord)
+                                        .cloned()
+                                }).expect("Tried to update a non-uniform chunk that somehow doesn't have an offset in either the read or delta index maps!");
                 update_chunk(offset, &chunk, &mut chunk_data_file);
             }
             WriteCmd::WriteUniformAir { coord } => {
@@ -961,9 +977,15 @@ pub fn project_downward(
     spawned_chunks_query: Query<(), With<ChunkTag>>,
 ) {
     let player_chunk = world_pos_to_chunk_coord(&player_position.translation);
-    if let Some(entity) = chunk_entity_map.0.get(&player_chunk) {
-        if spawned_chunks_query.get(*entity).is_ok() {
-            INITIAL_CHUNKS_LOADED.store(true, Ordering::Relaxed);
+    for chunk_y in (player_chunk.1 - 10..=player_chunk.1).rev() {
+        if let Some(entity) = chunk_entity_map
+            .0
+            .get(&(player_chunk.0, chunk_y, player_chunk.2))
+        {
+            if spawned_chunks_query.get(*entity).is_ok() {
+                INITIAL_CHUNKS_LOADED.store(true, Ordering::Relaxed);
+                break;
+            }
         }
     }
 }
