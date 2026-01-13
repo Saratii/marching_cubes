@@ -4,7 +4,7 @@ use crate::terrain::{
 };
 use bytemuck::{Pod, Zeroable, bytes_of, cast_slice};
 use pollster::block_on;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxBuildHasher, FxHashMap};
 use std::{collections::HashMap, num::NonZeroU64};
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
@@ -384,12 +384,9 @@ impl GpuHeightmapGenerator {
         &self,
         cluster_coords: &[(i32, i32)],
     ) -> FxHashMap<(i16, i16), Box<[f32]>> {
-        if cluster_coords.is_empty() {
-            return FxHashMap::default();
-        }
         let cluster_count = cluster_coords.len();
-        let chunks_per_cluster = (CLUSTER_SIZE * CLUSTER_SIZE) as usize;
-        let total_chunks = cluster_count * chunks_per_cluster;
+        const CHUNKS_PER_CLUSTER: usize = (CLUSTER_SIZE * CLUSTER_SIZE) as usize;
+        let total_chunks = cluster_count * CHUNKS_PER_CLUSTER;
         let header = BatchClusterParamsHeader {
             cluster_count: cluster_count as u32,
             _pad: [0; 3],
@@ -407,7 +404,6 @@ impl GpuHeightmapGenerator {
             usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-
         let batch_output_buffer = self.device.create_buffer(&BufferDescriptor {
             label: Some("Batch Cluster Output"),
             size: output_size,
@@ -478,7 +474,7 @@ impl GpuHeightmapGenerator {
             compute_pass.set_bind_group(2, &batch_bind_group, &[]);
             compute_pass.dispatch_workgroups(
                 WORKGROUP_SIZE,
-                chunks_per_cluster as u32,
+                CHUNKS_PER_CLUSTER as u32,
                 cluster_count as u32,
             );
         }
@@ -496,12 +492,12 @@ impl GpuHeightmapGenerator {
         let mapped = slice.get_mapped_range();
         let all_heights: &[f32] = cast_slice(&mapped);
         let mut results =
-            FxHashMap::with_capacity_and_hasher(total_chunks, rustc_hash::FxBuildHasher::default());
+            FxHashMap::with_capacity_and_hasher(total_chunks, FxBuildHasher::default());
         for (cluster_idx, &(cluster_x, cluster_z)) in cluster_coords.iter().enumerate() {
             for local_z in 0..CLUSTER_SIZE {
                 for local_x in 0..CLUSTER_SIZE {
                     let chunk_in_cluster_idx = (local_z * CLUSTER_SIZE + local_x) as usize;
-                    let global_chunk_idx = cluster_idx * chunks_per_cluster + chunk_in_cluster_idx;
+                    let global_chunk_idx = cluster_idx * CHUNKS_PER_CLUSTER + chunk_in_cluster_idx;
                     let start = global_chunk_idx * NOISE_SAMPLES_PER_CHUNK;
                     let end = start + NOISE_SAMPLES_PER_CHUNK;
                     let heightmap = all_heights[start..end].to_vec().into_boxed_slice();

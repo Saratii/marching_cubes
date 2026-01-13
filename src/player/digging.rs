@@ -5,8 +5,9 @@ use crate::{
     conversions::{chunk_coord_to_world_pos, world_pos_to_chunk_coord, world_pos_to_voxel_index},
     data_loader::{
         driver::{TerrainChunkMap, WriteCmd, WriteCmdSender},
-        file_loader::{ChunkEntityMap, ChunkIndexMapDelta, ChunkIndexMapRead},
+        file_loader::ChunkEntityMap,
     },
+    marching_cubes::mc::mc_mesh_generation,
     player::player::MainCameraTag,
     sparse_voxel_octree::sphere_intersects_aabb,
     terrain::{
@@ -19,13 +20,11 @@ use crate::{
 };
 
 const DIG_STRENGTH: f32 = 0.5;
-const DIG_TIMER: f32 = 0.01; // seconds
-const DIG_RADIUS: f32 = 2.0; // world space
+const DIG_TIMER: f32 = 0.008; // seconds
+const DIG_RADIUS: f32 = 3.0; // world space
 
 #[derive(SystemParam)]
 pub struct TerrainIo<'w> {
-    pub chunk_index_map_delta: Res<'w, ChunkIndexMapDelta>,
-    pub chunk_index_map_read: Res<'w, ChunkIndexMapRead>,
     pub terrain_chunk_map: ResMut<'w, TerrainChunkMap>,
     pub chunk_entity_map: ResMut<'w, ChunkEntityMap>,
 }
@@ -76,13 +75,12 @@ pub fn handle_digging_input(
                     let mut terrain_chunk_map_lock = terrain_io.terrain_chunk_map.0.lock().unwrap();
                     let chunk = terrain_chunk_map_lock.get_mut(&chunk_coord).unwrap();
                     let chunk_clone = chunk.clone(); //clone instead of holding lock
-                    let (vertices, normals, material_ids, indices) =
-                        crate::marching_cubes::mc::mc_mesh_generation(
-                            &chunk_clone.densities,
-                            &chunk_clone.materials,
-                            SAMPLES_PER_CHUNK_DIM,
-                            HALF_CHUNK,
-                        );
+                    let (vertices, normals, material_ids, indices) = mc_mesh_generation(
+                        &chunk_clone.densities,
+                        &chunk_clone.materials,
+                        SAMPLES_PER_CHUNK_DIM,
+                        HALF_CHUNK,
+                    );
                     match chunk_clone.is_uniform {
                         //this may need to also do the opposite, upgrading non-uniform to uniform
                         UniformChunk::Air | UniformChunk::Dirt => {
@@ -109,25 +107,10 @@ pub fn handle_digging_input(
                         }
                         UniformChunk::NonUniform => {
                             drop(terrain_chunk_map_lock);
-                            //first check read only initial copy
-                            let offset = terrain_io
-                                .chunk_index_map_read
-                                .0
-                                .get(&chunk_coord)
-                                .cloned()
-                                .or_else(|| {
-                                    terrain_io
-                                        .chunk_index_map_delta
-                                        .0
-                                        .lock()
-                                        .unwrap()
-                                        .get(&chunk_coord)
-                                        .cloned()
-                                }).expect("During dig, tried to update a non-uniform chunk that somehow doesn't have an offset in either the read or delta index maps!");
                             write_cmd_sender
                                 .0
                                 .send(WriteCmd::UpdateNonUniform {
-                                    offset,
+                                    coord: chunk_coord,
                                     chunk: chunk_clone,
                                 })
                                 .unwrap();
