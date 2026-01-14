@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use bevy::{
     asset::RenderAssetUsages,
     image::{ImageLoaderSettings, ImageSampler},
@@ -13,7 +15,7 @@ use crate::{
     conversions::flatten_index,
     data_loader::file_loader::get_project_root,
     terrain::{
-        chunk_generator::generate_densities,
+        chunk_generator::{HEIGHT_MAP_GRID_SIZE, generate_densities},
         terrain_material::{ATTRIBUTE_MATERIAL_ID, TerrainMaterialExtension},
     },
 };
@@ -50,50 +52,26 @@ pub struct TerrainMaterialHandle(
 pub struct TextureAtlasHandle(pub Handle<Image>);
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy)]
-pub enum UniformChunk {
+pub enum Uniformity {
     NonUniform,
     Dirt,
     Air,
 }
 
-#[derive(Component, Serialize, Deserialize, Debug, Clone)]
+#[derive(Component, Debug, Clone)]
 pub struct TerrainChunk {
-    pub densities: Box<[i16]>,
-    pub materials: Box<[u8]>,
-    pub is_uniform: UniformChunk,
+    pub densities: Arc<[i16; SAMPLES_PER_CHUNK]>, //arc, so the write thread can read them
+    pub materials: Arc<[u8; SAMPLES_PER_CHUNK]>,
+    pub is_uniform: Uniformity,
 }
 
 impl TerrainChunk {
-    pub fn new(
-        fbm: &GeneratorWrapper<SafeNode>,
-        chunk_start: Vec3,
-        first_sample_reuse: f32,
-    ) -> Self {
-        let (densities, materials, is_uniform) =
-            generate_densities(fbm, first_sample_reuse, chunk_start);
-        //if it does not have a surface it must be uniform dirt or air
-        let is_uniform = if !is_uniform {
-            UniformChunk::NonUniform
-        } else {
-            if materials[0] == 1 {
-                UniformChunk::Dirt
-            } else if materials[0] == 0 {
-                UniformChunk::Air
-            } else {
-                println!("materials[0]: {}", materials[0]);
-                panic!("Generated uniform chunk with unknown material type!");
-            }
-        };
+    pub fn new(densities: Arc<[i16; SAMPLES_PER_CHUNK]>, materials: Arc<[u8; SAMPLES_PER_CHUNK]>, is_uniform: Uniformity) -> Self {
         Self {
             densities,
             materials,
             is_uniform,
         }
-    }
-
-    pub fn set_density(&mut self, x: u32, y: u32, z: u32, density: i16) {
-        let index = flatten_index(x, y, z, SAMPLES_PER_CHUNK_DIM);
-        self.densities[index as usize] = density;
     }
 
     pub fn get_density(&self, x: u32, y: u32, z: u32) -> i16 {
@@ -103,12 +81,45 @@ impl TerrainChunk {
 
     pub fn get_mut_density(&mut self, x: u32, y: u32, z: u32) -> &mut i16 {
         let index = flatten_index(x, y, z, SAMPLES_PER_CHUNK_DIM);
-        &mut self.densities[index as usize]
+        let densities = Arc::make_mut(&mut self.densities);
+        &mut densities[index as usize]
     }
 
     pub fn is_solid(&self, x: u32, y: u32, z: u32) -> bool {
         self.get_density(x, y, z) < 0
     }
+}
+
+pub fn generate_chunk_into_buffers(
+    fbm: &GeneratorWrapper<SafeNode>,
+    first_sample_reuse: f32,
+    chunk_start: Vec3,
+    density_buffer: &mut [i16],
+    material_buffer: &mut [u8],
+    heightmap_buffer: &mut [f32; HEIGHT_MAP_GRID_SIZE],
+) -> Uniformity {
+    let is_uniform = generate_densities(
+        fbm,
+        first_sample_reuse,
+        chunk_start,
+        density_buffer,
+        material_buffer,
+        heightmap_buffer,
+    );
+    //if it does not have a surface it must be uniform dirt or air
+    let uniformity = if !is_uniform {
+        Uniformity::NonUniform
+    } else {
+        if material_buffer[0] == 1 {
+            Uniformity::Dirt
+        } else if material_buffer[0] == 0 {
+            Uniformity::Air
+        } else {
+            println!("materials[0]: {}", material_buffer[0]);
+            panic!("Generated uniform chunk with unknown material type!");
+        }
+    };
+    uniformity
 }
 
 pub fn setup_map(
