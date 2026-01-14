@@ -1,4 +1,4 @@
-use crate::terrain::terrain::{SAMPLES_PER_CHUNK, TerrainChunk, UniformChunk};
+use crate::terrain::terrain::SAMPLES_PER_CHUNK;
 use bevy::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 const BYTES_PER_VOXEL: usize = std::mem::size_of::<i16>() + std::mem::size_of::<u8>();
-const CHUNK_SERIALIZED_SIZE: usize = SAMPLES_PER_CHUNK * BYTES_PER_VOXEL;
+pub const CHUNK_SERIALIZED_SIZE: usize = SAMPLES_PER_CHUNK * BYTES_PER_VOXEL;
 const TOMBSTONE_BYTES: [u8; 6] = [0xFF; 6];
 
 #[derive(Resource)]
@@ -25,15 +25,17 @@ pub struct ChunkEntityMap(pub FxHashMap<(i16, i16, i16), Entity>);
 // - SDF values: num_voxels * i16 (2 bytes each)
 // - Material values: num_voxels * u8 (1 byte each)
 
-fn serialize_chunk_data(chunk: &TerrainChunk) -> Vec<u8> {
-    let mut buffer = Vec::with_capacity(CHUNK_SERIALIZED_SIZE);
-    for density in chunk.densities.iter() {
-        buffer.extend_from_slice(&density.to_le_bytes());
+//serialize densities and materials into a byte buffer
+fn serialize_chunk_data(densities: &[i16], materials: &[u8], mut buffer: &mut [u8]) {
+    for &d in densities.iter() {
+        let (dst, rest) = buffer.split_at_mut(2);
+        dst.copy_from_slice(&d.to_le_bytes());
+        buffer = rest;
     }
-    for material in chunk.materials.iter() {
-        buffer.push(*material);
+    for &m in materials.iter() {
+        buffer[0] = m;
+        buffer = &mut buffer[1..];
     }
-    buffer
 }
 
 //read density and material data into provided buffers
@@ -48,17 +50,19 @@ pub fn deserialize_chunk_data(data: &[u8], density_buffer: &mut [i16], material_
 }
 
 pub fn write_chunk(
-    chunk: &TerrainChunk,
+    densities: &[i16; SAMPLES_PER_CHUNK],
+    materials: &[u8; SAMPLES_PER_CHUNK],
     chunk_coord: &(i16, i16, i16),
     index_map_delta: &mut FxHashMap<(i16, i16, i16), u64>,
     chunk_data_file: &mut File,
     chunk_index_file: &mut File,
     index_buffer_allocation: &mut Vec<u8>,
+    serial_buffer: &mut [u8],
 ) {
     index_buffer_allocation.clear();
     let byte_offset = chunk_data_file.seek(SeekFrom::End(0)).unwrap();
-    let buffer = serialize_chunk_data(chunk);
-    chunk_data_file.write_all(&buffer).unwrap();
+    serialize_chunk_data(densities, materials, serial_buffer);
+    chunk_data_file.write_all(serial_buffer).unwrap();
     chunk_data_file.flush().unwrap();
     chunk_index_file.seek(SeekFrom::End(0)).unwrap();
     index_buffer_allocation.extend_from_slice(&chunk_coord.0.to_le_bytes());
@@ -72,26 +76,30 @@ pub fn write_chunk(
     index_map_delta.insert(*chunk_coord, byte_offset);
 }
 
-pub fn update_chunk(byte_offset: u64, chunk: &TerrainChunk, chunk_data_file: &mut File) {
-    let buffer = serialize_chunk_data(chunk);
+pub fn update_chunk(
+    byte_offset: u64,
+    densities: &[i16; SAMPLES_PER_CHUNK],
+    materials: &[u8; SAMPLES_PER_CHUNK],
+    chunk_data_file: &mut File,
+    serial_buffer: &mut [u8],
+) {
+    serialize_chunk_data(densities, materials, serial_buffer);
     chunk_data_file.seek(SeekFrom::Start(byte_offset)).unwrap();
-    chunk_data_file.write_all(&buffer).unwrap();
+    chunk_data_file.write_all(serial_buffer).unwrap();
     chunk_data_file.flush().unwrap();
 }
 
-pub fn load_chunk(chunk_data_file: &mut File, byte_offset: u64) -> TerrainChunk {
-    const TOTAL_SIZE: usize = SAMPLES_PER_CHUNK * 2 + SAMPLES_PER_CHUNK; // i16 sdfs (2 bytes) + u8 materials (1 byte)
+//loadsa chunk data into provided density and material buffers
+pub fn load_chunk(
+    chunk_data_file: &mut File,
+    byte_offset: u64,
+    density_buffer: &mut [i16],
+    material_buffer: &mut [u8],
+) {
     chunk_data_file.seek(SeekFrom::Start(byte_offset)).unwrap();
-    let mut buffer = [0u8; TOTAL_SIZE];
+    let mut buffer = [0u8; CHUNK_SERIALIZED_SIZE];
     chunk_data_file.read_exact(&mut buffer).unwrap();
-    let mut densities = [0; SAMPLES_PER_CHUNK];
-    let mut materials = [0; SAMPLES_PER_CHUNK];
-    deserialize_chunk_data(&buffer, &mut densities, &mut materials);
-    TerrainChunk {
-        densities: Box::new(densities),
-        materials: Box::new(materials),
-        is_uniform: UniformChunk::NonUniform,
-    }
+    deserialize_chunk_data(&buffer, density_buffer, material_buffer);
 }
 
 pub fn load_chunk_index_map(index_file: &mut File) -> FxHashMap<(i16, i16, i16), u64> {

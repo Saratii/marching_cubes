@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use fastnoise2::{SafeNode, generator::GeneratorWrapper};
 
 use crate::terrain::terrain::{
-    CHUNK_SIZE, HALF_CHUNK, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainChunk, VOXEL_SIZE,
+    CHUNK_SIZE, HALF_CHUNK, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_DIM, VOXEL_SIZE,
 };
 
 pub const NOISE_SEED: i32 = 100; // Seed for noise generation
@@ -18,18 +18,24 @@ pub fn generate_densities(
     fbm: &GeneratorWrapper<SafeNode>,
     first_sample_reuse: f32,
     chunk_start: Vec3,
-) -> (Box<[i16]>, Box<[u8]>, bool) {
-    let mut densities = [0; SAMPLES_PER_CHUNK];
-    let mut materials = [0; SAMPLES_PER_CHUNK];
-    let terrain_heights =
-        generate_terrain_heights(chunk_start.x, chunk_start.z, fbm, first_sample_reuse);
-    let is_uniform = fill_voxel_densities(
-        &mut densities,
-        &mut materials,
-        &chunk_start,
-        &terrain_heights,
+    density_buffer: &mut [i16],
+    material_buffer: &mut [u8],
+    heightmap_buffer: &mut [f32; HEIGHT_MAP_GRID_SIZE],
+) -> bool {
+    generate_terrain_heights(
+        chunk_start.x,
+        chunk_start.z,
+        fbm,
+        first_sample_reuse,
+        heightmap_buffer,
     );
-    (Box::new(densities), Box::new(materials), is_uniform)
+    let is_uniform = fill_voxel_densities(
+        density_buffer,
+        material_buffer,
+        &chunk_start,
+        heightmap_buffer,
+    );
+    is_uniform
 }
 
 pub fn calculate_chunk_start(chunk_coord: &(i16, i16, i16)) -> Vec3 {
@@ -40,23 +46,11 @@ pub fn calculate_chunk_start(chunk_coord: &(i16, i16, i16)) -> Vec3 {
     )
 }
 
-pub fn heights_contains_surface(chunk_start: &Vec3, terrain_heights: &[f32]) -> bool {
-    let chunk_bottom = chunk_start.y;
-    let chunk_top = chunk_start.y + CHUNK_SIZE;
-    let mut min_height = f32::INFINITY;
-    let mut max_height = f32::NEG_INFINITY;
-    for &height in terrain_heights {
-        min_height = min_height.min(height);
-        max_height = max_height.max(height);
-    }
-    max_height >= chunk_bottom && min_height < chunk_top
-}
-
 //it may be better to store a byte signifying if a chunk contains a surface when saving to disk
-pub fn chunk_contains_surface(chunk: &TerrainChunk) -> bool {
+pub fn chunk_contains_surface(density_buffer: &[i16; SAMPLES_PER_CHUNK]) -> bool {
     let mut has_positive = false;
     let mut has_negative = false;
-    for &density in &chunk.densities {
+    for &density in density_buffer {
         if density > 0 {
             has_positive = true;
         } else if density < 0 {
@@ -94,8 +88,8 @@ pub fn generate_terrain_heights(
     chunk_start_z: f32,
     fbm: &GeneratorWrapper<SafeNode>,
     first_sample_reuse: f32,
-) -> [f32; HEIGHT_MAP_GRID_SIZE] {
-    let mut out = [0.0; HEIGHT_MAP_GRID_SIZE];
+    heightmap_buffer: &mut [f32; HEIGHT_MAP_GRID_SIZE],
+) {
     let mut noise_samples = [0.0; NOISE_SAMPLES_PER_SIDE * NOISE_SAMPLES_PER_SIDE];
     noise_samples[0] = first_sample_reuse;
     for nz in 0..NOISE_SAMPLES_PER_SIDE {
@@ -133,10 +127,9 @@ pub fn generate_terrain_heights(
             let s11 = noise_samples[nz1_base + nx1];
             let s0 = s00 * omtx + s10 * tx_frac;
             let s1 = s01 * omtx + s11 * tx_frac;
-            out[base + x] = s0 * omtz + s1 * tz_frac;
+            heightmap_buffer[base + x] = s0 * omtz + s1 * tz_frac;
         }
     }
-    out
 }
 
 pub fn fill_voxel_densities(

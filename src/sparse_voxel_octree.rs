@@ -198,11 +198,11 @@ impl SvoNode {
     pub fn fill_missing_chunks_in_radius(
         &mut self,
         center: &Vec3,
-        radius: f32,
+        radius_squared: f32,
         chunks_being_loaded: &mut FxHashSet<(i16, i16, i16)>,
         request_buffer: &mut Vec<ChunkRequest>,
     ) {
-        if !sphere_intersects_aabb(center, radius, &self.node_min, &self.node_max) {
+        if !sphere_intersects_aabb(center, radius_squared, &self.node_min, &self.node_max) {
             return;
         }
         if self.children.is_none() {
@@ -256,14 +256,14 @@ impl SvoNode {
                     let half_cluster = cluster_size_world * 0.5;
                     let child_min = child_center - Vec3::splat(half_cluster);
                     let child_max = child_min + Vec3::splat(half as f32 * cluster_size_world);
-                    if sphere_intersects_aabb(center, radius, &child_min, &child_max) {
+                    if sphere_intersects_aabb(center, radius_squared, &child_min, &child_max) {
                         children[i] = Some(SvoNode::new(child_pos, half));
                     }
                 }
                 if let Some(child) = &mut children[i] {
                     child.fill_missing_chunks_in_radius(
                         center,
-                        radius,
+                        radius_squared,
                         chunks_being_loaded,
                         request_buffer,
                     );
@@ -359,8 +359,7 @@ impl SvoNode {
     }
 }
 
-pub fn sphere_intersects_aabb(center: &Vec3, radius: f32, min: &Vec3, max: &Vec3) -> bool {
-    let radius_sq = radius * radius;
+pub fn sphere_intersects_aabb(center: &Vec3, radius_squared: f32, min: &Vec3, max: &Vec3) -> bool {
     let mut d = 0.0;
     let v = center.x;
     if v < min.x {
@@ -380,7 +379,7 @@ pub fn sphere_intersects_aabb(center: &Vec3, radius: f32, min: &Vec3, max: &Vec3
     } else if v > max.z {
         d += (v - max.z) * (v - max.z);
     }
-    d <= radius_sq
+    d <= radius_squared
 }
 
 fn get_load_priority(distance_squared: f32) -> u8 {

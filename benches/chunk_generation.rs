@@ -10,27 +10,36 @@ use marching_cubes::{
     terrain::{
         chunk_compute_pipeline::GpuTerrainGenerator,
         chunk_generator::{
-            calculate_chunk_start, chunk_contains_surface, generate_densities,
+            HEIGHT_MAP_GRID_SIZE, calculate_chunk_start, chunk_contains_surface,
             generate_terrain_heights, sample_fbm,
         },
         heightmap_compute_pipeline::GpuHeightmapGenerator,
-        terrain::{CLUSTER_SIZE, HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainChunk},
+        terrain::{
+            CLUSTER_SIZE, HALF_CHUNK, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainChunk,
+            generate_chunk_into_buffers,
+        },
     },
 };
-use std::{collections::HashMap, hint::black_box};
+use std::{collections::HashMap, hint::black_box, sync::Arc};
 
 fn benchmark_generate_densities_cpu(c: &mut Criterion) {
     let noise_function =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
+    let mut densities_buffer = [0; SAMPLES_PER_CHUNK];
+    let mut materials_buffer = [0; SAMPLES_PER_CHUNK];
+    let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
     c.bench_function("generate_densities_cpu", |b| {
         b.iter(|| {
             let chunk_start = calculate_chunk_start(&(0, 2, 0));
             let first_sample_reuse = sample_fbm(&noise_function, chunk_start.x, chunk_start.z);
-            black_box(generate_densities(
+            black_box(generate_chunk_into_buffers(
                 black_box(&noise_function),
                 black_box(first_sample_reuse),
                 black_box(chunk_start),
-            ))
+                black_box(&mut densities_buffer),
+                black_box(&mut materials_buffer),
+                black_box(&mut heightmap_buffer),
+            ));
         })
     });
 }
@@ -38,14 +47,20 @@ fn benchmark_generate_densities_cpu(c: &mut Criterion) {
 fn benchmark_generate_uniform_densities_cpu(c: &mut Criterion) {
     let noise_function =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
+    let mut densities_buffer = [0; SAMPLES_PER_CHUNK];
+    let mut materials_buffer = [0; SAMPLES_PER_CHUNK];
+    let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
     c.bench_function("generate_uniform_densities_cpu", |b| {
         b.iter(|| {
             let chunk_start = calculate_chunk_start(&(0, 2000, 0));
             let first_sample_reuse = sample_fbm(&noise_function, chunk_start.x, chunk_start.z);
-            black_box(generate_densities(
+            black_box(generate_chunk_into_buffers(
                 black_box(&noise_function),
                 black_box(first_sample_reuse),
                 black_box(chunk_start),
+                black_box(&mut densities_buffer),
+                black_box(&mut materials_buffer),
+                black_box(&mut heightmap_buffer),
             ))
         })
     });
@@ -69,9 +84,24 @@ fn benchmark_marching_cubes(c: &mut Criterion) {
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
     let chunk_start = calculate_chunk_start(&chunk);
     let first_sample_reuse = sample_fbm(&noise_function, chunk_start.x, chunk_start.z);
-    let chunk = TerrainChunk::new(&noise_function, chunk_start, first_sample_reuse);
+    let mut densities_buffer = [0; SAMPLES_PER_CHUNK];
+    let mut materials_buffer = [0; SAMPLES_PER_CHUNK];
+    let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
+    let uniformity = generate_chunk_into_buffers(
+        &noise_function,
+        first_sample_reuse,
+        chunk_start,
+        &mut densities_buffer,
+        &mut materials_buffer,
+        &mut heightmap_buffer,
+    );
+    let chunk = TerrainChunk::new(
+        Arc::new(densities_buffer),
+        Arc::new(materials_buffer),
+        uniformity,
+    );
     assert!(
-        chunk_contains_surface(&chunk),
+        chunk_contains_surface(&chunk.densities),
         "Chunk at {:?} should contain a surface",
         chunk
     );
@@ -93,9 +123,24 @@ fn benchmark_heightmap_single_chunk_cpu(c: &mut Criterion) {
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
     let chunk_start = calculate_chunk_start(&chunk_coord);
     let first_sample_reuse = sample_fbm(&noise_function, chunk_start.x, chunk_start.z);
-    let chunk = TerrainChunk::new(&noise_function, chunk_start, first_sample_reuse);
+    let mut densities_buffer = [0; SAMPLES_PER_CHUNK];
+    let mut materials_buffer = [0; SAMPLES_PER_CHUNK];
+    let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
+    let uniformity = generate_chunk_into_buffers(
+        &noise_function,
+        first_sample_reuse,
+        chunk_start,
+        &mut densities_buffer,
+        &mut materials_buffer,
+        &mut heightmap_buffer,
+    );
+    let chunk = TerrainChunk::new(
+        Arc::new(densities_buffer),
+        Arc::new(materials_buffer),
+        uniformity,
+    );
     assert!(
-        chunk_contains_surface(&chunk),
+        chunk_contains_surface(&chunk.densities),
         "Chunk at {:?} should contain a surface",
         chunk_coord
     );
@@ -108,6 +153,7 @@ fn benchmark_heightmap_single_chunk_cpu(c: &mut Criterion) {
                 black_box(chunk_start.z),
                 black_box(&noise_function),
                 black_box(first_sample_reuse),
+                black_box(&mut heightmap_buffer),
             ));
         })
     });
@@ -128,6 +174,7 @@ fn benchmark_cluster_heightmap_cpu(c: &mut Criterion) {
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
     let chunk = world_pos_to_chunk_coord(&Vec3::ZERO);
     let cluster = chunk_coord_to_cluster_coord(&chunk);
+    let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
     c.bench_function("cluster_heightmap_cpu", |b| {
         b.iter(|| {
             let mut results = HashMap::new();
@@ -142,6 +189,7 @@ fn benchmark_cluster_heightmap_cpu(c: &mut Criterion) {
                         black_box(chunk_start.z),
                         black_box(&noise_function),
                         black_box(first_sample_reuse),
+                        black_box(&mut heightmap_buffer),
                     );
                     results.insert((chunk_coord.0, chunk_coord.1), heights);
                 }

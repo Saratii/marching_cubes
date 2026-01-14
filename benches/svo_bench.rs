@@ -2,7 +2,7 @@ use std::hint::black_box;
 
 use bevy::math::Vec3;
 use criterion::{Criterion, criterion_group, criterion_main};
-use marching_cubes::{sparse_voxel_octree::ChunkSvo, terrain::terrain::MAX_RADIUS};
+use marching_cubes::{sparse_voxel_octree::ChunkSvo, terrain::terrain::MAX_RADIUS_SQUARED};
 use rustc_hash::FxHashSet;
 
 fn benchmark_svo_first_traversal(c: &mut Criterion) {
@@ -11,7 +11,7 @@ fn benchmark_svo_first_traversal(c: &mut Criterion) {
             let mut svo = ChunkSvo::new();
             svo.root.fill_missing_chunks_in_radius(
                 &Vec3::ZERO,
-                MAX_RADIUS,
+                MAX_RADIUS_SQUARED,
                 &mut FxHashSet::default(),
                 &mut Vec::new(),
             );
