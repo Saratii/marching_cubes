@@ -10,9 +10,10 @@ use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
     BindGroupLayoutEntry, BindingType, Buffer, BufferBindingType, BufferDescriptor, BufferUsages,
     CommandEncoderDescriptor, ComputePassDescriptor, ComputePipeline, ComputePipelineDescriptor,
-    Device, DeviceDescriptor, Features, Instance, InstanceDescriptor, Limits, MapMode, MemoryHints,
-    PipelineCompilationOptions, PipelineLayoutDescriptor, PollType, PowerPreference, Queue,
-    RequestAdapterOptions, ShaderModuleDescriptor, ShaderSource, ShaderStages, Trace,
+    Device, DeviceDescriptor, ExperimentalFeatures, Features, Instance, InstanceDescriptor, Limits,
+    MapMode, MemoryHints, PipelineCompilationOptions, PipelineLayoutDescriptor, PollType,
+    PowerPreference, Queue, RequestAdapterOptions, ShaderModuleDescriptor, ShaderSource,
+    ShaderStages, Trace,
 };
 
 const WORKGROUP_SIZE: u32 = SAMPLES_PER_CHUNK.div_ceil(64) as u32;
@@ -74,6 +75,7 @@ impl GpuHeightmapGenerator {
             required_limits: Limits::default(),
             memory_hints: MemoryHints::Performance,
             trace: Trace::Off,
+            experimental_features: ExperimentalFeatures::default(),
         }))
         .expect("Failed to create device");
         let shader_source = include_str!("../../assets/shaders/heightmap_compute.wgsl");
@@ -315,7 +317,7 @@ impl GpuHeightmapGenerator {
         self.queue.submit([encoder.finish()]);
         let slice = self.download_buffer.slice(..);
         slice.map_async(MapMode::Read, |_| {});
-        self.device.poll(PollType::Wait).unwrap();
+        self.device.poll(PollType::wait_indefinitely()).unwrap();
         let mapped = slice.get_mapped_range();
         let heights = cast_slice(&mapped).to_vec();
         drop(mapped);
@@ -358,7 +360,7 @@ impl GpuHeightmapGenerator {
         self.queue.submit([encoder.finish()]);
         let slice = self.cluster_download_buffer.slice(..);
         slice.map_async(MapMode::Read, |_| {});
-        self.device.poll(PollType::Wait).unwrap();
+        self.device.poll(PollType::wait_indefinitely()).unwrap();
         let mapped = slice.get_mapped_range();
         let all_heights: &[f32] = cast_slice(&mapped);
         let mut results = HashMap::with_capacity(total_chunks);
@@ -488,7 +490,7 @@ impl GpuHeightmapGenerator {
         self.queue.submit([encoder.finish()]);
         let slice = batch_download_buffer.slice(..);
         slice.map_async(MapMode::Read, |_| {});
-        self.device.poll(PollType::Wait).unwrap();
+        self.device.poll(PollType::wait_indefinitely()).unwrap();
         let mapped = slice.get_mapped_range();
         let all_heights: &[f32] = cast_slice(&mapped);
         let mut results =

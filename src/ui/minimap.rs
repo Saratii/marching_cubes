@@ -1,6 +1,5 @@
 use bevy::{
     camera::{ImageRenderTarget, RenderTarget},
-    math::FloatOrd,
     prelude::*,
     render::render_resource::{
         Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
@@ -51,11 +50,11 @@ pub fn spawn_minimap(
             height: Val::Vw(total_size),
             border: UiRect::all(Val::Vw(BORDER_WIDTH_VW)),
             overflow: Overflow::clip(),
+            border_radius: BorderRadius::all(Val::Percent(50.0)),
             ..default()
         })
         .insert(BorderColor::all(BORDER_COLOR))
         .insert(BackgroundColor(Color::NONE))
-        .insert(BorderRadius::all(Val::Percent(50.0)))
         .insert(BackgroundColor(BORDER_COLOR))
         .with_children(|parent| {
             parent.spawn((
@@ -63,9 +62,9 @@ pub fn spawn_minimap(
                 Node {
                     width: Val::Percent(100.0),
                     height: Val::Percent(100.0),
+                    border_radius: BorderRadius::all(Val::Percent(50.0)),
                     ..default()
                 },
-                BorderRadius::all(Val::Percent(50.0)),
             ));
         });
     let child = commands
@@ -74,12 +73,12 @@ pub fn spawn_minimap(
             Transform::from_translation(Vec3::new(0., 150., 0.)).looking_at(Vec3::ZERO, Vec3::Y),
             Camera {
                 order: 1,
-                target: RenderTarget::Image(ImageRenderTarget {
-                    handle: image_handle.clone(),
-                    scale_factor: FloatOrd(1.0),
-                }),
                 ..default()
             },
+            RenderTarget::Image(ImageRenderTarget {
+                handle: image_handle.clone(),
+                scale_factor: 1.0,
+            }),
         ))
         .id();
     commands.entity(*player).add_child(child);
