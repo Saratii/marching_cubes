@@ -84,7 +84,7 @@ pub fn draw_collider_debug(
     terrain_chunk_map: Res<TerrainChunkMap>,
 ) {
     for transform in query.iter() {
-        gizmos.cuboid(
+        gizmos.cube(
             Transform::from_translation(transform.translation)
                 .with_scale(Vec3::splat(CHUNK_SIZE as f32)),
             Color::srgb(1.0, 0.0, 0.0),
@@ -93,7 +93,7 @@ pub fn draw_collider_debug(
     let terrain_chunk_map_lock = terrain_chunk_map.0.lock().unwrap();
     for chunk_coord in terrain_chunk_map_lock.keys() {
         let chunk_world_pos = chunk_coord_to_world_pos(chunk_coord);
-        gizmos.cuboid(
+        gizmos.cube(
             Transform::from_translation(chunk_world_pos).with_scale(Vec3::splat(CHUNK_SIZE as f32)),
             Color::srgba(0.0, 0.5, 1.0, 0.6),
         );
@@ -107,7 +107,7 @@ pub fn draw_cluster_debug(mut gizmos: Gizmos, query: Query<&Transform, With<Chun
         let cluster_coord = chunk_coord_to_cluster_coord(&chunk_coord);
         if drawn_clusters.insert(cluster_coord) {
             let cluster_world_pos = cluster_coord_to_world_center(&cluster_coord);
-            gizmos.cuboid(
+            gizmos.cube(
                 Transform::from_translation(cluster_world_pos)
                     .with_scale(Vec3::splat(CHUNK_SIZE * CLUSTER_SIZE as f32)),
                 Color::srgb(0.0, 1.0, 0.0),

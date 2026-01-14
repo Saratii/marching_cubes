@@ -9,17 +9,15 @@ rand = "0.9.2"
 criterion = "0.7.0"
 fastnoise2 = "0.3.2"
 mimalloc = "0.1.48"
-bevy_rapier3d = { git = "https://github.com/Deniskore/bevy_rapier", branch = "bevy-0.17", features = [ "simd-stable", "debug-render" ] }
+bevy_rapier3d = { path = "C:/Programming/bevy_rapier/bevy_rapier3d", features = [ "simd-stable", "debug-render" ] }
 serde_json = "1.0.145"
 serde = "1.0.228"
-flamegraph = "0.6.10"
 crossbeam-channel = "0.5.15"
-bevy = { version="0.17.3"}
+bevy = { version="0.18.0"}
 bytemuck = "1.24.0"
-wgpu = "26.0.1"
+wgpu = "27"
 pollster = "0.4.0"
 rustc-hash = "2.1.1"
-bevy-volumetric-clouds = { path = "C:/Programming/bevy-volumetric-clouds" }
 parking_lot = "0.12.5"
 
 [[bench]]

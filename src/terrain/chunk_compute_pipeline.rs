@@ -3,8 +3,12 @@
 use std::num::NonZeroU64;
 
 use bevy::math::Vec3;
-use bytemuck::{Pod, Zeroable};
-use wgpu::{BindGroup, Buffer, ComputePipeline, Device, Queue};
+use bytemuck::{Pod, Zeroable, bytes_of, cast_slice};
+use wgpu::{
+    BindGroup, Buffer, CommandEncoderDescriptor, ComputePassDescriptor, ComputePipeline,
+    ComputePipelineDescriptor, Device, DeviceDescriptor, ExperimentalFeatures, MapMode,
+    PipelineCompilationOptions, PollType, Queue,
+};
 
 use crate::terrain::terrain::{CHUNK_SIZE, HALF_CHUNK, SAMPLES_PER_CHUNK};
 
@@ -42,12 +46,13 @@ impl GpuTerrainGenerator {
         .expect("Failed to create adapter");
         let info = adapter.get_info();
         println!("Using GPU: {} ({:?})", info.name, info.device_type);
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        let (device, queue) = pollster::block_on(adapter.request_device(&DeviceDescriptor {
             label: None,
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::default(),
             memory_hints: wgpu::MemoryHints::Performance,
             trace: wgpu::Trace::Off,
+            experimental_features: ExperimentalFeatures::default(),
         }))
         .expect("Failed to create device");
         let shader_source = include_str!("../../assets/shaders/chunk_gen_compute.wgsl");
@@ -117,12 +122,12 @@ impl GpuTerrainGenerator {
             bind_group_layouts: &[&bind_group_layout],
             push_constant_ranges: &[],
         });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
             label: None,
             layout: Some(&pipeline_layout),
             module: &module,
             entry_point: Some("generate_terrain"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            compilation_options: PipelineCompilationOptions::default(),
             cache: None,
         });
         Self {
@@ -146,12 +151,12 @@ impl GpuTerrainGenerator {
             _pad: 0.0,
         };
         self.queue
-            .write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
+            .write_buffer(&self.params_buffer, 0, bytes_of(&params));
         let mut encoder = self
             .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            .create_command_encoder(&CommandEncoderDescriptor { label: None });
         {
-            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            let mut compute_pass = encoder.begin_compute_pass(&ComputePassDescriptor {
                 label: None,
                 timestamp_writes: None,
             });
@@ -168,17 +173,17 @@ impl GpuTerrainGenerator {
         );
         self.queue.submit([encoder.finish()]);
         let slice = self.download_buffer.slice(..);
-        slice.map_async(wgpu::MapMode::Read, |_| {});
-        self.device.poll(wgpu::PollType::Wait).unwrap();
+        slice.map_async(MapMode::Read, |_| {});
+        self.device.poll(PollType::wait_indefinitely()).unwrap();
         let mapped = slice.get_mapped_range();
         let dens_bytes = &mapped[0..DENSITY_BYTES as usize];
         let mat_bytes =
             &mapped[MATERIAL_OFFSET as usize..(MATERIAL_OFFSET + MATERIAL_BYTES) as usize];
-        let dens_i32: Vec<i16> = bytemuck::cast_slice(dens_bytes)
+        let dens_i32: Vec<i16> = cast_slice(dens_bytes)
             .iter()
             .map(|&d: &i32| d as i16)
             .collect();
-        let mats_u32: Vec<u8> = bytemuck::cast_slice(mat_bytes)
+        let mats_u32: Vec<u8> = cast_slice(mat_bytes)
             .iter()
             .map(|&m: &u32| m as u8)
             .collect();

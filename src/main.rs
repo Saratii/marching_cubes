@@ -12,7 +12,6 @@ use bevy::window::PresentMode;
 use bevy::winit::{UpdateMode, WinitSettings};
 use bevy_rapier3d::plugin::{NoUserData, PhysicsSet, RapierPhysicsPlugin};
 // use bevy_rapier3d::render::RapierDebugRenderPlugin;
-use bevy_volumetric_clouds::CloudsPlugin;
 use fastnoise2::SafeNode;
 use fastnoise2::generator::simplex::opensimplex2;
 use fastnoise2::generator::{Generator, GeneratorWrapper};
@@ -83,7 +82,6 @@ fn main() {
             RapierPhysicsPlugin::<NoUserData>::default(),
             MaterialPlugin::<ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>>::default(
             ),
-            CloudsPlugin,
             // RapierDebugRenderPlugin::default(),
         ))
         .add_systems(
@@ -128,7 +126,7 @@ fn main() {
         .run();
 }
 
-fn setup(mut commands: Commands, mut ambient_light: ResMut<AmbientLight>) {
+fn setup(mut commands: Commands, mut ambient_light: ResMut<GlobalAmbientLight>) {
     commands.spawn(PerfUiDefaultEntries::default());
     commands.spawn((
         DirectionalLight {
