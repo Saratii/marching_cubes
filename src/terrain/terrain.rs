@@ -32,7 +32,7 @@ pub const Z0_RADIUS_SQUARED: f32 = Z0_RADIUS * Z0_RADIUS;
 pub const Z1_RADIUS: f32 = 100.0; //in world units. Distance where chunks are loaded at full res but not stored in memory.
 pub const Z1_RADIUS_SQUARED: f32 = Z1_RADIUS * Z1_RADIUS;
 pub const VOXEL_SIZE: f32 = CHUNK_SIZE / SAMPLES_PER_CHUNK_DIM_M1 as f32;
-pub const Z2_RADIUS: f32 = 1700.0;
+pub const Z2_RADIUS: f32 = 1200.0;
 pub const Z2_RADIUS_SQUARED: f32 = Z2_RADIUS * Z2_RADIUS;
 pub const MAX_RADIUS: f32 = Z0_RADIUS.max(Z1_RADIUS).max(Z2_RADIUS);
 pub const MAX_RADIUS_SQUARED: f32 = MAX_RADIUS * MAX_RADIUS;
@@ -58,19 +58,37 @@ pub enum Uniformity {
     Air,
 }
 
-#[derive(Component, Debug, Clone)]
-pub struct TerrainChunk {
+#[derive(Clone)]
+pub struct NonUniformTerrainChunk {
     pub densities: Arc<[i16; SAMPLES_PER_CHUNK]>, //arc, so the write thread can read them
     pub materials: Arc<[u8; SAMPLES_PER_CHUNK]>,
-    pub is_uniform: Uniformity,
+}
+
+pub enum TerrainChunk {
+    UniformDirt,
+    UniformAir,
+    NonUniformTerrainChunk(NonUniformTerrainChunk),
 }
 
 impl TerrainChunk {
-    pub fn new(densities: Arc<[i16; SAMPLES_PER_CHUNK]>, materials: Arc<[u8; SAMPLES_PER_CHUNK]>, is_uniform: Uniformity) -> Self {
+    #[inline(always)]
+    pub fn is_solid(&self, x: u32, y: u32, z: u32) -> bool {
+        match self {
+            TerrainChunk::UniformDirt => true,
+            TerrainChunk::UniformAir => false,
+            TerrainChunk::NonUniformTerrainChunk(chunk) => chunk.is_solid(x, y, z),
+        }
+    }
+}
+
+impl NonUniformTerrainChunk {
+    pub fn new(
+        densities: Arc<[i16; SAMPLES_PER_CHUNK]>,
+        materials: Arc<[u8; SAMPLES_PER_CHUNK]>,
+    ) -> Self {
         Self {
             densities,
             materials,
-            is_uniform,
         }
     }
 

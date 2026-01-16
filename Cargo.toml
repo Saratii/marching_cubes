@@ -13,7 +13,7 @@ bevy_rapier3d = { path = "C:/Programming/bevy_rapier/bevy_rapier3d", features = 
 serde_json = "1.0.145"
 serde = "1.0.228"
 crossbeam-channel = "0.5.15"
-bevy = { version="0.18.0"}
+bevy = { version = "0.18", default-features = false, features = ["3d", "debug"] }
 bytemuck = "1.24.0"
 wgpu = "27"
 pollster = "0.4.0"

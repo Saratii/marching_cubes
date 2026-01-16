@@ -4,7 +4,9 @@ use bevy::{camera::primitives::MeshAabb, ecs::system::SystemParam, prelude::*};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
 
 use crate::{
-    conversions::{chunk_coord_to_world_pos, world_pos_to_chunk_coord, world_pos_to_voxel_index},
+    conversions::{
+        chunk_coord_to_world_pos, flatten_index, world_pos_to_chunk_coord, world_pos_to_voxel_index,
+    },
     data_loader::{
         driver::{TerrainChunkMap, WriteCmd, WriteCmdSender},
         file_loader::ChunkEntityMap,
@@ -15,8 +17,9 @@ use crate::{
     terrain::{
         chunk_generator::{dequantize_i16_to_f32, quantize_f32_to_i16},
         terrain::{
-            CHUNK_SIZE, ChunkTag, HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainChunk,
-            TerrainMaterialHandle, Uniformity, VOXEL_SIZE, generate_bevy_mesh,
+            CHUNK_SIZE, ChunkTag, HALF_CHUNK, NonUniformTerrainChunk, SAMPLES_PER_CHUNK,
+            SAMPLES_PER_CHUNK_DIM, TerrainChunk, TerrainMaterialHandle, Uniformity, VOXEL_SIZE,
+            generate_bevy_mesh,
         },
     },
 };
@@ -71,42 +74,27 @@ pub fn handle_digging_input(
                     DIG_STRENGTH,
                     &mut terrain_io.terrain_chunk_map,
                 );
-                if modified_chunks.is_empty() {
-                    return;
-                }
-                for chunk_coord in modified_chunks {
+                for (chunk_coord, densities, materials, uniformity) in modified_chunks {
                     let entity = terrain_io.chunk_entity_map.0.get(&chunk_coord);
-                    let (densities, materials, was_uniform) = {
-                        let mut lock = terrain_io.terrain_chunk_map.0.lock().unwrap();
-                        let chunk = lock.get_mut(&chunk_coord).unwrap();
-                        let was_uniform = chunk.is_uniform;
-                        if was_uniform != Uniformity::NonUniform {
-                            chunk.is_uniform = Uniformity::NonUniform;
-                        }
-                        (
-                            Arc::clone(&chunk.densities),
-                            Arc::clone(&chunk.materials),
-                            was_uniform,
-                        )
-                    };
                     let (vertices, normals, material_ids, indices) = mc_mesh_generation(
                         &densities,
                         &materials,
                         SAMPLES_PER_CHUNK_DIM,
                         HALF_CHUNK,
                     );
-                    match was_uniform {
+                    let densities_arc = Arc::new(densities);
+                    let materials_arc = Arc::new(materials);
+                    match uniformity {
                         Uniformity::Air | Uniformity::Dirt => {
                             write_cmd_sender
                                 .0
-                                .send(WriteCmd::WriteNonUniform {
-                                    densities: Arc::clone(&densities),
-                                    materials: Arc::clone(&materials),
+                                .send(WriteCmd::UpdateNonUniform {
+                                    densities: Arc::clone(&densities_arc),
+                                    materials: Arc::clone(&materials_arc),
                                     coord: chunk_coord,
                                 })
                                 .unwrap();
-
-                            if was_uniform == Uniformity::Air {
+                            if uniformity == Uniformity::Air {
                                 write_cmd_sender
                                     .0
                                     .send(WriteCmd::RemoveUniformAir { coord: chunk_coord })
@@ -122,8 +110,8 @@ pub fn handle_digging_input(
                             write_cmd_sender
                                 .0
                                 .send(WriteCmd::UpdateNonUniform {
-                                    densities: Arc::clone(&densities),
-                                    materials: Arc::clone(&materials),
+                                    densities: Arc::new(densities),
+                                    materials: Arc::new(materials),
                                     coord: chunk_coord,
                                 })
                                 .unwrap();
@@ -174,6 +162,15 @@ pub fn handle_digging_input(
                         }
                         terrain_io.chunk_entity_map.0.remove(&chunk_coord);
                     }
+                    //replace chunks in chunk map
+                    let mut terrain_chunk_map_lock = terrain_io.terrain_chunk_map.0.lock().unwrap();
+                    terrain_chunk_map_lock.insert(
+                        chunk_coord,
+                        TerrainChunk::NonUniformTerrainChunk(NonUniformTerrainChunk {
+                            densities: Arc::clone(&densities_arc),
+                            materials: Arc::clone(&materials_arc),
+                        }),
+                    );
                 }
             }
         }
@@ -186,41 +183,74 @@ fn dig_sphere(
     radius_squared: f32,
     strength: f32,
     terrain_chunk_map: &mut TerrainChunkMap,
-) -> Vec<(i16, i16, i16)> {
+) -> Vec<(
+    (i16, i16, i16),
+    [i16; SAMPLES_PER_CHUNK],
+    [u8; SAMPLES_PER_CHUNK],
+    Uniformity,
+)> {
     let mut modified_chunks = Vec::new();
     let min_world = center - Vec3::splat(radius);
     let max_world = center + Vec3::splat(radius);
     let min_chunk = world_pos_to_chunk_coord(&min_world);
     let max_chunk = world_pos_to_chunk_coord(&max_world);
     let inv_radius_sq = 1.0 / radius_squared;
+    //collect copies of all modified chunks
+    let mut terrain_chunk_map_lock = terrain_chunk_map.0.lock().unwrap();
     for chunk_x in min_chunk.0..=max_chunk.0 {
         for chunk_y in min_chunk.1..=max_chunk.1 {
             for chunk_z in min_chunk.2..=max_chunk.2 {
                 let chunk_coord = (chunk_x, chunk_y, chunk_z);
-                let mut terrain_chunk_map_lock = terrain_chunk_map.0.lock().unwrap();
-                let terrain_chunk = terrain_chunk_map_lock.get_mut(&chunk_coord).expect(
-                    "During dig, tried to modify a chunk that does not exist in the terrain chunk map!",
+                let chunk_center = chunk_coord_to_world_pos(&chunk_coord);
+                let node_min = Vec3::new(
+                    chunk_center.x - HALF_CHUNK,
+                    chunk_center.y - HALF_CHUNK,
+                    chunk_center.z - HALF_CHUNK,
                 );
-                let chunk_modified = modify_chunk_voxels(
-                    terrain_chunk,
-                    chunk_coord,
-                    center,
-                    radius_squared,
-                    strength,
-                    inv_radius_sq,
-                );
-                if chunk_modified {
-                    modified_chunks.push(chunk_coord);
+                let node_max = node_min + Vec3::splat(CHUNK_SIZE);
+                if sphere_intersects_aabb(&center, radius_squared, &node_min, &node_max) {
+                    let terrain_chunk = terrain_chunk_map_lock.get_mut(&chunk_coord).expect(
+                        "During dig, tried to modify a chunk that does not exist in the terrain chunk map!",
+                    );
+                    let (densities, materials, uniformity) = match terrain_chunk {
+                        TerrainChunk::UniformAir => (
+                            [i16::MAX; SAMPLES_PER_CHUNK],
+                            [0; SAMPLES_PER_CHUNK],
+                            Uniformity::Air,
+                        ),
+                        TerrainChunk::UniformDirt => (
+                            [i16::MIN; SAMPLES_PER_CHUNK],
+                            [1; SAMPLES_PER_CHUNK],
+                            Uniformity::Dirt,
+                        ),
+                        TerrainChunk::NonUniformTerrainChunk(chunk) => (
+                            *chunk.densities.clone(),
+                            *chunk.materials.clone(),
+                            Uniformity::NonUniform,
+                        ),
+                    };
+                    modified_chunks.push((chunk_coord, densities, materials, uniformity));
                 }
             }
         }
     }
+    drop(terrain_chunk_map_lock);
+    modified_chunks.retain_mut(|(chunk_coord, densities, _, _)| {
+        modify_chunk_voxels(
+            densities,
+            chunk_coord,
+            center,
+            radius_squared,
+            strength,
+            inv_radius_sq,
+        )
+    });
     modified_chunks
 }
 
 fn modify_chunk_voxels(
-    terrain_chunk: &mut TerrainChunk,
-    chunk_coord: (i16, i16, i16),
+    densities: &mut [i16; SAMPLES_PER_CHUNK],
+    chunk_coord: &(i16, i16, i16),
     dig_center: Vec3,
     radius_squared: f32,
     strength: f32,
@@ -232,10 +262,6 @@ fn modify_chunk_voxels(
         chunk_center.y - HALF_CHUNK,
         chunk_center.z - HALF_CHUNK,
     );
-    let node_max = node_min + Vec3::splat(CHUNK_SIZE);
-    if !sphere_intersects_aabb(&dig_center, radius_squared, &node_min, &node_max) {
-        return false;
-    }
     let mut chunk_modified = false;
     for z in 0..SAMPLES_PER_CHUNK_DIM {
         let world_z = node_min.z + z as f32 * VOXEL_SIZE;
@@ -248,8 +274,9 @@ fn modify_chunk_voxels(
                 if distance_squared <= radius_squared {
                     let falloff = 1.0 - distance_squared * inv_radius_sq;
                     let dig_amount = strength * falloff;
-                    let current_density =
-                        terrain_chunk.get_mut_density(x as u32, y as u32, z as u32);
+                    let flat_index =
+                        flatten_index(x as u32, y as u32, z as u32, SAMPLES_PER_CHUNK_DIM);
+                    let current_density = &mut densities[flat_index as usize];
                     if *current_density < 0 {
                         let sdf_f32 = dequantize_i16_to_f32(*current_density);
                         let new_sdf = (sdf_f32 + dig_amount).clamp(-10.0, 10.0);

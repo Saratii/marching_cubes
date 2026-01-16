@@ -15,8 +15,8 @@ use marching_cubes::{
         },
         heightmap_compute_pipeline::GpuHeightmapGenerator,
         terrain::{
-            CLUSTER_SIZE, HALF_CHUNK, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainChunk,
-            generate_chunk_into_buffers,
+            CLUSTER_SIZE, HALF_CHUNK, NonUniformTerrainChunk, SAMPLES_PER_CHUNK,
+            SAMPLES_PER_CHUNK_DIM, generate_chunk_into_buffers,
         },
     },
 };
@@ -87,7 +87,7 @@ fn benchmark_marching_cubes(c: &mut Criterion) {
     let mut densities_buffer = [0; SAMPLES_PER_CHUNK];
     let mut materials_buffer = [0; SAMPLES_PER_CHUNK];
     let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
-    let uniformity = generate_chunk_into_buffers(
+    generate_chunk_into_buffers(
         &noise_function,
         first_sample_reuse,
         chunk_start,
@@ -95,15 +95,10 @@ fn benchmark_marching_cubes(c: &mut Criterion) {
         &mut materials_buffer,
         &mut heightmap_buffer,
     );
-    let chunk = TerrainChunk::new(
-        Arc::new(densities_buffer),
-        Arc::new(materials_buffer),
-        uniformity,
-    );
+    let chunk = NonUniformTerrainChunk::new(Arc::new(densities_buffer), Arc::new(materials_buffer));
     assert!(
         chunk_contains_surface(&chunk.densities),
-        "Chunk at {:?} should contain a surface",
-        chunk
+        "Chunk should contain a surface",
     );
     c.bench_function("marching_cubes", |b| {
         b.iter(|| {
@@ -126,7 +121,7 @@ fn benchmark_heightmap_single_chunk_cpu(c: &mut Criterion) {
     let mut densities_buffer = [0; SAMPLES_PER_CHUNK];
     let mut materials_buffer = [0; SAMPLES_PER_CHUNK];
     let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
-    let uniformity = generate_chunk_into_buffers(
+    generate_chunk_into_buffers(
         &noise_function,
         first_sample_reuse,
         chunk_start,
@@ -134,11 +129,7 @@ fn benchmark_heightmap_single_chunk_cpu(c: &mut Criterion) {
         &mut materials_buffer,
         &mut heightmap_buffer,
     );
-    let chunk = TerrainChunk::new(
-        Arc::new(densities_buffer),
-        Arc::new(materials_buffer),
-        uniformity,
-    );
+    let chunk = NonUniformTerrainChunk::new(Arc::new(densities_buffer), Arc::new(materials_buffer));
     assert!(
         chunk_contains_surface(&chunk.densities),
         "Chunk at {:?} should contain a surface",
