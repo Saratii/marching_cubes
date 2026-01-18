@@ -141,8 +141,6 @@ pub fn fill_voxel_densities(
     chunk_start: &Vec3,
     terrain_heights: &[f32],
 ) -> bool {
-    densities.fill(0);
-    materials.fill(0);
     let solid_threshold = quantize_f32_to_i16(-1.0);
     let mut is_uniform = true;
     let mut init_distance = 0;
