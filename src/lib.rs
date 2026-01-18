@@ -9,3 +9,4 @@ pub mod sparse_voxel_octree;
 pub mod ui;
 pub mod marching_cubes;
 pub mod settings;
+pub mod lighting;

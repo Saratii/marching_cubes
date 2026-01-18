@@ -22,6 +22,7 @@ use marching_cubes::data_loader::driver::{
     INITIAL_CHUNKS_LOADED, chunk_spawn_reciever, project_downward, setup_chunk_driver,
 };
 use marching_cubes::data_loader::file_loader::setup_chunk_loading;
+use marching_cubes::lighting::lighting_main::{setup_camera, setup_lighting};
 use marching_cubes::player::digging::handle_digging_input;
 use marching_cubes::player::player::{
     CameraController, KeyBindings, camera_look, camera_zoom, cursor_grab, initial_grab_cursor,
@@ -93,11 +94,13 @@ fn main() {
                 // generate_large_map_utility.after(setup_chunk_loading),
                 setup_map,
                 spawn_crosshair,
-                spawn_player.after(setup_chunk_loading),
+                spawn_player.after(setup_chunk_loading).after(setup_camera),
                 spawn_minimap.after(spawn_player),
                 initial_grab_cursor,
                 #[cfg(feature = "debug_lines")]
                 spawn_debug_spheres.after(spawn_player),
+                setup_lighting,
+                setup_camera,
             ),
         )
         .add_systems(
@@ -126,20 +129,6 @@ fn main() {
         .run();
 }
 
-fn setup(mut commands: Commands, mut ambient_light: ResMut<GlobalAmbientLight>) {
+fn setup(mut commands: Commands) {
     commands.spawn(PerfUiDefaultEntries::default());
-    commands.spawn((
-        DirectionalLight {
-            illuminance: 7000.0,
-            shadows_enabled: true,
-            ..default()
-        },
-        Transform::from_rotation(Quat::from_euler(
-            EulerRot::ZYX,
-            0.0,
-            1.0,
-            -std::f32::consts::FRAC_PI_4,
-        )),
-    ));
-    ambient_light.brightness = 400.0;
 }

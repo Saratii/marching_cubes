@@ -23,7 +23,7 @@ const CAMERA_3RD_PERSON_OFFSET: Vec3 = Vec3 {
 const PLAYER_SPEED: f32 = 5.0;
 pub const PLAYER_SPAWN: Vec3 = Vec3::new(0., 0., 0.);
 const PLAYER_CUBOID_SIZE: Vec3 = Vec3::new(0.5, 1.5, 0.5);
-const CAMERA_FIRST_PERSON_OFFSET: Vec3 = Vec3::new(0., 0.75 * PLAYER_CUBOID_SIZE.y, 0.);
+pub const CAMERA_FIRST_PERSON_OFFSET: Vec3 = Vec3::new(0., 0.75 * PLAYER_CUBOID_SIZE.y, 0.);
 const MIN_ZOOM_DISTANCE: f32 = 4.0;
 const MAX_ZOOM_DISTANCE: f32 = 2000.0;
 const MIN_ZOOM_SPEED: f32 = 0.5;
@@ -93,9 +93,9 @@ pub fn spawn_player(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    camera_controller: Res<CameraController>,
     mut player_data_file: ResMut<PlayerDataFile>,
     fbm: Res<NoiseFunction>,
+    main_camera: Single<Entity, With<MainCameraTag>>,
 ) {
     let player_spawn = match read_player_position(&mut player_data_file.0) {
         Some(pos) => pos,
@@ -120,10 +120,7 @@ pub fn spawn_player(
         alpha_mode: AlphaMode::Blend,
         ..default()
     });
-    let yaw_rotation = Quat::from_rotation_y(camera_controller.yaw);
-    let pitch_rotation = Quat::from_rotation_x(camera_controller.pitch);
-    let initial_rotation = yaw_rotation * pitch_rotation;
-    commands
+    let player = commands
         .spawn((
             Collider::cuboid(0.25, 0.75, 0.25),
             KinematicCharacterController {
@@ -141,17 +138,8 @@ pub fn spawn_player(
             VerticalVelocity { y: 0.0 },
             Visibility::Hidden,
         ))
-        .with_child((
-            Camera3d::default(),
-            Transform {
-                translation: CAMERA_FIRST_PERSON_OFFSET,
-                rotation: initial_rotation,
-                scale: Vec3::ONE,
-            },
-            Camera { ..default() },
-            IsDefaultUiCamera,
-            MainCameraTag,
-        ));
+        .id();
+    commands.entity(player).add_child(*main_camera);
 }
 
 pub fn toggle_camera(
