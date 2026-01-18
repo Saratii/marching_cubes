@@ -25,7 +25,7 @@ use crate::{
 };
 
 const DIG_STRENGTH: f32 = 0.5;
-const DIG_TIMER: f32 = 0.008; // seconds
+const DIG_TIMER: f32 = 0.004; // seconds
 const DIG_RADIUS: f32 = 2.0; // world space
 const DIG_RADIUS_SQUARED: f32 = DIG_RADIUS * DIG_RADIUS;
 
