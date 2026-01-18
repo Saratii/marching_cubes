@@ -23,14 +23,32 @@ use marching_cubes::{
 use std::{collections::HashMap, hint::black_box, sync::Arc};
 
 fn benchmark_generate_densities_cpu(c: &mut Criterion) {
+    let chunk_coord = (0, 2, 0);
     let noise_function =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
     let mut densities_buffer = [0; SAMPLES_PER_CHUNK];
     let mut materials_buffer = [0; SAMPLES_PER_CHUNK];
     let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
+    let chunk_start = calculate_chunk_start(&chunk_coord);
+    let first_sample_reuse = sample_fbm(&noise_function, chunk_start.x, chunk_start.z);
+    generate_chunk_into_buffers(
+        &noise_function,
+        first_sample_reuse,
+        black_box(chunk_start),
+        black_box(&mut densities_buffer),
+        black_box(&mut materials_buffer),
+        black_box(&mut heightmap_buffer),
+    );
+    assert!(
+        chunk_contains_surface(&densities_buffer),
+        "Chunk should contain a surface",
+    );
+    let mut densities_buffer = [0; SAMPLES_PER_CHUNK];
+    let mut materials_buffer = [0; SAMPLES_PER_CHUNK];
+    let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
     c.bench_function("generate_densities_cpu", |b| {
         b.iter(|| {
-            let chunk_start = calculate_chunk_start(&(0, 2, 0));
+            let chunk_start = calculate_chunk_start(&chunk_coord);
             let first_sample_reuse = sample_fbm(&noise_function, chunk_start.x, chunk_start.z);
             black_box(generate_chunk_into_buffers(
                 black_box(&noise_function),

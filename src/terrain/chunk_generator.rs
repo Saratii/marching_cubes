@@ -132,25 +132,31 @@ pub fn generate_terrain_heights(
     }
 }
 
+//optimized by first iterating over the boundary voxels to quickly determine uniformity
+//assumes that the surface passes through one of the chunk sides
+//will break if a "cave" is fully enclosed within the chunk
 pub fn fill_voxel_densities(
     densities: &mut [i16],
     materials: &mut [u8],
     chunk_start: &Vec3,
     terrain_heights: &[f32],
 ) -> bool {
+    densities.fill(0);
+    materials.fill(0);
     let solid_threshold = quantize_f32_to_i16(-1.0);
     let mut is_uniform = true;
     let mut init_distance = 0;
     let mut init_material = 0;
     let mut has_init = false;
-    for z in 0..SAMPLES_PER_CHUNK_DIM {
+    for z in [0, SAMPLES_PER_CHUNK_DIM - 1] {
         let height_base = z * SAMPLES_PER_CHUNK_DIM;
         let z_base = z * HEIGHT_MAP_GRID_SIZE;
         for y in 0..SAMPLES_PER_CHUNK_DIM {
             let world_y = chunk_start.y + y as f32 * VOXEL_SIZE;
             let below_sea = world_y < 0.0;
-            let mut rolling_voxel_index = z_base + y * SAMPLES_PER_CHUNK_DIM;
+            let base_rolling_voxel_index = z_base + y * SAMPLES_PER_CHUNK_DIM;
             for x in 0..SAMPLES_PER_CHUNK_DIM {
+                let rolling_voxel_index = base_rolling_voxel_index + x;
                 let terrain_height = terrain_heights[height_base + x];
                 let distance_to_surface =
                     quantize_f32_to_i16((world_y - terrain_height).clamp(-10.0, 10.0));
@@ -174,7 +180,115 @@ pub fn fill_voxel_densities(
                         is_uniform = false;
                     }
                 }
-                rolling_voxel_index += 1;
+            }
+        }
+    }
+    for z in 1..SAMPLES_PER_CHUNK_DIM - 1 {
+        let height_base = z * SAMPLES_PER_CHUNK_DIM;
+        let z_base = z * HEIGHT_MAP_GRID_SIZE;
+        for y in [0, SAMPLES_PER_CHUNK_DIM - 1] {
+            let world_y = chunk_start.y + y as f32 * VOXEL_SIZE;
+            let below_sea = world_y < 0.0;
+            let base_rolling_voxel_index = z_base + y * SAMPLES_PER_CHUNK_DIM;
+            for x in 0..SAMPLES_PER_CHUNK_DIM {
+                let rolling_voxel_index = base_rolling_voxel_index + x;
+                let terrain_height = terrain_heights[height_base + x];
+                let distance_to_surface =
+                    quantize_f32_to_i16((world_y - terrain_height).clamp(-10.0, 10.0));
+                densities[rolling_voxel_index] = distance_to_surface;
+                let mat = if distance_to_surface >= 0 {
+                    0 //air
+                } else if distance_to_surface < solid_threshold {
+                    1 //dirt
+                } else if below_sea {
+                    3 //sand
+                } else {
+                    2 //grass
+                };
+                materials[rolling_voxel_index] = mat;
+                if is_uniform {
+                    if !has_init {
+                        init_distance = distance_to_surface;
+                        init_material = mat;
+                        has_init = true;
+                    } else if init_distance != distance_to_surface || init_material != mat {
+                        is_uniform = false;
+                    }
+                }
+            }
+        }
+    }
+    for z in 1..SAMPLES_PER_CHUNK_DIM - 1 {
+        let height_base = z * SAMPLES_PER_CHUNK_DIM;
+        let z_base = z * HEIGHT_MAP_GRID_SIZE;
+        for y in 1..SAMPLES_PER_CHUNK_DIM - 1 {
+            let world_y = chunk_start.y + y as f32 * VOXEL_SIZE;
+            let below_sea = world_y < 0.0;
+            let base_rolling_voxel_index = z_base + y * SAMPLES_PER_CHUNK_DIM;
+            for x in [0, SAMPLES_PER_CHUNK_DIM - 1] {
+                let rolling_voxel_index = base_rolling_voxel_index + x;
+                let terrain_height = terrain_heights[height_base + x];
+                let distance_to_surface =
+                    quantize_f32_to_i16((world_y - terrain_height).clamp(-10.0, 10.0));
+                densities[rolling_voxel_index] = distance_to_surface;
+                let mat = if distance_to_surface >= 0 {
+                    0 //air
+                } else if distance_to_surface < solid_threshold {
+                    1 //dirt
+                } else if below_sea {
+                    3 //sand
+                } else {
+                    2 //grass
+                };
+                materials[rolling_voxel_index] = mat;
+                if is_uniform {
+                    if !has_init {
+                        init_distance = distance_to_surface;
+                        init_material = mat;
+                        has_init = true;
+                    } else if init_distance != distance_to_surface || init_material != mat {
+                        is_uniform = false;
+                    }
+                }
+            }
+        }
+    }
+    if is_uniform {
+        return is_uniform;
+    } else {
+        for z in 1..SAMPLES_PER_CHUNK_DIM - 1 {
+            let height_base = z * SAMPLES_PER_CHUNK_DIM;
+            let z_base = z * HEIGHT_MAP_GRID_SIZE;
+            for y in 1..SAMPLES_PER_CHUNK_DIM - 1 {
+                let world_y = chunk_start.y + y as f32 * VOXEL_SIZE;
+                let below_sea = world_y < 0.0;
+                let base_rolling_voxel_index = z_base + y * SAMPLES_PER_CHUNK_DIM;
+                for x in 1..SAMPLES_PER_CHUNK_DIM - 1 {
+                    let rolling_voxel_index = base_rolling_voxel_index + x;
+                    let terrain_height = terrain_heights[height_base + x];
+                    let distance_to_surface =
+                        quantize_f32_to_i16((world_y - terrain_height).clamp(-10.0, 10.0));
+                    densities[rolling_voxel_index] = distance_to_surface;
+                    let mat = if distance_to_surface >= 0 {
+                        0 //air
+                    } else if distance_to_surface < solid_threshold {
+                        1 //dirt
+                    } else if below_sea {
+                        3 //sand
+                    } else {
+                        2 //grass
+                    };
+                    materials[rolling_voxel_index] = mat;
+                    if is_uniform {
+                        if !has_init {
+                            init_distance = distance_to_surface;
+                            init_material = mat;
+                            has_init = true;
+                        } else if init_distance != distance_to_surface || init_material != mat {
+                            is_uniform = false;
+                        }
+                    }
+                }
             }
         }
     }
@@ -192,3 +306,67 @@ pub fn quantize_f32_to_i16(value: f32) -> i16 {
 pub fn dequantize_i16_to_f32(q: i16) -> f32 {
     q as f32 / SCALE
 }
+
+// #[cfg(test)]
+// mod tests {
+//     use fastnoise2::generator::{Generator, simplex::opensimplex2};
+
+//     use super::*;
+
+//     #[test]
+//     fn test_generate_densities() {
+//         let noise_function = || -> GeneratorWrapper<SafeNode> {
+//             (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build()
+//         }();
+//         let mut densities_buffer = [0; SAMPLES_PER_CHUNK];
+//         let mut materials_buffer = [0; SAMPLES_PER_CHUNK];
+//         let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
+//         let chunk_start = (-10, -100, -10);
+//         let chunk_end = (10, 100, 10);
+//         for chunk_x in chunk_start.0..chunk_end.0 {
+//             for chunk_y in chunk_start.1..chunk_end.1 {
+//                 for chunk_z in chunk_start.2..chunk_end.2 {
+//                     let chunk_coord = (chunk_x, chunk_y, chunk_z);
+//                     let chunk_start = calculate_chunk_start(&chunk_coord);
+//                     let first_sample_reuse =
+//                         sample_fbm(&noise_function, chunk_start.x, chunk_start.z);
+//                     generate_terrain_heights(
+//                         chunk_start.x,
+//                         chunk_start.z,
+//                         &noise_function,
+//                         first_sample_reuse,
+//                         &mut heightmap_buffer,
+//                     );
+//                     let is_uniform = fill_voxel_densities(
+//                         &mut densities_buffer,
+//                         &mut materials_buffer,
+//                         &chunk_start,
+//                         &heightmap_buffer,
+//                     );
+//                     let densities = densities_buffer.clone();
+//                     let materials = materials_buffer.clone();
+//                     let is_uniform_2 = fill_voxel_densities_faster(
+//                         &mut densities_buffer,
+//                         &mut materials_buffer,
+//                         &chunk_start,
+//                         &heightmap_buffer,
+//                     );
+//                     if is_uniform != is_uniform_2 || materials[0] != materials_buffer[0] {
+//                         panic!(
+//                             "Mismatch in uniformity at chunk {:?}: {} vs {}",
+//                             chunk_coord, is_uniform, is_uniform_2
+//                         );
+//                     }
+//                     if !is_uniform {
+//                         if densities != densities_buffer {
+//                             panic!("Mismatch in densities at chunk {:?}", chunk_coord);
+//                         }
+//                         if materials != materials_buffer {
+//                             panic!("Mismatch in materials at chunk {:?}", chunk_coord);
+//                         }
+//                     }
+//                 }
+//             }
+//         }
+//     }
+// }

@@ -14,7 +14,7 @@ use crate::player::player::{CAMERA_FIRST_PERSON_OFFSET, MainCameraTag};
 pub fn setup_lighting(mut commands: Commands) {
     commands.spawn((
         DirectionalLight {
-            illuminance: 20000.,
+            illuminance: 80000.,
             shadows_enabled: true,
             ..default()
         },

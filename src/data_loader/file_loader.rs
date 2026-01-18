@@ -163,11 +163,23 @@ pub fn load_uniform_chunks(f: &mut File) -> (FxHashSet<(i16, i16, i16)>, VecDequ
         if b == TOMBSTONE_BYTES {
             free_slots.push_back(offset);
         } else {
-            uniform_chunks.insert((
+            let coord = (
                 i16::from_le_bytes([b[0], b[1]]),
                 i16::from_le_bytes([b[2], b[3]]),
                 i16::from_le_bytes([b[4], b[5]]),
-            ));
+            );
+            #[cfg(feature = "debug")]
+            {
+                let result = uniform_chunks.insert(coord);
+                if !result {
+                    println!(
+                        "Warning: duplicate uniform chunk entry found in uniform chunks file at offset {}: {:?}",
+                        offset, coord
+                    );
+                }
+            }
+            #[cfg(not(feature = "debug"))]
+            uniform_chunks.insert(coord);
         }
     }
     (uniform_chunks, free_slots)
@@ -179,7 +191,7 @@ pub fn write_uniform_chunk(
     f: &mut File,
     free_slots: &mut VecDeque<u64>,
 ) {
-    let mut buffer = [0u8; 6];
+    let mut buffer = [0; 6];
     buffer[..2].copy_from_slice(&chunk_coord.0.to_le_bytes());
     buffer[2..4].copy_from_slice(&chunk_coord.1.to_le_bytes());
     buffer[4..6].copy_from_slice(&chunk_coord.2.to_le_bytes());
@@ -199,8 +211,8 @@ pub fn remove_uniform_chunk(
     free_uniform_slots: &mut VecDeque<u64>,
 ) {
     f.seek(SeekFrom::Start(0)).unwrap();
-    let mut buffer = [0u8; 6];
-    let mut offset = 0u64;
+    let mut buffer = [0; 6];
+    let mut offset = 0;
     while let Ok(_) = f.read_exact(&mut buffer) {
         if buffer != TOMBSTONE_BYTES {
             let x = i16::from_le_bytes([buffer[0], buffer[1]]);

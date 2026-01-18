@@ -96,6 +96,7 @@ pub struct ChunkSpawnReciever(Receiver<ChunkSpawnResult>);
 
 //level 0: full detail, returns TerrainChunk and collider
 //level n: full/(2^n) detail, no persistant data besides mesh
+#[derive(Debug)]
 pub struct ChunkRequest {
     pub position: (i16, i16, i16),
     pub load_status: u8,
@@ -209,6 +210,8 @@ pub fn setup_chunk_driver(
         index_map_read.len(),
         t0.elapsed().as_millis()
     );
+    let uniform_air_set = uniform_air_chunks.as_ref().clone();
+    let uniform_dirt_set = uniform_dirt_chunks.as_ref().clone();
     thread::spawn(move || {
         dedicated_write_thread(
             write_rx,
@@ -220,6 +223,8 @@ pub fn setup_chunk_driver(
             empty_air_offsets,
             empty_dirt_offsets,
             index_map_read_arc,
+            uniform_air_set,
+            uniform_dirt_set,
         );
     });
     let priority_queue = Arc::new((Mutex::new(BinaryHeap::new()), Condvar::new()));
@@ -263,8 +268,6 @@ pub fn setup_chunk_driver(
             player_translation_arc,
             chunk_spawn_sender,
             svo,
-            Arc::clone(&uniform_air_chunks),
-            Arc::clone(&uniform_dirt_chunks),
             priority_queue,
             terrain_chunk_map_arc,
             terrain_chunk_map_insert_reciever,
@@ -284,6 +287,8 @@ fn dedicated_write_thread(
     mut air_empty_offsets: VecDeque<u64>,
     mut dirt_empty_offsets: VecDeque<u64>,
     chunk_index_map_read: Arc<FxHashMap<(i16, i16, i16), u64>>,
+    mut uniform_air_set: FxHashSet<(i16, i16, i16)>, //track locally to avoid duplicate writes
+    mut uniform_dirt_set: FxHashSet<(i16, i16, i16)>, //these are real time sets whereas thee worker thread sets are initial snapshots. It may be worth using the arc here and storing a delta instead
 ) {
     let mut chunk_write_reuse = Vec::with_capacity(14); //sizeof (i16, i16, i16, u64)
     let mut serial_buffer = [0; CHUNK_SERIALIZED_SIZE];
@@ -326,16 +331,24 @@ fn dedicated_write_thread(
                 }
             }
             WriteCmd::WriteUniformAir { coord } => {
-                write_uniform_chunk(&coord, &mut air_file, &mut air_empty_offsets);
+                if !uniform_air_set.contains(&coord) {
+                    write_uniform_chunk(&coord, &mut air_file, &mut air_empty_offsets);
+                    uniform_air_set.insert(coord);
+                }
             }
             WriteCmd::WriteUniformDirt { coord } => {
-                write_uniform_chunk(&coord, &mut dirt_file, &mut dirt_empty_offsets);
+                if !uniform_dirt_set.contains(&coord) {
+                    write_uniform_chunk(&coord, &mut dirt_file, &mut dirt_empty_offsets);
+                    uniform_dirt_set.insert(coord);
+                }
             }
             WriteCmd::RemoveUniformAir { coord } => {
                 remove_uniform_chunk(&coord, &mut air_file, &mut air_empty_offsets);
+                uniform_air_set.remove(&coord);
             }
             WriteCmd::RemoveUniformDirt { coord } => {
                 remove_uniform_chunk(&coord, &mut dirt_file, &mut dirt_empty_offsets);
+                uniform_dirt_set.remove(&coord);
             }
         }
     }
@@ -478,6 +491,7 @@ fn chunk_loader_thread(
                                                 .unwrap();
                                         }
                                         Uniformity::Dirt => {
+                                            //send even if the write could be a duplicate and handle later
                                             write_sender
                                                 .send(WriteCmd::WriteUniformDirt {
                                                     coord: chunk_coord,
@@ -511,7 +525,13 @@ fn chunk_loader_thread(
                                             .send((chunk_coord, terrain_chunk))
                                             .unwrap();
                                     }
-                                    chunk_contains_surface(&density_buffer)
+                                    let has_surface = match uniformity {
+                                        Uniformity::Air | Uniformity::Dirt => false,
+                                        Uniformity::NonUniform => {
+                                            chunk_contains_surface(&density_buffer) //must not call on a potentially corrupted buffer from uniform generation
+                                        }
+                                    };
+                                    has_surface
                                 }
                             }
                         };
@@ -621,8 +641,6 @@ fn svo_manager_thread(
     player_translation: Arc<Mutex<Vec3>>,
     chunk_spawn_channel: Sender<ChunkSpawnResult>,
     mut svo: ChunkSvo,
-    uniform_air_chunks_read_only: Arc<FxHashSet<(i16, i16, i16)>>,
-    uniform_dirt_chunks_read_only: Arc<FxHashSet<(i16, i16, i16)>>,
     priority_queue: Arc<(Mutex<BinaryHeap<ChunkRequest>>, Condvar)>,
     terrain_chunk_map: Arc<Mutex<FxHashMap<(i16, i16, i16), TerrainChunk>>>,
     terrain_chunk_map_insert_reciever: Receiver<((i16, i16, i16), TerrainChunk)>,
@@ -643,75 +661,14 @@ fn svo_manager_thread(
         &mut chunks_being_loaded,
         &mut request_buffer,
     );
-    let mut pending_requests = Vec::new();
-    let mut uniform_stuff = [Uniformity::Air; CLUSTER_SIZE * CLUSTER_SIZE * CLUSTER_SIZE];
-    for request in request_buffer.drain(..) {
-        let mut uniform_len = 0;
-        //dont send uniform clusters
-        let min_chunk = cluster_coord_to_min_chunk_coord(&request.position);
-        let mut all_uniform = true;
-        for chunk_x in min_chunk.0..min_chunk.0 + CLUSTER_SIZE as i16 {
-            for chunk_y in min_chunk.1..min_chunk.1 + CLUSTER_SIZE as i16 {
-                for chunk_z in min_chunk.2..min_chunk.2 + CLUSTER_SIZE as i16 {
-                    let chunk_coord = (chunk_x, chunk_y, chunk_z);
-                    //first search the read only without locking
-                    let is_uniform_air = uniform_air_chunks_read_only.contains(&chunk_coord);
-                    let is_uniform_dirt = if is_uniform_air {
-                        false
-                    } else {
-                        uniform_dirt_chunks_read_only.contains(&chunk_coord)
-                    };
-                    if !is_uniform_air && !is_uniform_dirt {
-                        all_uniform = false;
-                    } else if is_uniform_air {
-                        uniform_stuff[uniform_len] = Uniformity::Air;
-                        uniform_len += 1;
-                    } else if is_uniform_dirt {
-                        uniform_stuff[uniform_len] = Uniformity::Dirt;
-                        uniform_len += 1;
-                    }
-                }
-            }
-        }
-        if all_uniform {
-            svo.root.insert(
-                request.position,
-                request.load_status,
-                [false; CLUSTER_SIZE * CLUSTER_SIZE * CLUSTER_SIZE],
-            );
-            chunks_being_loaded.remove(&request.position);
-            if request.load_status == 0 {
-                let mut map = terrain_chunk_map.lock().unwrap();
-                let mut idx = 0;
-                for chunk_x in min_chunk.0..min_chunk.0 + CLUSTER_SIZE as i16 {
-                    for chunk_y in min_chunk.1..min_chunk.1 + CLUSTER_SIZE as i16 {
-                        for chunk_z in min_chunk.2..min_chunk.2 + CLUSTER_SIZE as i16 {
-                            let chunk_coord = (chunk_x, chunk_y, chunk_z);
-                            map.entry(chunk_coord)
-                                .or_insert_with(|| match uniform_stuff[idx] {
-                                    Uniformity::Air => TerrainChunk::UniformAir,
-                                    Uniformity::Dirt => TerrainChunk::UniformDirt,
-                                    Uniformity::NonUniform => unreachable!(),
-                                });
-                            idx += 1;
-                        }
-                    }
-                }
-            }
-        } else {
-            pending_requests.push(request);
+    let (lock, cv) = &*priority_queue;
+    {
+        let mut heap = lock.lock().unwrap();
+        for req in request_buffer.drain(..) {
+            heap.push(req);
         }
     }
-    if !pending_requests.is_empty() {
-        let (lock, cv) = &*priority_queue;
-        {
-            let mut heap = lock.lock().unwrap();
-            for req in pending_requests.drain(..) {
-                heap.push(req);
-            }
-        }
-        cv.notify_all();
-    }
+    cv.notify_all();
     loop {
         //get z0 chunk allocations from loader threads and insert them
         let mut terrain_map_lock = terrain_chunk_map.lock().unwrap();
@@ -761,74 +718,14 @@ fn svo_manager_thread(
             &mut chunks_being_loaded,
             &mut request_buffer,
         );
-        for request in request_buffer.drain(..) {
-            let mut uniform_len = 0;
-            //dont send uniform clusters
-            let min_chunk = cluster_coord_to_min_chunk_coord(&request.position);
-            let mut all_uniform = true;
-            for chunk_x in min_chunk.0..min_chunk.0 + CLUSTER_SIZE as i16 {
-                for chunk_y in min_chunk.1..min_chunk.1 + CLUSTER_SIZE as i16 {
-                    for chunk_z in min_chunk.2..min_chunk.2 + CLUSTER_SIZE as i16 {
-                        let chunk_coord = (chunk_x, chunk_y, chunk_z);
-                        //first search the read only without locking
-                        let is_uniform_air = uniform_air_chunks_read_only.contains(&chunk_coord);
-                        let is_uniform_dirt = if is_uniform_air {
-                            false
-                        } else {
-                            uniform_dirt_chunks_read_only.contains(&chunk_coord)
-                        };
-                        if !is_uniform_air && !is_uniform_dirt {
-                            all_uniform = false;
-                        } else if is_uniform_air {
-                            uniform_stuff[uniform_len] = Uniformity::Air;
-                            uniform_len += 1;
-                        } else if is_uniform_dirt {
-                            uniform_stuff[uniform_len] = Uniformity::Dirt;
-                            uniform_len += 1;
-                        }
-                    }
-                }
-            }
-            if all_uniform {
-                svo.root.insert(
-                    request.position,
-                    request.load_status,
-                    [false; CLUSTER_SIZE * CLUSTER_SIZE * CLUSTER_SIZE],
-                );
-                chunks_being_loaded.remove(&request.position);
-                if request.load_status == 0 {
-                    let mut map = terrain_chunk_map.lock().unwrap();
-                    let mut idx = 0;
-                    for chunk_x in min_chunk.0..min_chunk.0 + CLUSTER_SIZE as i16 {
-                        for chunk_y in min_chunk.1..min_chunk.1 + CLUSTER_SIZE as i16 {
-                            for chunk_z in min_chunk.2..min_chunk.2 + CLUSTER_SIZE as i16 {
-                                let chunk_coord = (chunk_x, chunk_y, chunk_z);
-                                map.entry(chunk_coord).or_insert_with(|| {
-                                    match uniform_stuff[idx] {
-                                        Uniformity::Air => TerrainChunk::UniformAir,
-                                        Uniformity::Dirt => TerrainChunk::UniformDirt,
-                                        Uniformity::NonUniform => unreachable!(),
-                                    }
-                                });
-                                idx += 1;
-                            }
-                        }
-                    }
-                }
-            } else {
-                pending_requests.push(request);
+        let (lock, cv) = &*priority_queue;
+        {
+            let mut heap = lock.lock().unwrap();
+            for req in request_buffer.drain(..) {
+                heap.push(req);
             }
         }
-        if !pending_requests.is_empty() {
-            let (lock, cv) = &*priority_queue;
-            {
-                let mut heap = lock.lock().unwrap();
-                for req in pending_requests.drain(..) {
-                    heap.push(req);
-                }
-            }
-            cv.notify_all();
-        }
+        cv.notify_all();
         #[cfg(feature = "timers")]
         {
             if !first_completion_printed && chunks_being_loaded.is_empty() {
