@@ -101,7 +101,7 @@ pub fn spawn_player(
         Some(pos) => pos,
         None => Vec3::new(
             PLAYER_SPAWN.x,
-            sample_fbm(&fbm.0, PLAYER_SPAWN.x, PLAYER_SPAWN.z) + 2.0,
+            sample_fbm(&fbm.0, PLAYER_SPAWN.x, PLAYER_SPAWN.z) + 20.0,
             PLAYER_SPAWN.z,
         ),
     };

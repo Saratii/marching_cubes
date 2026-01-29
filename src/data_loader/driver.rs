@@ -183,8 +183,7 @@ pub fn setup_chunk_driver(
         t0.elapsed().as_millis()
     );
     let uniform_dirt_chunks = Arc::new(uniform_dirt_chunks);
-    let fbm =
-        || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
+    let fbm = || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.5, 0.5, 1, 2.0)).build() }();
     commands.insert_resource(NoiseGenerator(fbm.clone()));
     let (write_tx, write_rx) = crossbeam_channel::unbounded();
     let index_map_delta_arc = Arc::clone(&index_map_delta);
