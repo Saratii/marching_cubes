@@ -2,7 +2,7 @@ use crate::terrain::terrain::SAMPLES_PER_CHUNK;
 use bevy::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
-use std::fs::{File, OpenOptions};
+use std::fs::{File, OpenOptions, create_dir_all};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -131,6 +131,7 @@ pub fn get_project_root() -> PathBuf {
 
 pub fn setup_chunk_loading(mut commands: Commands) {
     let root = get_project_root();
+    create_dir_all(root.join("data")).expect("Failed to create data directory");
     commands.insert_resource(ChunkEntityMap {
         0: FxHashMap::default(),
     }); //store entities on the main thread

@@ -8,7 +8,7 @@ use bevy::diagnostic::{
 use bevy::image::ImageSamplerDescriptor;
 use bevy::pbr::{ExtendedMaterial, PbrPlugin};
 use bevy::prelude::*;
-use bevy::window::PresentMode;
+use bevy::window::{PresentMode, WindowMode};
 use bevy::winit::{UpdateMode, WinitSettings};
 use bevy_rapier3d::plugin::{NoUserData, PhysicsSet, RapierPhysicsPlugin};
 // use bevy_rapier3d::render::RapierDebugRenderPlugin;
@@ -25,29 +25,38 @@ use marching_cubes::data_loader::file_loader::setup_chunk_loading;
 use marching_cubes::lighting::lighting_main::{setup_camera, setup_lighting};
 use marching_cubes::player::digging::handle_digging_input;
 use marching_cubes::player::player::{
-    CameraController, KeyBindings, camera_look, camera_zoom, cursor_grab, initial_grab_cursor,
-    player_movement, spawn_player, sync_player_mutex, toggle_camera,
+    CameraController, KeyBindings, camera_look, camera_zoom, grab_on_click, handle_focus_change,
+    initial_grab_cursor, player_movement, spawn_player, sync_player_mutex, toggle_camera,
 };
 use marching_cubes::settings::settings_driver::{load_settings, save_monitor_on_move};
 use marching_cubes::terrain::terrain::{NoiseFunction, setup_map};
 use marching_cubes::terrain::terrain_material::TerrainMaterialExtension;
+use marching_cubes::ui::configurable_settings::{FpsLimit, load_configurable_settings};
 use marching_cubes::ui::crosshair::spawn_crosshair;
 #[cfg(feature = "debug_lines")]
 use marching_cubes::ui::debug_lines::{
     draw_cluster_debug, draw_collider_debug, spawn_debug_spheres, update_debug_sphere_positions,
 };
+use marching_cubes::ui::menu::{menu_toggle, menu_update};
 use marching_cubes::ui::minimap::spawn_minimap;
 
 fn main() {
-    let settings = load_settings();
+    let settings = load_settings(); //automatically saved state
+    let configurable_settings = load_configurable_settings(); //user saved state
     let window_centered_position = settings.window_centered_position;
+    let update_mode = match configurable_settings.fps_limit {
+        FpsLimit::Fps60 => UpdateMode::reactive_low_power(Duration::from_secs_f64(1.0 / 60.0)),
+        FpsLimit::Fps120 => UpdateMode::reactive_low_power(Duration::from_secs_f64(1.0 / 120.0)),
+        FpsLimit::Unlimited => UpdateMode::Continuous,
+    };
     App::new()
         .insert_resource(settings)
+        .insert_resource(configurable_settings)
         .insert_resource(KeyBindings::default())
         .insert_resource(CameraController::default())
         .insert_resource(WinitSettings {
-            focused_mode: UpdateMode::reactive_low_power(Duration::from_secs_f64(1.0 / 240.0)),
-            unfocused_mode: UpdateMode::reactive_low_power(Duration::from_secs_f64(1.0 / 240.0)),
+            focused_mode: update_mode,
+            unfocused_mode: update_mode,
         })
         .insert_resource(NoiseFunction(|| -> GeneratorWrapper<SafeNode> {
             (opensimplex2().fbm(1.0, 0.65, 3, 2.2)).build()
@@ -57,7 +66,7 @@ fn main() {
                 .set(WindowPlugin {
                     primary_window: Some(Window {
                         present_mode: PresentMode::AutoNoVsync,
-                        resolution: (1600, 720).into(),
+                        mode: WindowMode::BorderlessFullscreen(MonitorSelection::Primary),
                         position: window_centered_position
                             .map(WindowPosition::At)
                             .unwrap_or(WindowPosition::Automatic),
@@ -109,7 +118,6 @@ fn main() {
                 handle_digging_input,
                 toggle_camera,
                 camera_zoom,
-                cursor_grab,
                 camera_look,
                 player_movement,
                 sync_player_mutex.after(player_movement),
@@ -124,6 +132,10 @@ fn main() {
                 draw_cluster_debug,
                 #[cfg(feature = "debug_lines")]
                 draw_collider_debug,
+                menu_toggle,
+                menu_update,
+                handle_focus_change,
+                grab_on_click,
             ),
         )
         .run();

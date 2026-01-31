@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, atomic::Ordering};
 use bevy::{
     input::mouse::{MouseMotion, MouseWheel},
     prelude::*,
-    window::{CursorGrabMode, CursorOptions, PrimaryWindow},
+    window::{CursorGrabMode, CursorOptions, PrimaryWindow, WindowFocused},
 };
 use bevy_rapier3d::prelude::*;
 
@@ -73,7 +73,6 @@ pub struct KeyBindings {
     pub move_left: KeyCode,
     pub move_right: KeyCode,
     pub jump: KeyCode,
-    pub toggle_grab_cursor: KeyCode,
 }
 
 impl Default for KeyBindings {
@@ -84,7 +83,6 @@ impl Default for KeyBindings {
             move_left: KeyCode::KeyA,
             move_right: KeyCode::KeyD,
             jump: KeyCode::Space,
-            toggle_grab_cursor: KeyCode::Escape,
         }
     }
 }
@@ -252,17 +250,6 @@ pub fn initial_grab_cursor(
     toggle_grab_cursor(&mut primary_cursor_options, &mut camera_controller);
 }
 
-pub fn cursor_grab(
-    keys: Res<ButtonInput<KeyCode>>,
-    key_bindings: Res<KeyBindings>,
-    mut primary_cursor_options: Single<&mut CursorOptions, With<PrimaryWindow>>,
-    mut camera_controller: ResMut<CameraController>,
-) {
-    if keys.just_pressed(key_bindings.toggle_grab_cursor) {
-        toggle_grab_cursor(&mut primary_cursor_options, &mut camera_controller);
-    }
-}
-
 pub fn player_movement(
     time: Res<Time>,
     mut player: Single<
@@ -322,5 +309,39 @@ pub fn sync_player_mutex(
     if *player_transform_lock != player_transform.translation {
         *player_transform_lock = player_transform.translation;
         write_player_position(&mut player_data_file.0, *player_transform_lock);
+    }
+}
+
+pub fn handle_focus_change(
+    mut focus_events: MessageReader<WindowFocused>,
+    mut primary_cursor_options: Single<&mut CursorOptions, With<PrimaryWindow>>,
+    mut camera_controller: ResMut<CameraController>,
+) {
+    for event in focus_events.read() {
+        if event.focused {
+            println!("gained focus");
+            camera_controller.is_cursor_grabbed = true;
+            primary_cursor_options.grab_mode = CursorGrabMode::Confined;
+        } else {
+            println!("lost focus");
+            camera_controller.is_cursor_grabbed = false;
+            primary_cursor_options.grab_mode = CursorGrabMode::None;
+        }
+    }
+}
+
+pub fn grab_on_click(
+    mouse_button: Res<ButtonInput<MouseButton>>,
+    mut primary_cursor_options: Single<&mut CursorOptions, With<PrimaryWindow>>,
+    mut camera_controller: ResMut<CameraController>,
+    window_focused: Single<&Window, With<PrimaryWindow>>,
+) {
+    if mouse_button.just_pressed(MouseButton::Left)
+        && window_focused.focused
+        && !camera_controller.is_cursor_grabbed
+    {
+        primary_cursor_options.grab_mode = CursorGrabMode::Confined;
+        primary_cursor_options.visible = false;
+        camera_controller.is_cursor_grabbed = true;
     }
 }
