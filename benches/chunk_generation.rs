@@ -1,9 +1,6 @@
 use bevy::math::Vec3;
 use criterion::{Criterion, criterion_group, criterion_main};
-use fastnoise2::{
-    SafeNode,
-    generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
-};
+
 use marching_cubes::{
     conversions::{chunk_coord_to_cluster_coord, world_pos_to_chunk_coord},
     marching_cubes::mc::mc_mesh_generation,
@@ -11,7 +8,7 @@ use marching_cubes::{
         chunk_compute_pipeline::GpuTerrainGenerator,
         chunk_generator::{
             HEIGHT_MAP_GRID_SIZE, calculate_chunk_start, chunk_contains_surface,
-            generate_terrain_heights,
+            generate_terrain_heights, get_fbm,
         },
         heightmap_compute_pipeline::GpuHeightmapGenerator,
         terrain::{
@@ -24,8 +21,7 @@ use std::{collections::HashMap, hint::black_box};
 
 fn benchmark_generate_densities_cpu(c: &mut Criterion) {
     let chunk_coord = find_chunk_with_surface();
-    let fbm =
-        || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
+    let fbm = get_fbm();
     let mut densities_buffer = [0; SAMPLES_PER_CHUNK];
     let mut materials_buffer = [0; SAMPLES_PER_CHUNK];
     let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
@@ -44,8 +40,7 @@ fn benchmark_generate_densities_cpu(c: &mut Criterion) {
 }
 
 fn benchmark_generate_uniform_densities_cpu(c: &mut Criterion) {
-    let fbm =
-        || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
+    let fbm = get_fbm();
     let mut densities_buffer = [0; SAMPLES_PER_CHUNK];
     let mut materials_buffer = [0; SAMPLES_PER_CHUNK];
     let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
@@ -77,8 +72,7 @@ fn benchmark_generate_densities_gpu(c: &mut Criterion) {
 
 fn benchmark_marching_cubes(c: &mut Criterion) {
     let chunk = find_chunk_with_surface();
-    let fbm =
-        || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
+    let fbm = get_fbm();
     let chunk_start = calculate_chunk_start(&chunk);
     let mut densities_buffer = [0; SAMPLES_PER_CHUNK];
     let mut materials_buffer = [0; SAMPLES_PER_CHUNK];
@@ -104,8 +98,7 @@ fn benchmark_marching_cubes(c: &mut Criterion) {
 
 fn benchmark_heightmap_single_chunk_cpu(c: &mut Criterion) {
     let chunk_coord = (0, 0, 0);
-    let fbm =
-        || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
+    let fbm = get_fbm();
     let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
     let chunk_start = calculate_chunk_start(&chunk_coord);
     c.bench_function("heightmap_single_cpu", |b| {
@@ -131,8 +124,7 @@ fn benchmark_heightmap_single_chunk_gpu(c: &mut Criterion) {
 }
 
 fn benchmark_cluster_heightmap_cpu(c: &mut Criterion) {
-    let fbm =
-        || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
+    let fbm = get_fbm();
     let chunk = world_pos_to_chunk_coord(&Vec3::ZERO);
     let cluster = chunk_coord_to_cluster_coord(&chunk);
     let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
@@ -190,8 +182,7 @@ fn find_chunk_with_surface() -> (i16, i16, i16) {
     let mut densities_buffer = [0; SAMPLES_PER_CHUNK];
     let mut materials_buffer = [0; SAMPLES_PER_CHUNK];
     let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
-    let fbm =
-        || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
+    let fbm = get_fbm();
     for chunk_y in -10..10 {
         let chunk_coord = (0, chunk_y, 0);
         let chunk_start = calculate_chunk_start(&chunk_coord);

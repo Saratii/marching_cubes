@@ -6,15 +6,14 @@ use bevy::diagnostic::{
     EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin, SystemInformationDiagnosticsPlugin,
 };
 use bevy::image::ImageSamplerDescriptor;
+use bevy::mesh::VertexAttributeValues;
 use bevy::pbr::{ExtendedMaterial, PbrPlugin};
 use bevy::prelude::*;
+use bevy::render::diagnostic::RenderDiagnosticsPlugin;
 use bevy::window::{PresentMode, WindowMode};
 use bevy::winit::{UpdateMode, WinitSettings};
 use bevy_rapier3d::plugin::{NoUserData, PhysicsSet, RapierPhysicsPlugin};
 // use bevy_rapier3d::render::RapierDebugRenderPlugin;
-use fastnoise2::SafeNode;
-use fastnoise2::generator::simplex::opensimplex2;
-use fastnoise2::generator::{Generator, GeneratorWrapper};
 use iyes_perf_ui::PerfUiPlugin;
 use iyes_perf_ui::prelude::PerfUiDefaultEntries;
 
@@ -29,6 +28,7 @@ use marching_cubes::player::player::{
     initial_grab_cursor, player_movement, spawn_player, sync_player_mutex, toggle_camera,
 };
 use marching_cubes::settings::settings_driver::{load_settings, save_monitor_on_move};
+use marching_cubes::terrain::chunk_generator::get_fbm;
 use marching_cubes::terrain::terrain::{NoiseFunction, setup_map};
 use marching_cubes::terrain::terrain_material::TerrainMaterialExtension;
 use marching_cubes::ui::configurable_settings::{FpsLimit, load_configurable_settings};
@@ -58,9 +58,7 @@ fn main() {
             focused_mode: update_mode,
             unfocused_mode: update_mode,
         })
-        .insert_resource(NoiseFunction(|| -> GeneratorWrapper<SafeNode> {
-            (opensimplex2().fbm(1.0, 0.65, 3, 2.2)).build()
-        }()))
+        .insert_resource(NoiseFunction(get_fbm()))
         .add_plugins((
             DefaultPlugins
                 .set(WindowPlugin {
@@ -92,8 +90,10 @@ fn main() {
             RapierPhysicsPlugin::<NoUserData>::default(),
             MaterialPlugin::<ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>>::default(
             ),
+            // LogDiagnosticsPlugin::default(),
             // RapierDebugRenderPlugin::default(),
         ))
+        .add_plugins(RenderDiagnosticsPlugin::default())
         .add_systems(
             Startup,
             (
@@ -136,6 +136,7 @@ fn main() {
                 menu_update,
                 handle_focus_change,
                 grab_on_click,
+                count_vertices_on_key,
             ),
         )
         .run();
@@ -143,4 +144,40 @@ fn main() {
 
 fn setup(mut commands: Commands) {
     commands.spawn(PerfUiDefaultEntries::default());
+}
+
+fn count_vertices_on_key(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    meshes: Res<Assets<Mesh>>,
+    query: Query<&Mesh3d>,
+) {
+    if keyboard.just_pressed(KeyCode::KeyL) {
+        let mut total_vertices = 0;
+        let mut total_triangles = 0;
+        let mut mesh_count = 0;
+
+        for mesh_handle in query.iter() {
+            if let Some(mesh) = meshes.get(mesh_handle) {
+                mesh_count += 1;
+
+                // Count vertices
+                if let Some(VertexAttributeValues::Float32x3(positions)) =
+                    mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+                {
+                    total_vertices += positions.len();
+                }
+
+                // Count triangles
+                if let Some(indices) = mesh.indices() {
+                    total_triangles += indices.len() / 3;
+                }
+            }
+        }
+
+        println!("=== MESH STATISTICS ===");
+        println!("Total meshes: {}", mesh_count);
+        println!("Total vertices: {}", total_vertices);
+        println!("Total triangles: {}", total_triangles);
+        println!("=======================");
+    }
 }

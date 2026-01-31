@@ -1,20 +1,15 @@
-use std::{fs::OpenOptions, hint::black_box};
-
 use criterion::{Criterion, criterion_group, criterion_main};
-use fastnoise2::{
-    SafeNode,
-    generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
-};
 use marching_cubes::{
     data_loader::file_loader::{
         CHUNK_SERIALIZED_SIZE, load_chunk, load_chunk_index_map, update_chunk, write_chunk,
     },
     terrain::{
-        chunk_generator::{HEIGHT_MAP_GRID_SIZE, calculate_chunk_start},
+        chunk_generator::{HEIGHT_MAP_GRID_SIZE, calculate_chunk_start, get_fbm},
         terrain::{SAMPLES_PER_CHUNK, generate_chunk_into_buffers},
     },
 };
 use rustc_hash::FxHashMap;
+use std::{fs::OpenOptions, hint::black_box};
 
 fn benchmark_read_single_chunk(c: &mut Criterion) {
     let mut index_file = OpenOptions::new()
@@ -77,8 +72,7 @@ fn benchmark_write_single_existing_chunk(c: &mut Criterion) {
 }
 
 fn benchmark_write_single_new_chunk(c: &mut Criterion) {
-    let fbm =
-        || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
+    let fbm = get_fbm();
     let chunk_start = calculate_chunk_start(&(0, 0, 0));
     let mut density_buffer = [0; SAMPLES_PER_CHUNK];
     let mut material_buffer = [0; SAMPLES_PER_CHUNK];
@@ -154,8 +148,7 @@ fn benchmark_bulk_read_chunks(c: &mut Criterion) {
 }
 
 fn benchmark_bulk_write_new_chunk(c: &mut Criterion) {
-    let fbm =
-        || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
+    let fbm = get_fbm();
     let mut chunks_data = Vec::new();
     let mut density_buffer = [0; SAMPLES_PER_CHUNK];
     let mut material_buffer = [0; SAMPLES_PER_CHUNK];
