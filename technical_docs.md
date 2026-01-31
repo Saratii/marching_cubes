@@ -73,6 +73,14 @@ This is entirely due to lock contention. Although there were zero deadlocks or e
     - Same transaction log optimization for index mapping
     - When I created a dedicated write thread and made the worker threads use read only file handles it doubled performance.
 
+Mesh LOD
+    Pre-LOD render stats
+    Total meshes: 171683
+    Total vertices: 430900258
+    Total triangles: 827668224
+    We cannot afford to render this many triangles when they dont even account for 1 pixel of screen space so we sample meshes at lower resolution at different distances.
+    TODO
+
 Failed Technologies:
     8 bit symmetric quantization - too much data loss, causes visual artifacts
 

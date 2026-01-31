@@ -28,9 +28,9 @@ pub const PLAYER_SPAWN: Vec3 = Vec3::new(0., 0., 0.);
 const PLAYER_CUBOID_SIZE: Vec3 = Vec3::new(0.5, 1.5, 0.5);
 pub const CAMERA_FIRST_PERSON_OFFSET: Vec3 = Vec3::new(0., 0.75 * PLAYER_CUBOID_SIZE.y, 0.);
 const MIN_ZOOM_DISTANCE: f32 = 4.0;
-const MAX_ZOOM_DISTANCE: f32 = 2000.0;
+const MAX_ZOOM_DISTANCE: f32 = 3000.0;
 const MIN_ZOOM_SPEED: f32 = 0.5;
-const MAX_ZOOM_SPEED: f32 = 120.0;
+const MAX_ZOOM_SPEED: f32 = 180.0;
 const MOUSE_SENSITIVITY: f32 = 0.002;
 const MIN_PITCH: f32 = -1.5;
 const MAX_PITCH: f32 = 1.5;
@@ -329,12 +329,10 @@ pub fn handle_focus_change(
 ) {
     for event in focus_events.read() {
         if event.focused {
-            println!("gained focus");
             camera_controller.is_cursor_grabbed = true;
             primary_cursor_options.grab_mode = CursorGrabMode::Confined;
             primary_cursor_options.visible = false;
         } else {
-            println!("lost focus");
             camera_controller.is_cursor_grabbed = false;
             primary_cursor_options.grab_mode = CursorGrabMode::None;
             primary_cursor_options.visible = true;

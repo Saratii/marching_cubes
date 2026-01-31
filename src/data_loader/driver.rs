@@ -6,7 +6,8 @@ use crate::{
     },
     terrain::{
         chunk_generator::{
-            HEIGHT_MAP_GRID_SIZE, NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED, calculate_chunk_start
+            HEIGHT_MAP_GRID_SIZE, NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED,
+            calculate_chunk_start, get_fbm,
         },
         terrain::{
             CHUNK_SIZE, CLUSTER_SIZE, MAX_RADIUS_SQUARED, NonUniformTerrainChunk,
@@ -17,10 +18,7 @@ use crate::{
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use fastnoise2::{
-    SafeNode,
-    generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
-};
+use fastnoise2::{SafeNode, generator::GeneratorWrapper};
 use parking_lot::RwLock;
 use rustc_hash::{FxHashMap, FxHashSet};
 #[cfg(feature = "timers")]
@@ -185,7 +183,7 @@ pub fn setup_chunk_driver(
         t0.elapsed().as_millis()
     );
     let uniform_dirt_chunks = Arc::new(uniform_dirt_chunks);
-    let fbm = || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.5, 0.5, 1, 2.0)).build() }();
+    let fbm = get_fbm();
     commands.insert_resource(NoiseGenerator(fbm.clone()));
     let (write_tx, write_rx) = crossbeam_channel::unbounded();
     let index_map_delta_arc = Arc::clone(&index_map_delta);

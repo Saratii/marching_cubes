@@ -1,19 +1,16 @@
 use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use fastnoise2::{
-    SafeNode,
-    generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
-};
 use marching_cubes::terrain::{
-    chunk_generator::{HEIGHT_MAP_GRID_SIZE, NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED},
+    chunk_generator::{
+        HEIGHT_MAP_GRID_SIZE, NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED, get_fbm,
+    },
     terrain::{CHUNK_SIZE, HALF_CHUNK, SAMPLES_PER_CHUNK_DIM},
 };
 
 fn benchmark_full_chunk_noise(c: &mut Criterion) {
     //call noise on every sample in the chunk
-    let fbm =
-        || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
+    let fbm = get_fbm();
     let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
     c.bench_function("full_chunk_noise", |b| {
         b.iter(|| {
@@ -41,8 +38,7 @@ fn benchmark_full_chunk_noise(c: &mut Criterion) {
 
 fn benchmark_corner_lerp_noise(c: &mut Criterion) {
     //only call noise on the 4 corners and lerp in between
-    let fbm =
-        || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
+    let fbm = get_fbm();
     let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
     c.bench_function("corner_lerp_noise", |b| {
         b.iter(|| {
@@ -88,8 +84,7 @@ fn benchmark_corner_lerp_noise(c: &mut Criterion) {
 
 fn benchmark_grid_3x3_noise(c: &mut Criterion) {
     //sample the 4 corners, plus the midpoints of each edge and the center, then bilerp between them
-    let fbm =
-        || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
+    let fbm = get_fbm();
     let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
     c.bench_function("grid_3x3_noise", |b| {
         b.iter(|| {
@@ -184,8 +179,7 @@ fn benchmark_grid_3x3_noise(c: &mut Criterion) {
 
 fn benchmark_corner_bicubic_noise(c: &mut Criterion) {
     //sample a 4x4 grid with corners at inner positions, then bicubic interpolate
-    let fbm =
-        || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
+    let fbm = get_fbm();
     let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
     c.bench_function("corner_bicubic_noise", |b| {
         b.iter(|| {
@@ -224,8 +218,7 @@ fn benchmark_corner_bicubic_noise(c: &mut Criterion) {
 
 fn benchmark_grid_bicubic_noise(c: &mut Criterion) {
     //sample a 5x5 evenly spaced grid, then bicubic interpolate between points
-    let fbm =
-        || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
+    let fbm = get_fbm();
     let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
     c.bench_function("grid_bicubic_noise", |b| {
         b.iter(|| {

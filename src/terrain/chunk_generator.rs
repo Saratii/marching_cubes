@@ -1,17 +1,21 @@
 use bevy::prelude::*;
-use fastnoise2::{SafeNode, generator::GeneratorWrapper};
+use fastnoise2::{
+    SafeNode,
+    generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
+};
 
 use crate::terrain::terrain::{
     CHUNK_SIZE, HALF_CHUNK, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_DIM, VOXEL_SIZE,
 };
 pub const NOISE_SEED: i32 = 111; // Seed for noise generation
-pub const NOISE_FREQUENCY: f32 = 0.01; // Frequency of the noise
-pub const NOISE_AMPLITUDE: f32 = 10.0; // Amplitude of the noise
-pub const HEIGHT_SCALE: f32 = 50.0; // Scale factor for heightmap
+pub const NOISE_FREQUENCY: f32 = 0.0005; // Frequency of the noise
+pub const NOISE_AMPLITUDE: f32 = 300.0; // Amplitude of the noise
 pub const HEIGHT_MAP_GRID_SIZE: usize = SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM;
-pub const NOISE_SAMPLES_PER_SIDE: usize = 9;
-pub const NOISE_SAMPLES_M1: usize = NOISE_SAMPLES_PER_SIDE - 1;
-pub const SAMPLES_M1: usize = SAMPLES_PER_CHUNK_DIM - 1;
+
+pub fn get_fbm() -> GeneratorWrapper<SafeNode> {
+    let mountains = opensimplex2().ridged(0.5, 0.5, 5, 2.0);
+    (mountains).build()
+}
 
 pub fn generate_densities(
     fbm: &GeneratorWrapper<SafeNode>,
