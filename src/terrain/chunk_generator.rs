@@ -5,8 +5,8 @@ use crate::terrain::terrain::{
     CHUNK_SIZE, HALF_CHUNK, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_DIM, VOXEL_SIZE,
 };
 pub const NOISE_SEED: i32 = 111; // Seed for noise generation
-pub const NOISE_FREQUENCY: f32 = 0.02; // Frequency of the noise
-pub const NOISE_AMPLITUDE: f32 = 120.0; // Amplitude of the noise
+pub const NOISE_FREQUENCY: f32 = 0.01; // Frequency of the noise
+pub const NOISE_AMPLITUDE: f32 = 10.0; // Amplitude of the noise
 pub const HEIGHT_SCALE: f32 = 50.0; // Scale factor for heightmap
 pub const HEIGHT_MAP_GRID_SIZE: usize = SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM;
 pub const NOISE_SAMPLES_PER_SIDE: usize = 9;
@@ -15,19 +15,12 @@ pub const SAMPLES_M1: usize = SAMPLES_PER_CHUNK_DIM - 1;
 
 pub fn generate_densities(
     fbm: &GeneratorWrapper<SafeNode>,
-    first_sample_reuse: f32,
     chunk_start: Vec3,
     density_buffer: &mut [i16],
     material_buffer: &mut [u8],
     heightmap_buffer: &mut [f32; HEIGHT_MAP_GRID_SIZE],
 ) -> bool {
-    generate_terrain_heights(
-        chunk_start.x,
-        chunk_start.z,
-        fbm,
-        first_sample_reuse,
-        heightmap_buffer,
-    );
+    generate_terrain_heights(chunk_start.x, chunk_start.z, fbm, heightmap_buffer);
     let is_uniform = fill_voxel_densities(
         density_buffer,
         material_buffer,
@@ -62,78 +55,72 @@ pub fn chunk_contains_surface(density_buffer: &[i16; SAMPLES_PER_CHUNK]) -> bool
     false
 }
 
-pub fn sample_fbm(fbm: &GeneratorWrapper<SafeNode>, x: f32, z: f32) -> f32 {
-    fbm.gen_single_2d(x * 0.01, z * 0.01, NOISE_SEED) * 10.0
-}
-
 //Sample the fbm noise at a higher resolution and then bilinearly interpolate to get smooth terrain heights
 pub fn generate_terrain_heights(
-    chunk_start_x: f32,
-    chunk_start_z: f32,
+    chunk_start_x: f32, //assumed to be even and integer
+    chunk_start_z: f32, //assumed to be even and integer
     fbm: &GeneratorWrapper<SafeNode>,
-    first_sample_reuse: f32,
     heightmap_buffer: &mut [f32; HEIGHT_MAP_GRID_SIZE],
 ) {
-    let step = CHUNK_SIZE as f32 / 4.0;
-    let mut grid = [[0.0; 5]; 5];
-    for gx in 0..5 {
-        let sample_x = chunk_start_x + gx as f32 * step;
-        for gz in 0..5 {
-            if gz == 0 && gx == 0 {
-                grid[gz][gx] = first_sample_reuse;
-                continue;
-            }
-            let sample_z = chunk_start_z + gz as f32 * step;
-            grid[gz][gx] = sample_fbm(&fbm, sample_x, sample_z);
-        }
+    let mut noise_grid = [0.0; 25];
+    let x_start = ((chunk_start_x - HALF_CHUNK) / HALF_CHUNK) as i32;
+    let z_start = ((chunk_start_z - HALF_CHUNK) / HALF_CHUNK) as i32;
+    fbm.gen_uniform_grid_2d(
+        &mut noise_grid,
+        x_start,
+        z_start,
+        5,
+        5,
+        NOISE_FREQUENCY * HALF_CHUNK,
+        NOISE_SEED,
+    );
+    for v in &mut noise_grid {
+        *v *= NOISE_AMPLITUDE;
     }
     let inv_samples = 1.0 / (SAMPLES_PER_CHUNK_DIM - 1) as f32;
     let mut roller = 0;
     for z in 0..SAMPLES_PER_CHUNK_DIM {
         let t_z = z as f32 * inv_samples;
-        let grid_z = t_z * 4.0;
-        let grid_z_idx = grid_z.floor() as usize;
+        let grid_z = 1.0 + t_z * 2.0;
+        let grid_z_idx = grid_z as usize;
         let gz0 = grid_z_idx.saturating_sub(1).min(4);
         let gz1 = grid_z_idx.min(4);
         let gz2 = (grid_z_idx + 1).min(4);
         let gz3 = (grid_z_idx + 2).min(4);
         let local_t_z = grid_z - grid_z_idx as f32;
+        let b0 = gz0 * 5;
+        let b1 = gz1 * 5;
+        let b2 = gz2 * 5;
+        let b3 = gz3 * 5;
         for x in 0..SAMPLES_PER_CHUNK_DIM {
             let t_x = x as f32 * inv_samples;
-            let grid_x = t_x * 4.0;
-            let grid_x_idx = grid_x.floor() as usize;
+            let grid_x = 1.0 + t_x * 2.0;
+            let grid_x_idx = grid_x as usize;
             let gx0 = grid_x_idx.saturating_sub(1).min(4);
             let gx1 = grid_x_idx.min(4);
             let gx2 = (grid_x_idx + 1).min(4);
             let gx3 = (grid_x_idx + 2).min(4);
             let local_t_x = grid_x - grid_x_idx as f32;
-            let sub_grid = [
-                [
-                    grid[gz0][gx0],
-                    grid[gz0][gx1],
-                    grid[gz0][gx2],
-                    grid[gz0][gx3],
-                ],
-                [
-                    grid[gz1][gx0],
-                    grid[gz1][gx1],
-                    grid[gz1][gx2],
-                    grid[gz1][gx3],
-                ],
-                [
-                    grid[gz2][gx0],
-                    grid[gz2][gx1],
-                    grid[gz2][gx2],
-                    grid[gz2][gx3],
-                ],
-                [
-                    grid[gz3][gx0],
-                    grid[gz3][gx1],
-                    grid[gz3][gx2],
-                    grid[gz3][gx3],
-                ],
-            ];
-            let height = bicubic_interp(&sub_grid, local_t_x, local_t_z);
+            let height = bicubic_interp16(
+                noise_grid[b0 + gx0],
+                noise_grid[b0 + gx1],
+                noise_grid[b0 + gx2],
+                noise_grid[b0 + gx3],
+                noise_grid[b1 + gx0],
+                noise_grid[b1 + gx1],
+                noise_grid[b1 + gx2],
+                noise_grid[b1 + gx3],
+                noise_grid[b2 + gx0],
+                noise_grid[b2 + gx1],
+                noise_grid[b2 + gx2],
+                noise_grid[b2 + gx3],
+                noise_grid[b3 + gx0],
+                noise_grid[b3 + gx1],
+                noise_grid[b3 + gx2],
+                noise_grid[b3 + gx3],
+                local_t_x,
+                local_t_z,
+            );
             heightmap_buffer[roller] = height;
             roller += 1;
         }
@@ -324,11 +311,30 @@ fn cubic_interp(p0: f32, p1: f32, p2: f32, p3: f32, t: f32) -> f32 {
 }
 
 #[inline(always)]
-fn bicubic_interp(grid: &[[f32; 4]; 4], t_x: f32, t_z: f32) -> f32 {
-    let col0 = cubic_interp(grid[0][0], grid[0][1], grid[0][2], grid[0][3], t_x);
-    let col1 = cubic_interp(grid[1][0], grid[1][1], grid[1][2], grid[1][3], t_x);
-    let col2 = cubic_interp(grid[2][0], grid[2][1], grid[2][2], grid[2][3], t_x);
-    let col3 = cubic_interp(grid[3][0], grid[3][1], grid[3][2], grid[3][3], t_x);
+fn bicubic_interp16(
+    g00: f32,
+    g01: f32,
+    g02: f32,
+    g03: f32,
+    g10: f32,
+    g11: f32,
+    g12: f32,
+    g13: f32,
+    g20: f32,
+    g21: f32,
+    g22: f32,
+    g23: f32,
+    g30: f32,
+    g31: f32,
+    g32: f32,
+    g33: f32,
+    t_x: f32,
+    t_z: f32,
+) -> f32 {
+    let col0 = cubic_interp(g00, g01, g02, g03, t_x);
+    let col1 = cubic_interp(g10, g11, g12, g13, t_x);
+    let col2 = cubic_interp(g20, g21, g22, g23, t_x);
+    let col3 = cubic_interp(g30, g31, g32, g33, t_x);
     cubic_interp(col0, col1, col2, col3, t_z)
 }
 
