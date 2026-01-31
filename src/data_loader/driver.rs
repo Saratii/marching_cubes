@@ -5,7 +5,9 @@ use crate::{
         load_uniform_chunks, remove_uniform_chunk, update_chunk, write_chunk,
     },
     terrain::{
-        chunk_generator::{HEIGHT_MAP_GRID_SIZE, calculate_chunk_start, sample_fbm},
+        chunk_generator::{
+            HEIGHT_MAP_GRID_SIZE, NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED, calculate_chunk_start
+        },
         terrain::{
             CHUNK_SIZE, CLUSTER_SIZE, MAX_RADIUS_SQUARED, NonUniformTerrainChunk,
             Z0_RADIUS_SQUARED, generate_chunk_into_buffers,
@@ -440,8 +442,6 @@ fn chunk_loader_thread(
                                 .copied()
                                 .or_else(|| index_map_delta.read().get(&chunk_coord).copied());
                             //check if we even need the sdfs
-                            let chunk_start = calculate_chunk_start(&chunk_coord);
-                            let first_sample_reuse = sample_fbm(&fbm, chunk_start.x, chunk_start.z);
                             if let Some(offset) = file_offset {
                                 load_chunk(
                                     &mut chunk_data_file_read,
@@ -465,8 +465,14 @@ fn chunk_loader_thread(
                                 }
                                 chunk_contains_surface(&density_buffer)
                             } else {
+                                let chunk_start = calculate_chunk_start(&chunk_coord);
+                                let chunk_center_sample = fbm.gen_single_2d(
+                                    (chunk_start.x + HALF_CHUNK) * NOISE_FREQUENCY,
+                                    (chunk_start.z + HALF_CHUNK) * NOISE_FREQUENCY,
+                                    NOISE_SEED,
+                                ) * NOISE_AMPLITUDE;
                                 //conservative heuristic: if the surface height at the first sample is greater than one chunk above the bottom of the chunk, we assume it is uniform air
-                                if first_sample_reuse + CHUNK_SIZE * 3.0 < chunk_start.y {
+                                if chunk_center_sample + CHUNK_SIZE * 3.0 < chunk_start.y {
                                     write_sender
                                         .send(WriteCmd::WriteUniformAir { coord: chunk_coord })
                                         .unwrap();
@@ -475,7 +481,6 @@ fn chunk_loader_thread(
                                     //generate new chunk
                                     let uniformity = generate_chunk_into_buffers(
                                         &fbm,
-                                        first_sample_reuse,
                                         chunk_start,
                                         &mut density_buffer,
                                         &mut material_buffer,

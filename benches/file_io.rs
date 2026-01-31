@@ -10,7 +10,7 @@ use marching_cubes::{
         CHUNK_SERIALIZED_SIZE, load_chunk, load_chunk_index_map, update_chunk, write_chunk,
     },
     terrain::{
-        chunk_generator::{HEIGHT_MAP_GRID_SIZE, calculate_chunk_start, sample_fbm},
+        chunk_generator::{HEIGHT_MAP_GRID_SIZE, calculate_chunk_start},
         terrain::{SAMPLES_PER_CHUNK, generate_chunk_into_buffers},
     },
 };
@@ -77,16 +77,14 @@ fn benchmark_write_single_existing_chunk(c: &mut Criterion) {
 }
 
 fn benchmark_write_single_new_chunk(c: &mut Criterion) {
-    let noise_function =
+    let fbm =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
     let chunk_start = calculate_chunk_start(&(0, 0, 0));
-    let first_sample_reuse = sample_fbm(&noise_function, chunk_start.x, chunk_start.z);
     let mut density_buffer = [0; SAMPLES_PER_CHUNK];
     let mut material_buffer = [0; SAMPLES_PER_CHUNK];
     let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
     generate_chunk_into_buffers(
-        &noise_function,
-        first_sample_reuse,
+        &fbm,
         chunk_start,
         &mut density_buffer,
         &mut material_buffer,
@@ -156,7 +154,7 @@ fn benchmark_bulk_read_chunks(c: &mut Criterion) {
 }
 
 fn benchmark_bulk_write_new_chunk(c: &mut Criterion) {
-    let noise_function =
+    let fbm =
         || -> GeneratorWrapper<SafeNode> { (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build() }();
     let mut chunks_data = Vec::new();
     let mut density_buffer = [0; SAMPLES_PER_CHUNK];
@@ -165,10 +163,8 @@ fn benchmark_bulk_write_new_chunk(c: &mut Criterion) {
     for i in 0..100 {
         let chunk_coord = (1000 + i, 1000, 1000);
         let chunk_start = calculate_chunk_start(&chunk_coord);
-        let first_sample_reuse = sample_fbm(&noise_function, chunk_start.x, chunk_start.z);
         generate_chunk_into_buffers(
-            &noise_function,
-            first_sample_reuse,
+            &fbm,
             chunk_start,
             &mut density_buffer,
             &mut material_buffer,

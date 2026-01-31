@@ -21,7 +21,7 @@ use crate::{
 };
 
 pub const SAMPLES_PER_CHUNK_DIM: usize = 50; // Number of voxel sample points
-pub const CHUNK_SIZE: f32 = 12.5; //in world units
+pub const CHUNK_SIZE: f32 = 12.0; //in world units, required by noise to be an integer and even
 pub const CLUSTER_SIZE: usize = 5; //number of chunks along one edge of a cluster
 pub const SAMPLES_PER_CHUNK: usize =
     SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM;
@@ -110,7 +110,6 @@ impl NonUniformTerrainChunk {
 
 pub fn generate_chunk_into_buffers(
     fbm: &GeneratorWrapper<SafeNode>,
-    first_sample_reuse: f32,
     chunk_start: Vec3,
     density_buffer: &mut [i16],
     material_buffer: &mut [u8],
@@ -118,7 +117,6 @@ pub fn generate_chunk_into_buffers(
 ) -> Uniformity {
     let is_uniform = generate_densities(
         fbm,
-        first_sample_reuse,
         chunk_start,
         density_buffer,
         material_buffer,
