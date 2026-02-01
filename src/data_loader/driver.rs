@@ -4,6 +4,7 @@ use crate::{
         CHUNK_SERIALIZED_SIZE, get_project_root, load_chunk, load_chunk_index_map,
         load_uniform_chunks, remove_uniform_chunk, update_chunk, write_chunk,
     },
+    player::player::PLAYER_CUBOID_SIZE,
     terrain::{
         chunk_generator::{
             NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED, calculate_chunk_start, get_fbm,
@@ -242,22 +243,26 @@ pub fn setup_chunk_driver(
         let write_sender_clone = write_tx.clone();
         let priority_queue_arc = Arc::clone(&priority_queue);
         let terrain_chunk_map_insert_sender_clone = terrain_chunk_map_insert_sender.clone();
-        thread::spawn(move || {
-            chunk_loader_thread(
-                thread_idx,
-                res_tx_clone,
-                index_map_read,
-                index_map_delta,
-                chunk_data_file_read,
-                chunk_spawn_channel,
-                fbm_clone,
-                uniform_air_chunks_read_only,
-                uniform_dirt_chunks_read_only,
-                write_sender_clone,
-                priority_queue_arc,
-                terrain_chunk_map_insert_sender_clone,
-            );
-        });
+        let _handle = thread::Builder::new()
+            .name(format!("chunk_loader_{thread_idx}"))
+            .stack_size(32 * 1024 * 1024)
+            .spawn(move || {
+                chunk_loader_thread(
+                    thread_idx,
+                    res_tx_clone,
+                    index_map_read,
+                    index_map_delta,
+                    chunk_data_file_read,
+                    chunk_spawn_channel,
+                    fbm_clone,
+                    uniform_air_chunks_read_only,
+                    uniform_dirt_chunks_read_only,
+                    write_sender_clone,
+                    priority_queue_arc,
+                    terrain_chunk_map_insert_sender_clone,
+                );
+            })
+            .expect("failed to spawn chunk loader thread");
     }
     let terrain_chunk_map_arc = Arc::clone(&terrain_chunk_map);
     thread::spawn(move || {
@@ -806,8 +811,9 @@ pub fn chunk_spawn_reciever(
 //wait for player's chunk to be spawned
 pub fn project_downward(
     chunk_entity_map: Res<ChunkEntityMap>,
-    player_position: Single<&Transform, (With<PlayerTag>, Without<ChunkTag>)>,
-    spawned_chunks_query: Query<(), With<ChunkTag>>,
+    mut player_position: Single<&mut Transform, (With<PlayerTag>, Without<ChunkTag>)>,
+    spawned_chunks_query: Query<(), (With<ChunkTag>, With<Collider>)>,
+    terrain_chunk_map: Res<TerrainChunkMap>,
 ) {
     let player_chunk = world_pos_to_chunk_coord(&player_position.translation);
     for chunk_y in (player_chunk.1 - 10..=player_chunk.1).rev() {
@@ -817,8 +823,60 @@ pub fn project_downward(
         {
             if spawned_chunks_query.get(*entity).is_ok() {
                 INITIAL_CHUNKS_LOADED.store(true, Ordering::Relaxed);
+                validate_player_spawn(
+                    &(player_chunk.0, chunk_y, player_chunk.2),
+                    &terrain_chunk_map,
+                    &mut player_position,
+                );
                 break;
             }
+        }
+    }
+}
+
+//move player up gradually until not stuck in floor
+fn validate_player_spawn(
+    chunk_coord: &(i16, i16, i16),
+    terrain_chunk_map: &TerrainChunkMap,
+    player_transform: &mut Transform,
+) {
+    let terrain_map = terrain_chunk_map.0.lock().unwrap();
+    let chunk = terrain_map.get(chunk_coord).unwrap();
+    let TerrainChunk::NonUniformTerrainChunk(non_uniform) = chunk else {
+        return;
+    };
+    let chunk_start = calculate_chunk_start(chunk_coord);
+    let local_x = SAMPLES_PER_CHUNK_DIM / 2;
+    let local_z = SAMPLES_PER_CHUNK_DIM / 2;
+    let voxel_size = CHUNK_SIZE / SAMPLES_PER_CHUNK_DIM as f32;
+    let original_y = player_transform.translation.y;
+    let player_local_y = ((original_y - chunk_start.y) / voxel_size).floor() as usize;
+    let start_y = player_local_y.min(SAMPLES_PER_CHUNK_DIM - 1);
+    for y in start_y..SAMPLES_PER_CHUNK_DIM {
+        let mut all_air = true;
+        for dx in 0..=(PLAYER_CUBOID_SIZE.x / voxel_size).ceil() as usize {
+            for dz in 0..=(PLAYER_CUBOID_SIZE.z / voxel_size).ceil() as usize {
+                let check_x = (local_x + dx).min(SAMPLES_PER_CHUNK_DIM - 1);
+                let check_z = (local_z + dz).min(SAMPLES_PER_CHUNK_DIM - 1);
+                let idx = y * SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM
+                    + check_z * SAMPLES_PER_CHUNK_DIM
+                    + check_x;
+                if non_uniform.densities[idx] > 0 {
+                    all_air = false;
+                    break;
+                }
+            }
+            if !all_air {
+                break;
+            }
+        }
+        if all_air {
+            let new_y = chunk_start.y + (y as f32 * voxel_size);
+            if new_y != original_y {
+                player_transform.translation.y = new_y;
+                println!("Moved player up from {} to {}", original_y, new_y);
+            }
+            return;
         }
     }
 }
