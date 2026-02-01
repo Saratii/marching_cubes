@@ -20,11 +20,12 @@ use crate::{
     },
 };
 
-pub const SAMPLES_PER_CHUNK_DIM: usize = 50; // Number of voxel sample points
+pub const SAMPLES_PER_CHUNK_DIM: usize = 64; // Number of voxel sample points
 pub const CHUNK_SIZE: f32 = 12.0; //in world units, required by noise to be an integer and even
 pub const CLUSTER_SIZE: usize = 5; //number of chunks along one edge of a cluster
 pub const SAMPLES_PER_CHUNK: usize =
     SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM;
+pub const HEIGHT_MAP_GRID_SIZE: usize = SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM;
 pub const SAMPLES_PER_CHUNK_DIM_M1: usize = SAMPLES_PER_CHUNK_DIM - 1;
 pub const HALF_CHUNK: f32 = CHUNK_SIZE / 2.0;
 pub const Z0_RADIUS: f32 = 80.0; //in world units. Distance where everything is loaded at all times and physically simulated.
@@ -32,7 +33,7 @@ pub const Z0_RADIUS_SQUARED: f32 = Z0_RADIUS * Z0_RADIUS;
 pub const Z1_RADIUS: f32 = 100.0; //in world units. Distance where chunks are loaded at full res but not stored in memory.
 pub const Z1_RADIUS_SQUARED: f32 = Z1_RADIUS * Z1_RADIUS;
 pub const VOXEL_SIZE: f32 = CHUNK_SIZE / SAMPLES_PER_CHUNK_DIM_M1 as f32;
-pub const Z2_RADIUS: f32 = 1200.0;
+pub const Z2_RADIUS: f32 = 1000.0;
 pub const Z2_RADIUS_SQUARED: f32 = Z2_RADIUS * Z2_RADIUS;
 pub const MAX_RADIUS: f32 = Z0_RADIUS.max(Z1_RADIUS).max(Z2_RADIUS);
 pub const MAX_RADIUS_SQUARED: f32 = MAX_RADIUS * MAX_RADIUS;
@@ -111,6 +112,7 @@ pub fn generate_chunk_into_buffers(
     density_buffer: &mut [i16],
     material_buffer: &mut [u8],
     heightmap_buffer: &mut [f32],
+    samples_per_chunk_dim: usize,
 ) -> Uniformity {
     let is_uniform = generate_densities(
         fbm,
@@ -118,6 +120,7 @@ pub fn generate_chunk_into_buffers(
         density_buffer,
         material_buffer,
         heightmap_buffer,
+        samples_per_chunk_dim,
     );
     //if it does not have a surface it must be uniform dirt or air
     let uniformity = if !is_uniform {

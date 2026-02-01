@@ -6,12 +6,11 @@ use crate::{
     },
     terrain::{
         chunk_generator::{
-            HEIGHT_MAP_GRID_SIZE, NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED,
-            calculate_chunk_start, get_fbm,
+            NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED, calculate_chunk_start, get_fbm,
         },
         terrain::{
-            CHUNK_SIZE, CLUSTER_SIZE, MAX_RADIUS_SQUARED, NonUniformTerrainChunk,
-            Z0_RADIUS_SQUARED, generate_chunk_into_buffers,
+            CHUNK_SIZE, CLUSTER_SIZE, HEIGHT_MAP_GRID_SIZE, MAX_RADIUS_SQUARED,
+            NonUniformTerrainChunk, Z0_RADIUS_SQUARED, generate_chunk_into_buffers,
         },
     },
 };
@@ -370,10 +369,14 @@ fn chunk_loader_thread(
     priority_queue: Arc<(Mutex<BinaryHeap<ChunkRequest>>, Condvar)>,
     terrain_chunk_map_insert_sender: Sender<((i16, i16, i16), TerrainChunk)>,
 ) {
+    const REDUCTION_FACTOR: usize = 1;
+    const REDUCED_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / REDUCTION_FACTOR;
+    const REDUCED_SAMPLES_PER_CHUNK: usize = SAMPLES_PER_CHUNK / REDUCTION_FACTOR.pow(3);
+    const REDUCED_HEIGHTMAP_GRID_SIZE: usize = HEIGHT_MAP_GRID_SIZE / REDUCTION_FACTOR.pow(2);
     let mut internal_queue = Vec::with_capacity(32);
-    let mut density_buffer = [0; SAMPLES_PER_CHUNK];
-    let mut material_buffer = [0; SAMPLES_PER_CHUNK];
-    let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
+    let mut density_buffer = [0; REDUCED_SAMPLES_PER_CHUNK];
+    let mut material_buffer = [0; REDUCED_SAMPLES_PER_CHUNK];
+    let mut heightmap_buffer = [0.0; REDUCED_HEIGHTMAP_GRID_SIZE];
     #[cfg(feature = "timers")]
     let mut chunks_generated = 0;
     #[cfg(feature = "timers")]
@@ -483,6 +486,7 @@ fn chunk_loader_thread(
                                         &mut density_buffer,
                                         &mut material_buffer,
                                         &mut heightmap_buffer,
+                                        REDUCED_SAMPLES_PER_CHUNK_DIM,
                                     );
                                     match uniformity {
                                         Uniformity::Air => {
@@ -542,7 +546,7 @@ fn chunk_loader_thread(
                             let (vertices, normals, material_ids, indices) = mc_mesh_generation(
                                 &density_buffer,
                                 &material_buffer,
-                                SAMPLES_PER_CHUNK_DIM,
+                                REDUCED_SAMPLES_PER_CHUNK_DIM,
                                 HALF_CHUNK,
                             );
                             let mesh = generate_bevy_mesh(vertices, normals, material_ids, indices);

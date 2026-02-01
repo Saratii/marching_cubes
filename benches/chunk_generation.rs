@@ -7,13 +7,12 @@ use marching_cubes::{
     terrain::{
         chunk_compute_pipeline::GpuTerrainGenerator,
         chunk_generator::{
-            HEIGHT_MAP_GRID_SIZE, calculate_chunk_start, chunk_contains_surface,
-            generate_terrain_heights, get_fbm,
+            calculate_chunk_start, chunk_contains_surface, generate_terrain_heights, get_fbm,
         },
         heightmap_compute_pipeline::GpuHeightmapGenerator,
         terrain::{
-            CLUSTER_SIZE, HALF_CHUNK, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_DIM,
-            generate_chunk_into_buffers,
+            CLUSTER_SIZE, HALF_CHUNK, HEIGHT_MAP_GRID_SIZE, SAMPLES_PER_CHUNK,
+            SAMPLES_PER_CHUNK_DIM, generate_chunk_into_buffers,
         },
     },
 };
@@ -34,6 +33,7 @@ fn benchmark_generate_densities_cpu(c: &mut Criterion) {
                 black_box(&mut densities_buffer),
                 black_box(&mut materials_buffer),
                 black_box(&mut heightmap_buffer),
+                SAMPLES_PER_CHUNK_DIM,
             ));
         })
     });
@@ -53,6 +53,7 @@ fn benchmark_generate_uniform_densities_cpu(c: &mut Criterion) {
                 black_box(&mut densities_buffer),
                 black_box(&mut materials_buffer),
                 black_box(&mut heightmap_buffer),
+                SAMPLES_PER_CHUNK_DIM,
             ))
         })
     });
@@ -83,6 +84,7 @@ fn benchmark_marching_cubes(c: &mut Criterion) {
         &mut densities_buffer,
         &mut materials_buffer,
         &mut heightmap_buffer,
+        SAMPLES_PER_CHUNK_DIM,
     );
     c.bench_function("marching_cubes", |b| {
         b.iter(|| {
@@ -108,6 +110,7 @@ fn benchmark_heightmap_single_chunk_cpu(c: &mut Criterion) {
                 black_box(chunk_start.z),
                 black_box(&fbm),
                 black_box(&mut heightmap_buffer),
+                SAMPLES_PER_CHUNK_DIM,
             ));
         })
     });
@@ -140,6 +143,7 @@ fn benchmark_cluster_heightmap_cpu(c: &mut Criterion) {
                         black_box(chunk_start.z),
                         black_box(&fbm),
                         black_box(&mut heightmap_buffer),
+                        SAMPLES_PER_CHUNK_DIM,
                     );
                     results.insert((chunk_coord.0, chunk_coord.1), heights);
                 }
@@ -192,6 +196,7 @@ fn find_chunk_with_surface() -> (i16, i16, i16) {
             &mut densities_buffer,
             &mut materials_buffer,
             &mut heightmap_buffer,
+            SAMPLES_PER_CHUNK_DIM,
         );
         if chunk_contains_surface(&densities_buffer) {
             return chunk_coord;
