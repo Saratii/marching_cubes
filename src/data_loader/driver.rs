@@ -10,8 +10,10 @@ use crate::{
             NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED, calculate_chunk_start, get_fbm,
         },
         terrain::{
-            CHUNK_SIZE, CLUSTER_SIZE, HEIGHT_MAP_GRID_SIZE, MAX_RADIUS_SQUARED,
-            NonUniformTerrainChunk, Z0_RADIUS_SQUARED, generate_chunk_into_buffers,
+            CHUNK_SIZE, CLUSTER_SIZE, HEIGHTMAP_GRID_SIZE, MAX_RADIUS_SQUARED,
+            NonUniformTerrainChunk, REDUCED_FOV_1_RADIUS_SQUARED, REDUCED_FOV_2_RADIUS_SQUARED,
+            REDUCED_FOV_3_RADIUS_SQUARED, REDUCED_FOV_4_RADIUS_SQUARED, Z0_RADIUS_SQUARED,
+            generate_chunk_into_buffers,
         },
     },
 };
@@ -94,17 +96,15 @@ pub enum WriteCmd {
 #[derive(Resource)]
 pub struct ChunkSpawnReciever(Receiver<ChunkSpawnResult>);
 
-//level 0: full detail, returns TerrainChunk and collider
-//level n: full/(2^n) detail, no persistant data besides mesh
 #[derive(Debug)]
-pub struct ChunkRequest {
+pub struct ClusterRequest {
     pub position: (i16, i16, i16),
     pub load_status: u8,
     pub upgrade: bool,
-    pub distance_squared: u32,
+    pub distance_squared: f32, //distance to cluster center in world units
 }
 
-impl PartialEq for ChunkRequest {
+impl PartialEq for ClusterRequest {
     fn eq(&self, other: &Self) -> bool {
         self.position == other.position
             && self.load_status == other.load_status
@@ -113,15 +113,18 @@ impl PartialEq for ChunkRequest {
     }
 }
 
-impl Eq for ChunkRequest {}
+impl Eq for ClusterRequest {}
 
-impl Ord for ChunkRequest {
+impl Ord for ClusterRequest {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        other.distance_squared.cmp(&self.distance_squared)
+        other
+            .distance_squared
+            .partial_cmp(&self.distance_squared)
+            .unwrap_or(std::cmp::Ordering::Equal)
     }
 }
 
-impl PartialOrd for ChunkRequest {
+impl PartialOrd for ClusterRequest {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
@@ -371,17 +374,41 @@ fn chunk_loader_thread(
     uniform_air_chunks_read_only: Arc<FxHashSet<(i16, i16, i16)>>,
     uniform_dirt_chunks_read_only: Arc<FxHashSet<(i16, i16, i16)>>,
     write_sender: Sender<WriteCmd>,
-    priority_queue: Arc<(Mutex<BinaryHeap<ChunkRequest>>, Condvar)>,
+    priority_queue: Arc<(Mutex<BinaryHeap<ClusterRequest>>, Condvar)>,
     terrain_chunk_map_insert_sender: Sender<((i16, i16, i16), TerrainChunk)>,
 ) {
-    const REDUCTION_FACTOR: usize = 1;
-    const REDUCED_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / REDUCTION_FACTOR;
-    const REDUCED_SAMPLES_PER_CHUNK: usize = SAMPLES_PER_CHUNK / REDUCTION_FACTOR.pow(3);
-    const REDUCED_HEIGHTMAP_GRID_SIZE: usize = HEIGHT_MAP_GRID_SIZE / REDUCTION_FACTOR.pow(2);
+    const RF1: usize = 2;
+    const RF2: usize = 4;
+    const RF3: usize = 8;
+    const RF4: usize = 16;
+    const RF1_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF1;
+    const RF1_SAMPLES_PER_CHUNK: usize = SAMPLES_PER_CHUNK / RF1.pow(3);
+    const RF1_HEIGHTMAP_GRID_SIZE: usize = HEIGHTMAP_GRID_SIZE / RF1.pow(2);
+    const RF2_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF2;
+    const RF2_SAMPLES_PER_CHUNK: usize = SAMPLES_PER_CHUNK / RF2.pow(3);
+    const RF2_HEIGHTMAP_GRID_SIZE: usize = HEIGHTMAP_GRID_SIZE / RF2.pow(2);
+    const RF3_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF3;
+    const RF3_SAMPLES_PER_CHUNK: usize = SAMPLES_PER_CHUNK / RF3.pow(3);
+    const RF3_HEIGHTMAP_GRID_SIZE: usize = HEIGHTMAP_GRID_SIZE / RF3.pow(2);
+    const RF4_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF4;
+    const RF4_SAMPLES_PER_CHUNK: usize = SAMPLES_PER_CHUNK / RF4.pow(3);
+    const RF4_HEIGHTMAP_GRID_SIZE: usize = HEIGHTMAP_GRID_SIZE / RF4.pow(2);
     let mut internal_queue = Vec::with_capacity(32);
-    let mut density_buffer = [0; REDUCED_SAMPLES_PER_CHUNK];
-    let mut material_buffer = [0; REDUCED_SAMPLES_PER_CHUNK];
-    let mut heightmap_buffer = [0.0; REDUCED_HEIGHTMAP_GRID_SIZE];
+    let mut density_buffer = [0; SAMPLES_PER_CHUNK];
+    let mut material_buffer = [0; SAMPLES_PER_CHUNK];
+    let mut heightmap_buffer = [0.0; HEIGHTMAP_GRID_SIZE];
+    let mut density_buffer_r1 = [0; RF1_SAMPLES_PER_CHUNK];
+    let mut material_buffer_r1 = [0; RF1_SAMPLES_PER_CHUNK];
+    let mut heightmap_buffer_r1 = [0.0; RF1_HEIGHTMAP_GRID_SIZE];
+    let mut density_buffer_r2 = [0; RF2_SAMPLES_PER_CHUNK];
+    let mut material_buffer_r2 = [0; RF2_SAMPLES_PER_CHUNK];
+    let mut heightmap_buffer_r2 = [0.0; RF2_HEIGHTMAP_GRID_SIZE];
+    let mut density_buffer_r3 = [0; RF3_SAMPLES_PER_CHUNK];
+    let mut material_buffer_r3 = [0; RF3_SAMPLES_PER_CHUNK];
+    let mut heightmap_buffer_r3 = [0.0; RF3_HEIGHTMAP_GRID_SIZE];
+    let mut density_buffer_r4 = [0; RF4_SAMPLES_PER_CHUNK];
+    let mut material_buffer_r4 = [0; RF4_SAMPLES_PER_CHUNK];
+    let mut heightmap_buffer_r4 = [0.0; RF4_HEIGHTMAP_GRID_SIZE];
     #[cfg(feature = "timers")]
     let mut chunks_generated = 0;
     #[cfg(feature = "timers")]
@@ -484,15 +511,61 @@ fn chunk_loader_thread(
                                         .unwrap();
                                     false
                                 } else {
-                                    //generate new chunk
-                                    let uniformity = generate_chunk_into_buffers(
-                                        &fbm,
-                                        chunk_start,
-                                        &mut density_buffer,
-                                        &mut material_buffer,
-                                        &mut heightmap_buffer,
-                                        REDUCED_SAMPLES_PER_CHUNK_DIM,
-                                    );
+                                    //calculate which lod to use and generate new chunk
+                                    let uniformity = if request.distance_squared
+                                        > REDUCED_FOV_4_RADIUS_SQUARED
+                                    {
+                                        generate_chunk_into_buffers(
+                                            &fbm,
+                                            chunk_start,
+                                            &mut density_buffer_r4,
+                                            &mut material_buffer_r4,
+                                            &mut heightmap_buffer_r4,
+                                            RF4_SAMPLES_PER_CHUNK_DIM,
+                                        )
+                                    } else if request.distance_squared
+                                        > REDUCED_FOV_3_RADIUS_SQUARED
+                                    {
+                                        generate_chunk_into_buffers(
+                                            &fbm,
+                                            chunk_start,
+                                            &mut density_buffer_r3,
+                                            &mut material_buffer_r3,
+                                            &mut heightmap_buffer_r3,
+                                            RF3_SAMPLES_PER_CHUNK_DIM,
+                                        )
+                                    } else if request.distance_squared
+                                        > REDUCED_FOV_2_RADIUS_SQUARED
+                                    {
+                                        generate_chunk_into_buffers(
+                                            &fbm,
+                                            chunk_start,
+                                            &mut density_buffer_r2,
+                                            &mut material_buffer_r2,
+                                            &mut heightmap_buffer_r2,
+                                            RF2_SAMPLES_PER_CHUNK_DIM,
+                                        )
+                                    } else if request.distance_squared
+                                        > REDUCED_FOV_1_RADIUS_SQUARED
+                                    {
+                                        generate_chunk_into_buffers(
+                                            &fbm,
+                                            chunk_start,
+                                            &mut density_buffer_r1,
+                                            &mut material_buffer_r1,
+                                            &mut heightmap_buffer_r1,
+                                            RF1_SAMPLES_PER_CHUNK_DIM,
+                                        )
+                                    } else {
+                                        generate_chunk_into_buffers(
+                                            &fbm,
+                                            chunk_start,
+                                            &mut density_buffer,
+                                            &mut material_buffer,
+                                            &mut heightmap_buffer,
+                                            SAMPLES_PER_CHUNK_DIM,
+                                        )
+                                    };
                                     match uniformity {
                                         Uniformity::Air => {
                                             write_sender
@@ -523,13 +596,55 @@ fn chunk_loader_thread(
                                             Uniformity::Air => TerrainChunk::UniformAir,
                                             Uniformity::Dirt => TerrainChunk::UniformDirt,
                                             Uniformity::NonUniform => {
-                                                TerrainChunk::NonUniformTerrainChunk(
-                                                    NonUniformTerrainChunk {
-                                                        //allocation here
-                                                        densities: Arc::new(density_buffer), //allocation here
-                                                        materials: Arc::new(material_buffer), //allocation here
-                                                    },
-                                                )
+                                                if request.distance_squared
+                                                    > REDUCED_FOV_4_RADIUS_SQUARED
+                                                {
+                                                    TerrainChunk::NonUniformTerrainChunk(
+                                                        NonUniformTerrainChunk {
+                                                            //allocation here
+                                                            densities: Arc::new(density_buffer_r4), //allocation here
+                                                            materials: Arc::new(material_buffer_r4), //allocation here
+                                                        },
+                                                    )
+                                                } else if request.distance_squared
+                                                    > REDUCED_FOV_3_RADIUS_SQUARED
+                                                {
+                                                    TerrainChunk::NonUniformTerrainChunk(
+                                                        NonUniformTerrainChunk {
+                                                            //allocation here
+                                                            densities: Arc::new(density_buffer_r3), //allocation here
+                                                            materials: Arc::new(material_buffer_r3), //allocation here
+                                                        },
+                                                    )
+                                                } else if request.distance_squared
+                                                    > REDUCED_FOV_2_RADIUS_SQUARED
+                                                {
+                                                    TerrainChunk::NonUniformTerrainChunk(
+                                                        NonUniformTerrainChunk {
+                                                            //allocation here
+                                                            densities: Arc::new(density_buffer_r2), //allocation here
+                                                            materials: Arc::new(material_buffer_r2), //allocation here
+                                                        },
+                                                    )
+                                                } else if request.distance_squared
+                                                    > REDUCED_FOV_1_RADIUS_SQUARED
+                                                {
+                                                    TerrainChunk::NonUniformTerrainChunk(
+                                                        NonUniformTerrainChunk {
+                                                            //allocation here
+                                                            densities: Arc::new(density_buffer_r1), //allocation here
+                                                            materials: Arc::new(material_buffer_r1), //allocation here
+                                                        },
+                                                    )
+                                                } else {
+                                                    TerrainChunk::NonUniformTerrainChunk(
+                                                        NonUniformTerrainChunk {
+                                                            //allocation here
+                                                            densities: Arc::new(density_buffer), //allocation here
+                                                            materials: Arc::new(material_buffer), //allocation here
+                                                        },
+                                                    )
+                                                }
                                             }
                                         };
                                         terrain_chunk_map_insert_sender
@@ -539,7 +654,25 @@ fn chunk_loader_thread(
                                     let has_surface = match uniformity {
                                         Uniformity::Air | Uniformity::Dirt => false,
                                         Uniformity::NonUniform => {
-                                            chunk_contains_surface(&density_buffer) //must not call on a potentially corrupted buffer from uniform generation
+                                            if request.distance_squared
+                                                > REDUCED_FOV_4_RADIUS_SQUARED
+                                            {
+                                                chunk_contains_surface(&density_buffer_r4)
+                                            } else if request.distance_squared
+                                                > REDUCED_FOV_3_RADIUS_SQUARED
+                                            {
+                                                chunk_contains_surface(&density_buffer_r3)
+                                            } else if request.distance_squared
+                                                > REDUCED_FOV_2_RADIUS_SQUARED
+                                            {
+                                                chunk_contains_surface(&density_buffer_r2)
+                                            } else if request.distance_squared
+                                                > REDUCED_FOV_1_RADIUS_SQUARED
+                                            {
+                                                chunk_contains_surface(&density_buffer_r1)
+                                            } else {
+                                                chunk_contains_surface(&density_buffer) //must not call on a potentially corrupted buffer from uniform generation
+                                            }
                                         }
                                     };
                                     has_surface
@@ -548,12 +681,43 @@ fn chunk_loader_thread(
                         };
                         let has_collider = has_surface && request.load_status == 0;
                         let (collider, mesh) = if has_surface {
-                            let (vertices, normals, material_ids, indices) = mc_mesh_generation(
-                                &density_buffer,
-                                &material_buffer,
-                                REDUCED_SAMPLES_PER_CHUNK_DIM,
-                                HALF_CHUNK,
-                            );
+                            let (vertices, normals, material_ids, indices) =
+                                if request.distance_squared > REDUCED_FOV_4_RADIUS_SQUARED {
+                                    mc_mesh_generation(
+                                        &density_buffer_r4,
+                                        &material_buffer_r4,
+                                        RF4_SAMPLES_PER_CHUNK_DIM,
+                                        HALF_CHUNK,
+                                    )
+                                } else if request.distance_squared > REDUCED_FOV_3_RADIUS_SQUARED {
+                                    mc_mesh_generation(
+                                        &density_buffer_r3,
+                                        &material_buffer_r3,
+                                        RF3_SAMPLES_PER_CHUNK_DIM,
+                                        HALF_CHUNK,
+                                    )
+                                } else if request.distance_squared > REDUCED_FOV_2_RADIUS_SQUARED {
+                                    mc_mesh_generation(
+                                        &density_buffer_r2,
+                                        &material_buffer_r2,
+                                        RF2_SAMPLES_PER_CHUNK_DIM,
+                                        HALF_CHUNK,
+                                    )
+                                } else if request.distance_squared > REDUCED_FOV_1_RADIUS_SQUARED {
+                                    mc_mesh_generation(
+                                        &density_buffer_r1,
+                                        &material_buffer_r1,
+                                        RF1_SAMPLES_PER_CHUNK_DIM,
+                                        HALF_CHUNK,
+                                    )
+                                } else {
+                                    mc_mesh_generation(
+                                        &density_buffer,
+                                        &material_buffer,
+                                        SAMPLES_PER_CHUNK_DIM,
+                                        HALF_CHUNK,
+                                    )
+                                };
                             let mesh = generate_bevy_mesh(vertices, normals, material_ids, indices);
                             let collider = if has_collider {
                                 Some(
@@ -652,7 +816,7 @@ fn svo_manager_thread(
     player_translation: Arc<Mutex<Vec3>>,
     chunk_spawn_channel: Sender<ChunkSpawnResult>,
     mut svo: ChunkSvo,
-    priority_queue: Arc<(Mutex<BinaryHeap<ChunkRequest>>, Condvar)>,
+    priority_queue: Arc<(Mutex<BinaryHeap<ClusterRequest>>, Condvar)>,
     terrain_chunk_map: Arc<Mutex<FxHashMap<(i16, i16, i16), TerrainChunk>>>,
     terrain_chunk_map_insert_reciever: Receiver<((i16, i16, i16), TerrainChunk)>,
 ) {

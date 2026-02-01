@@ -25,7 +25,7 @@ pub const CHUNK_SIZE: f32 = 12.0; //in world units, required by noise to be an i
 pub const CLUSTER_SIZE: usize = 5; //number of chunks along one edge of a cluster
 pub const SAMPLES_PER_CHUNK: usize =
     SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM;
-pub const HEIGHT_MAP_GRID_SIZE: usize = SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM;
+pub const HEIGHTMAP_GRID_SIZE: usize = SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM;
 pub const SAMPLES_PER_CHUNK_DIM_M1: usize = SAMPLES_PER_CHUNK_DIM - 1;
 pub const HALF_CHUNK: f32 = CHUNK_SIZE / 2.0;
 pub const Z0_RADIUS: f32 = 80.0; //in world units. Distance where everything is loaded at all times and physically simulated.
@@ -33,10 +33,18 @@ pub const Z0_RADIUS_SQUARED: f32 = Z0_RADIUS * Z0_RADIUS;
 pub const Z1_RADIUS: f32 = 100.0; //in world units. Distance where chunks are loaded at full res but not stored in memory.
 pub const Z1_RADIUS_SQUARED: f32 = Z1_RADIUS * Z1_RADIUS;
 pub const VOXEL_SIZE: f32 = CHUNK_SIZE / SAMPLES_PER_CHUNK_DIM_M1 as f32;
-pub const Z2_RADIUS: f32 = 1000.0;
+pub const Z2_RADIUS: f32 = 2000.0;
 pub const Z2_RADIUS_SQUARED: f32 = Z2_RADIUS * Z2_RADIUS;
 pub const MAX_RADIUS: f32 = Z0_RADIUS.max(Z1_RADIUS).max(Z2_RADIUS);
 pub const MAX_RADIUS_SQUARED: f32 = MAX_RADIUS * MAX_RADIUS;
+pub const REDUCED_FOV_1_RADIUS: f32 = 150.0;
+pub const REDUCED_FOV_2_RADIUS: f32 = 300.0;
+pub const REDUCED_FOV_3_RADIUS: f32 = 600.0;
+pub const REDUCED_FOV_4_RADIUS: f32 = 1200.0;
+pub const REDUCED_FOV_1_RADIUS_SQUARED: f32 = REDUCED_FOV_1_RADIUS * REDUCED_FOV_1_RADIUS;
+pub const REDUCED_FOV_2_RADIUS_SQUARED: f32 = REDUCED_FOV_2_RADIUS * REDUCED_FOV_2_RADIUS;
+pub const REDUCED_FOV_3_RADIUS_SQUARED: f32 = REDUCED_FOV_3_RADIUS * REDUCED_FOV_3_RADIUS;
+pub const REDUCED_FOV_4_RADIUS_SQUARED: f32 = REDUCED_FOV_4_RADIUS * REDUCED_FOV_4_RADIUS;
 
 #[derive(Component)]
 pub struct ChunkTag;

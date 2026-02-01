@@ -74,12 +74,19 @@ This is entirely due to lock contention. Although there were zero deadlocks or e
     - When I created a dedicated write thread and made the worker threads use read only file handles it doubled performance.
 
 Mesh LOD
-    Pre-LOD render stats
-    Total meshes: 171683
-    Total vertices: 430900258
-    Total triangles: 827668224
     We cannot afford to render this many triangles when they dont even account for 1 pixel of screen space so we sample meshes at lower resolution at different distances.
-    TODO
+    Implemented 4 conservative distances.
+    At distance 1000
+        +78% FPS
+        -99.87% load time
+        -95.84% vertices
+        -96.24% triangles
+    At distance 2000
+        +2650% FPS
+        -98.45% load time
+        -98.63% vertices
+        -98.86% triangles
+
 
 Failed Technologies:
     8 bit symmetric quantization - too much data loss, causes visual artifacts

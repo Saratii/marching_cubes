@@ -2,15 +2,14 @@ use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use marching_cubes::terrain::{
-    chunk_generator::{ NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED, get_fbm,
-    },
-    terrain::{CHUNK_SIZE, HALF_CHUNK, HEIGHT_MAP_GRID_SIZE, SAMPLES_PER_CHUNK_DIM},
+    chunk_generator::{NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED, get_fbm},
+    terrain::{CHUNK_SIZE, HALF_CHUNK, HEIGHTMAP_GRID_SIZE, SAMPLES_PER_CHUNK_DIM},
 };
 
 fn benchmark_full_chunk_noise(c: &mut Criterion) {
     //call noise on every sample in the chunk
     let fbm = get_fbm();
-    let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
+    let mut heightmap_buffer = [0.0; HEIGHTMAP_GRID_SIZE];
     c.bench_function("full_chunk_noise", |b| {
         b.iter(|| {
             let start_x = 0.0;
@@ -38,7 +37,7 @@ fn benchmark_full_chunk_noise(c: &mut Criterion) {
 fn benchmark_corner_lerp_noise(c: &mut Criterion) {
     //only call noise on the 4 corners and lerp in between
     let fbm = get_fbm();
-    let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
+    let mut heightmap_buffer = [0.0; HEIGHTMAP_GRID_SIZE];
     c.bench_function("corner_lerp_noise", |b| {
         b.iter(|| {
             let start_x = 0.0;
@@ -84,7 +83,7 @@ fn benchmark_corner_lerp_noise(c: &mut Criterion) {
 fn benchmark_grid_3x3_noise(c: &mut Criterion) {
     //sample the 4 corners, plus the midpoints of each edge and the center, then bilerp between them
     let fbm = get_fbm();
-    let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
+    let mut heightmap_buffer = [0.0; HEIGHTMAP_GRID_SIZE];
     c.bench_function("grid_3x3_noise", |b| {
         b.iter(|| {
             let start_x = 0.0;
@@ -179,7 +178,7 @@ fn benchmark_grid_3x3_noise(c: &mut Criterion) {
 fn benchmark_corner_bicubic_noise(c: &mut Criterion) {
     //sample a 4x4 grid with corners at inner positions, then bicubic interpolate
     let fbm = get_fbm();
-    let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
+    let mut heightmap_buffer = [0.0; HEIGHTMAP_GRID_SIZE];
     c.bench_function("corner_bicubic_noise", |b| {
         b.iter(|| {
             let start_x = 0.0;
@@ -218,7 +217,7 @@ fn benchmark_corner_bicubic_noise(c: &mut Criterion) {
 fn benchmark_grid_bicubic_noise(c: &mut Criterion) {
     //sample a 5x5 evenly spaced grid, then bicubic interpolate between points
     let fbm = get_fbm();
-    let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
+    let mut heightmap_buffer = [0.0; HEIGHTMAP_GRID_SIZE];
     c.bench_function("grid_bicubic_noise", |b| {
         b.iter(|| {
             let start_x = 0.0;

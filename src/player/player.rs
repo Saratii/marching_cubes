@@ -239,13 +239,11 @@ fn toggle_grab_cursor(
 ) {
     match primary_cursor_options.grab_mode {
         CursorGrabMode::None => {
-            println!("Toggling cursor grabbed");
             primary_cursor_options.grab_mode = CursorGrabMode::Confined;
             primary_cursor_options.visible = false;
             camera_controller.is_cursor_grabbed = true;
         }
         _ => {
-            println!("Toggling cursor released");
             primary_cursor_options.grab_mode = CursorGrabMode::None;
             primary_cursor_options.visible = true;
             camera_controller.is_cursor_grabbed = false;
