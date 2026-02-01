@@ -2,10 +2,9 @@ use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use marching_cubes::terrain::{
-    chunk_generator::{
-        HEIGHT_MAP_GRID_SIZE, NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED, get_fbm,
+    chunk_generator::{ NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED, get_fbm,
     },
-    terrain::{CHUNK_SIZE, HALF_CHUNK, SAMPLES_PER_CHUNK_DIM},
+    terrain::{CHUNK_SIZE, HALF_CHUNK, HEIGHT_MAP_GRID_SIZE, SAMPLES_PER_CHUNK_DIM},
 };
 
 fn benchmark_full_chunk_noise(c: &mut Criterion) {

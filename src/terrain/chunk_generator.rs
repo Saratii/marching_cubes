@@ -4,11 +4,10 @@ use fastnoise2::{
     generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
 };
 
-use crate::terrain::terrain::{CHUNK_SIZE, HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, VOXEL_SIZE};
+use crate::terrain::terrain::{CHUNK_SIZE, HALF_CHUNK};
 pub const NOISE_SEED: i32 = 111; // Seed for noise generation
 pub const NOISE_FREQUENCY: f32 = 0.0005; // Frequency of the noise
 pub const NOISE_AMPLITUDE: f32 = 300.0; // Amplitude of the noise
-pub const HEIGHT_MAP_GRID_SIZE: usize = SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM;
 
 pub fn get_fbm() -> GeneratorWrapper<SafeNode> {
     let mountains = opensimplex2().ridged(0.5, 0.5, 5, 2.0);
@@ -21,13 +20,21 @@ pub fn generate_densities(
     density_buffer: &mut [i16],
     material_buffer: &mut [u8],
     heightmap_buffer: &mut [f32],
+    samples_per_chunk_dim: usize,
 ) -> bool {
-    generate_terrain_heights(chunk_start.x, chunk_start.z, fbm, heightmap_buffer);
+    generate_terrain_heights(
+        chunk_start.x,
+        chunk_start.z,
+        fbm,
+        heightmap_buffer,
+        samples_per_chunk_dim,
+    );
     let is_uniform = fill_voxel_densities(
         density_buffer,
         material_buffer,
         &chunk_start,
         heightmap_buffer,
+        samples_per_chunk_dim,
     );
     is_uniform
 }
@@ -63,6 +70,7 @@ pub fn generate_terrain_heights(
     chunk_start_z: f32, //assumed to be even and integer
     fbm: &GeneratorWrapper<SafeNode>,
     heightmap_buffer: &mut [f32],
+    samples_per_chunk_dim: usize,
 ) {
     let mut noise_grid = [0.0; 25];
     let x_start = ((chunk_start_x - HALF_CHUNK) / HALF_CHUNK) as i32;
@@ -79,9 +87,9 @@ pub fn generate_terrain_heights(
     for v in &mut noise_grid {
         *v *= NOISE_AMPLITUDE;
     }
-    let inv_samples = 1.0 / (SAMPLES_PER_CHUNK_DIM - 1) as f32;
+    let inv_samples = 1.0 / (samples_per_chunk_dim - 1) as f32;
     let mut roller = 0;
-    for z in 0..SAMPLES_PER_CHUNK_DIM {
+    for z in 0..samples_per_chunk_dim {
         let t_z = z as f32 * inv_samples;
         let grid_z = 1.0 + t_z * 2.0;
         let grid_z_idx = grid_z as usize;
@@ -94,7 +102,7 @@ pub fn generate_terrain_heights(
         let b1 = gz1 * 5;
         let b2 = gz2 * 5;
         let b3 = gz3 * 5;
-        for x in 0..SAMPLES_PER_CHUNK_DIM {
+        for x in 0..samples_per_chunk_dim {
             let t_x = x as f32 * inv_samples;
             let grid_x = 1.0 + t_x * 2.0;
             let grid_x_idx = grid_x as usize;
@@ -137,20 +145,23 @@ pub fn fill_voxel_densities(
     materials: &mut [u8],
     chunk_start: &Vec3,
     terrain_heights: &[f32],
+    samples_per_chunk_dim: usize,
 ) -> bool {
+    let voxel_size = CHUNK_SIZE / (samples_per_chunk_dim - 1) as f32;
+    let heightmap_grid_size: usize = samples_per_chunk_dim * samples_per_chunk_dim;
     let solid_threshold = quantize_f32_to_i16(-1.0);
     let mut is_uniform = true;
     let mut init_distance = 0;
     let mut init_material = 0;
     let mut has_init = false;
-    for z in [0, SAMPLES_PER_CHUNK_DIM - 1] {
-        let height_base = z * SAMPLES_PER_CHUNK_DIM;
-        let z_base = z * HEIGHT_MAP_GRID_SIZE;
-        for y in 0..SAMPLES_PER_CHUNK_DIM {
-            let world_y = chunk_start.y + y as f32 * VOXEL_SIZE;
+    for z in [0, samples_per_chunk_dim - 1] {
+        let height_base = z * samples_per_chunk_dim;
+        let z_base = z * heightmap_grid_size;
+        for y in 0..samples_per_chunk_dim {
+            let world_y = chunk_start.y + y as f32 * voxel_size;
             let below_sea = world_y < 0.0;
-            let base_rolling_voxel_index = z_base + y * SAMPLES_PER_CHUNK_DIM;
-            for x in 0..SAMPLES_PER_CHUNK_DIM {
+            let base_rolling_voxel_index = z_base + y * samples_per_chunk_dim;
+            for x in 0..samples_per_chunk_dim {
                 let rolling_voxel_index = base_rolling_voxel_index + x;
                 let terrain_height = terrain_heights[height_base + x];
                 let distance_to_surface =
@@ -178,14 +189,14 @@ pub fn fill_voxel_densities(
             }
         }
     }
-    for z in 1..SAMPLES_PER_CHUNK_DIM - 1 {
-        let height_base = z * SAMPLES_PER_CHUNK_DIM;
-        let z_base = z * HEIGHT_MAP_GRID_SIZE;
-        for y in [0, SAMPLES_PER_CHUNK_DIM - 1] {
-            let world_y = chunk_start.y + y as f32 * VOXEL_SIZE;
+    for z in 1..samples_per_chunk_dim - 1 {
+        let height_base = z * samples_per_chunk_dim;
+        let z_base = z * heightmap_grid_size;
+        for y in [0, samples_per_chunk_dim - 1] {
+            let world_y = chunk_start.y + y as f32 * voxel_size;
             let below_sea = world_y < 0.0;
-            let base_rolling_voxel_index = z_base + y * SAMPLES_PER_CHUNK_DIM;
-            for x in 0..SAMPLES_PER_CHUNK_DIM {
+            let base_rolling_voxel_index = z_base + y * samples_per_chunk_dim;
+            for x in 0..samples_per_chunk_dim {
                 let rolling_voxel_index = base_rolling_voxel_index + x;
                 let terrain_height = terrain_heights[height_base + x];
                 let distance_to_surface =
@@ -213,14 +224,14 @@ pub fn fill_voxel_densities(
             }
         }
     }
-    for z in 1..SAMPLES_PER_CHUNK_DIM - 1 {
-        let height_base = z * SAMPLES_PER_CHUNK_DIM;
-        let z_base = z * HEIGHT_MAP_GRID_SIZE;
-        for y in 1..SAMPLES_PER_CHUNK_DIM - 1 {
-            let world_y = chunk_start.y + y as f32 * VOXEL_SIZE;
+    for z in 1..samples_per_chunk_dim - 1 {
+        let height_base = z * samples_per_chunk_dim;
+        let z_base = z * heightmap_grid_size;
+        for y in 1..samples_per_chunk_dim - 1 {
+            let world_y = chunk_start.y + y as f32 * voxel_size;
             let below_sea = world_y < 0.0;
-            let base_rolling_voxel_index = z_base + y * SAMPLES_PER_CHUNK_DIM;
-            for x in [0, SAMPLES_PER_CHUNK_DIM - 1] {
+            let base_rolling_voxel_index = z_base + y * samples_per_chunk_dim;
+            for x in [0, samples_per_chunk_dim - 1] {
                 let rolling_voxel_index = base_rolling_voxel_index + x;
                 let terrain_height = terrain_heights[height_base + x];
                 let distance_to_surface =
@@ -251,14 +262,14 @@ pub fn fill_voxel_densities(
     if is_uniform {
         return is_uniform;
     } else {
-        for z in 1..SAMPLES_PER_CHUNK_DIM - 1 {
-            let height_base = z * SAMPLES_PER_CHUNK_DIM;
-            let z_base = z * HEIGHT_MAP_GRID_SIZE;
-            for y in 1..SAMPLES_PER_CHUNK_DIM - 1 {
-                let world_y = chunk_start.y + y as f32 * VOXEL_SIZE;
+        for z in 1..samples_per_chunk_dim - 1 {
+            let height_base = z * samples_per_chunk_dim;
+            let z_base = z * heightmap_grid_size;
+            for y in 1..samples_per_chunk_dim - 1 {
+                let world_y = chunk_start.y + y as f32 * voxel_size;
                 let below_sea = world_y < 0.0;
-                let base_rolling_voxel_index = z_base + y * SAMPLES_PER_CHUNK_DIM;
-                for x in 1..SAMPLES_PER_CHUNK_DIM - 1 {
+                let base_rolling_voxel_index = z_base + y * samples_per_chunk_dim;
+                for x in 1..samples_per_chunk_dim - 1 {
                     let rolling_voxel_index = base_rolling_voxel_index + x;
                     let terrain_height = terrain_heights[height_base + x];
                     let distance_to_surface =
@@ -339,67 +350,3 @@ fn bicubic_interp16(
     let col3 = cubic_interp(g30, g31, g32, g33, t_x);
     cubic_interp(col0, col1, col2, col3, t_z)
 }
-
-// #[cfg(test)]
-// mod tests {
-//     use fastnoise2::generator::{Generator, simplex::opensimplex2};
-
-//     use super::*;
-
-//     #[test]
-//     fn test_generate_densities() {
-//         let noise_function = || -> GeneratorWrapper<SafeNode> {
-//             (opensimplex2().fbm(0.0000000, 0.5, 1, 2.5)).build()
-//         }();
-//         let mut densities_buffer = [0; SAMPLES_PER_CHUNK];
-//         let mut materials_buffer = [0; SAMPLES_PER_CHUNK];
-//         let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
-//         let chunk_start = (-10, -100, -10);
-//         let chunk_end = (10, 100, 10);
-//         for chunk_x in chunk_start.0..chunk_end.0 {
-//             for chunk_y in chunk_start.1..chunk_end.1 {
-//                 for chunk_z in chunk_start.2..chunk_end.2 {
-//                     let chunk_coord = (chunk_x, chunk_y, chunk_z);
-//                     let chunk_start = calculate_chunk_start(&chunk_coord);
-//                     let first_sample_reuse =
-//                         sample_fbm(&noise_function, chunk_start.x, chunk_start.z);
-//                     generate_terrain_heights(
-//                         chunk_start.x,
-//                         chunk_start.z,
-//                         &noise_function,
-//                         first_sample_reuse,
-//                         &mut heightmap_buffer,
-//                     );
-//                     let is_uniform = fill_voxel_densities(
-//                         &mut densities_buffer,
-//                         &mut materials_buffer,
-//                         &chunk_start,
-//                         &heightmap_buffer,
-//                     );
-//                     let densities = densities_buffer.clone();
-//                     let materials = materials_buffer.clone();
-//                     let is_uniform_2 = fill_voxel_densities_faster(
-//                         &mut densities_buffer,
-//                         &mut materials_buffer,
-//                         &chunk_start,
-//                         &heightmap_buffer,
-//                     );
-//                     if is_uniform != is_uniform_2 || materials[0] != materials_buffer[0] {
-//                         panic!(
-//                             "Mismatch in uniformity at chunk {:?}: {} vs {}",
-//                             chunk_coord, is_uniform, is_uniform_2
-//                         );
-//                     }
-//                     if !is_uniform {
-//                         if densities != densities_buffer {
-//                             panic!("Mismatch in densities at chunk {:?}", chunk_coord);
-//                         }
-//                         if materials != materials_buffer {
-//                             panic!("Mismatch in materials at chunk {:?}", chunk_coord);
-//                         }
-//                     }
-//                 }
-//             }
-//         }
-//     }
-// }

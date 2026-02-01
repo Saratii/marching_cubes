@@ -4,8 +4,8 @@ use marching_cubes::{
         CHUNK_SERIALIZED_SIZE, load_chunk, load_chunk_index_map, update_chunk, write_chunk,
     },
     terrain::{
-        chunk_generator::{HEIGHT_MAP_GRID_SIZE, calculate_chunk_start, get_fbm},
-        terrain::{SAMPLES_PER_CHUNK, generate_chunk_into_buffers},
+        chunk_generator::{calculate_chunk_start, get_fbm},
+        terrain::{HEIGHT_MAP_GRID_SIZE, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_DIM, generate_chunk_into_buffers},
     },
 };
 use rustc_hash::FxHashMap;
@@ -83,6 +83,7 @@ fn benchmark_write_single_new_chunk(c: &mut Criterion) {
         &mut density_buffer,
         &mut material_buffer,
         &mut heightmap_buffer,
+        SAMPLES_PER_CHUNK_DIM,
     );
     let chunk_coord = (1000, 1000, 1000);
     let mut index_map = FxHashMap::default();
@@ -162,6 +163,7 @@ fn benchmark_bulk_write_new_chunk(c: &mut Criterion) {
             &mut density_buffer,
             &mut material_buffer,
             &mut heightmap_buffer,
+            SAMPLES_PER_CHUNK,
         );
         chunks_data.push((
             density_buffer.clone(),
