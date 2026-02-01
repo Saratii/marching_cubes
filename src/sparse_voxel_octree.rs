@@ -3,7 +3,7 @@ use rustc_hash::FxHashSet;
 
 use crate::{
     conversions::{cluster_coord_to_world_center, cluster_coord_to_world_pos},
-    data_loader::driver::ChunkRequest,
+    data_loader::driver::ClusterRequest,
     terrain::terrain::{
         CHUNK_SIZE, CLUSTER_SIZE, MAX_RADIUS_SQUARED, Z0_RADIUS_SQUARED, Z1_RADIUS_SQUARED,
         Z2_RADIUS_SQUARED,
@@ -200,7 +200,7 @@ impl SvoNode {
         center: &Vec3,
         radius_squared: f32,
         chunks_being_loaded: &mut FxHashSet<(i16, i16, i16)>,
-        request_buffer: &mut Vec<ChunkRequest>,
+        request_buffer: &mut Vec<ClusterRequest>,
     ) {
         if !sphere_intersects_aabb(center, radius_squared, &self.node_min, &self.node_max) {
             return;
@@ -216,11 +216,11 @@ impl SvoNode {
                     }
                     chunks_being_loaded.insert(self.lower_cluster_coord);
                     let load_priority = get_load_priority(distance_squared);
-                    request_buffer.push(ChunkRequest {
+                    request_buffer.push(ClusterRequest {
                         position: self.lower_cluster_coord,
                         load_status: load_priority,
                         upgrade: false,
-                        distance_squared: distance_squared.round() as u32,
+                        distance_squared,
                     });
                 } else if !chunks_being_loaded.contains(&self.lower_cluster_coord) {
                     let current_load_status = self.chunk.as_ref().unwrap().1;
@@ -229,11 +229,11 @@ impl SvoNode {
                     let desired_load_status = get_load_priority(distance_squared);
                     if desired_load_status < current_load_status {
                         chunks_being_loaded.insert(self.lower_cluster_coord);
-                        request_buffer.push(ChunkRequest {
+                        request_buffer.push(ClusterRequest {
                             position: self.lower_cluster_coord,
                             load_status: desired_load_status,
                             upgrade: true,
-                            distance_squared: distance_squared.round() as u32,
+                            distance_squared,
                         });
                     }
                 }

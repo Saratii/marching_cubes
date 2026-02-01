@@ -11,7 +11,7 @@ use marching_cubes::{
         },
         heightmap_compute_pipeline::GpuHeightmapGenerator,
         terrain::{
-            CLUSTER_SIZE, HALF_CHUNK, HEIGHT_MAP_GRID_SIZE, SAMPLES_PER_CHUNK,
+            CLUSTER_SIZE, HALF_CHUNK, HEIGHTMAP_GRID_SIZE, SAMPLES_PER_CHUNK,
             SAMPLES_PER_CHUNK_DIM, generate_chunk_into_buffers,
         },
     },
@@ -23,7 +23,7 @@ fn benchmark_generate_densities_cpu(c: &mut Criterion) {
     let fbm = get_fbm();
     let mut densities_buffer = [0; SAMPLES_PER_CHUNK];
     let mut materials_buffer = [0; SAMPLES_PER_CHUNK];
-    let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
+    let mut heightmap_buffer = [0.0; HEIGHTMAP_GRID_SIZE];
     c.bench_function("generate_densities_cpu", |b| {
         b.iter(|| {
             let chunk_start = calculate_chunk_start(&chunk_coord);
@@ -43,7 +43,7 @@ fn benchmark_generate_uniform_densities_cpu(c: &mut Criterion) {
     let fbm = get_fbm();
     let mut densities_buffer = [0; SAMPLES_PER_CHUNK];
     let mut materials_buffer = [0; SAMPLES_PER_CHUNK];
-    let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
+    let mut heightmap_buffer = [0.0; HEIGHTMAP_GRID_SIZE];
     c.bench_function("generate_uniform_densities_cpu", |b| {
         b.iter(|| {
             let chunk_start = calculate_chunk_start(&(0, 2000, 0));
@@ -77,7 +77,7 @@ fn benchmark_marching_cubes(c: &mut Criterion) {
     let chunk_start = calculate_chunk_start(&chunk);
     let mut densities_buffer = [0; SAMPLES_PER_CHUNK];
     let mut materials_buffer = [0; SAMPLES_PER_CHUNK];
-    let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
+    let mut heightmap_buffer = [0.0; HEIGHTMAP_GRID_SIZE];
     generate_chunk_into_buffers(
         &fbm,
         chunk_start,
@@ -101,7 +101,7 @@ fn benchmark_marching_cubes(c: &mut Criterion) {
 fn benchmark_heightmap_single_chunk_cpu(c: &mut Criterion) {
     let chunk_coord = (0, 0, 0);
     let fbm = get_fbm();
-    let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
+    let mut heightmap_buffer = [0.0; HEIGHTMAP_GRID_SIZE];
     let chunk_start = calculate_chunk_start(&chunk_coord);
     c.bench_function("heightmap_single_cpu", |b| {
         b.iter(|| {
@@ -130,7 +130,7 @@ fn benchmark_cluster_heightmap_cpu(c: &mut Criterion) {
     let fbm = get_fbm();
     let chunk = world_pos_to_chunk_coord(&Vec3::ZERO);
     let cluster = chunk_coord_to_cluster_coord(&chunk);
-    let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
+    let mut heightmap_buffer = [0.0; HEIGHTMAP_GRID_SIZE];
     c.bench_function("cluster_heightmap_cpu", |b| {
         b.iter(|| {
             let mut results = HashMap::new();
@@ -185,7 +185,7 @@ fn benchmark_batch_cluster_heightmaps_gpu(c: &mut Criterion) {
 fn find_chunk_with_surface() -> (i16, i16, i16) {
     let mut densities_buffer = [0; SAMPLES_PER_CHUNK];
     let mut materials_buffer = [0; SAMPLES_PER_CHUNK];
-    let mut heightmap_buffer = [0.0; HEIGHT_MAP_GRID_SIZE];
+    let mut heightmap_buffer = [0.0; HEIGHTMAP_GRID_SIZE];
     let fbm = get_fbm();
     for chunk_y in -100..100 {
         let chunk_coord = (0, chunk_y, 0);
