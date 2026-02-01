@@ -15,7 +15,7 @@ use crate::{
     conversions::flatten_index,
     data_loader::file_loader::get_project_root,
     terrain::{
-        chunk_generator::{HEIGHT_MAP_GRID_SIZE, generate_densities},
+        chunk_generator::generate_densities,
         terrain_material::{ATTRIBUTE_MATERIAL_ID, TerrainMaterialExtension},
     },
 };
@@ -60,8 +60,8 @@ pub enum Uniformity {
 
 #[derive(Clone)]
 pub struct NonUniformTerrainChunk {
-    pub densities: Arc<[i16; SAMPLES_PER_CHUNK]>, //arc, so the write thread can read them
-    pub materials: Arc<[u8; SAMPLES_PER_CHUNK]>,
+    pub densities: Arc<[i16]>, //arc, so the write thread can read them
+    pub materials: Arc<[u8]>,
 }
 
 pub enum TerrainChunk {
@@ -82,10 +82,7 @@ impl TerrainChunk {
 }
 
 impl NonUniformTerrainChunk {
-    pub fn new(
-        densities: Arc<[i16; SAMPLES_PER_CHUNK]>,
-        materials: Arc<[u8; SAMPLES_PER_CHUNK]>,
-    ) -> Self {
+    pub fn new(densities: Arc<[i16]>, materials: Arc<[u8]>) -> Self {
         Self {
             densities,
             materials,
@@ -113,7 +110,7 @@ pub fn generate_chunk_into_buffers(
     chunk_start: Vec3,
     density_buffer: &mut [i16],
     material_buffer: &mut [u8],
-    heightmap_buffer: &mut [f32; HEIGHT_MAP_GRID_SIZE],
+    heightmap_buffer: &mut [f32],
 ) -> Uniformity {
     let is_uniform = generate_densities(
         fbm,

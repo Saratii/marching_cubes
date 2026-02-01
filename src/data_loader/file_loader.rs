@@ -50,8 +50,8 @@ pub fn deserialize_chunk_data(data: &[u8], density_buffer: &mut [i16], material_
 }
 
 pub fn write_chunk(
-    densities: &[i16; SAMPLES_PER_CHUNK],
-    materials: &[u8; SAMPLES_PER_CHUNK],
+    densities: &[i16],
+    materials: &[u8],
     chunk_coord: &(i16, i16, i16),
     index_map_delta: &mut FxHashMap<(i16, i16, i16), u64>,
     chunk_data_file: &mut File,
@@ -78,8 +78,8 @@ pub fn write_chunk(
 
 pub fn update_chunk(
     byte_offset: u64,
-    densities: &[i16; SAMPLES_PER_CHUNK],
-    materials: &[u8; SAMPLES_PER_CHUNK],
+    densities: &[i16],
+    materials: &[u8],
     chunk_data_file: &mut File,
     serial_buffer: &mut [u8],
 ) {

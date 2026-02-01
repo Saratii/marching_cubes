@@ -2,9 +2,9 @@ use std::collections::hash_map::Entry;
 
 use rustc_hash::{FxBuildHasher, FxHashMap as HashMap};
 
-use crate::{marching_cubes::tables::{
+use crate::marching_cubes::tables::{
     CORNER_OFFSETS, EDGE_ID_OFFSETS, EDGE_VERTICES, TRIANGLE_TABLE,
-}, terrain::terrain::SAMPLES_PER_CHUNK};
+};
 
 type EdgeKey = u64;
 
@@ -14,8 +14,8 @@ fn make_edge_key(x: u16, y: u16, z: u16, dir: u8) -> u64 {
 }
 
 pub fn mc_mesh_generation(
-    densities: &[i16; SAMPLES_PER_CHUNK],
-    materials: &[u8; SAMPLES_PER_CHUNK],
+    densities: &[i16],
+    materials: &[u8],
     samples_per_chunk_dim: usize,
     half_extent: f32,
 ) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>, Vec<u32>) {
