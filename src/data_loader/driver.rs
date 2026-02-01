@@ -73,8 +73,8 @@ pub enum ChunkSpawnResult {
 
 pub enum WriteCmd {
     UpdateNonUniform {
-        densities: Arc<[i16; SAMPLES_PER_CHUNK]>,
-        materials: Arc<[u8; SAMPLES_PER_CHUNK]>,
+        densities: Arc<[i16]>,
+        materials: Arc<[u8]>,
         coord: (i16, i16, i16),
     },
     WriteUniformAir {

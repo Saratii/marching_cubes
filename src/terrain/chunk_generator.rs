@@ -4,9 +4,7 @@ use fastnoise2::{
     generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
 };
 
-use crate::terrain::terrain::{
-    CHUNK_SIZE, HALF_CHUNK, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_DIM, VOXEL_SIZE,
-};
+use crate::terrain::terrain::{CHUNK_SIZE, HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, VOXEL_SIZE};
 pub const NOISE_SEED: i32 = 111; // Seed for noise generation
 pub const NOISE_FREQUENCY: f32 = 0.0005; // Frequency of the noise
 pub const NOISE_AMPLITUDE: f32 = 300.0; // Amplitude of the noise
@@ -22,7 +20,7 @@ pub fn generate_densities(
     chunk_start: Vec3,
     density_buffer: &mut [i16],
     material_buffer: &mut [u8],
-    heightmap_buffer: &mut [f32; HEIGHT_MAP_GRID_SIZE],
+    heightmap_buffer: &mut [f32],
 ) -> bool {
     generate_terrain_heights(chunk_start.x, chunk_start.z, fbm, heightmap_buffer);
     let is_uniform = fill_voxel_densities(
@@ -43,7 +41,7 @@ pub fn calculate_chunk_start(chunk_coord: &(i16, i16, i16)) -> Vec3 {
 }
 
 //it may be better to store a byte signifying if a chunk contains a surface when saving to disk
-pub fn chunk_contains_surface(density_buffer: &[i16; SAMPLES_PER_CHUNK]) -> bool {
+pub fn chunk_contains_surface(density_buffer: &[i16]) -> bool {
     let mut has_positive = false;
     let mut has_negative = false;
     for &density in density_buffer {
@@ -64,7 +62,7 @@ pub fn generate_terrain_heights(
     chunk_start_x: f32, //assumed to be even and integer
     chunk_start_z: f32, //assumed to be even and integer
     fbm: &GeneratorWrapper<SafeNode>,
-    heightmap_buffer: &mut [f32; HEIGHT_MAP_GRID_SIZE],
+    heightmap_buffer: &mut [f32],
 ) {
     let mut noise_grid = [0.0; 25];
     let x_start = ((chunk_start_x - HALF_CHUNK) / HALF_CHUNK) as i32;
