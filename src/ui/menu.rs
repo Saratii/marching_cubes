@@ -43,7 +43,7 @@ pub fn menu_update(
         return;
     }
     if keyboard.just_pressed(KeyCode::ArrowRight) || keyboard.just_pressed(KeyCode::KeyD) {
-        settings.fps_limit = settings.fps_limit.previous();
+        settings.fps_limit = settings.fps_limit.next();
         save_configurable_settings(&settings);
         apply_fps_limit(&settings.fps_limit, &mut winit_settings);
         for mut text in text_query.iter_mut() {
@@ -83,7 +83,7 @@ fn spawn_menu(commands: &mut Commands, settings: &ConfigurableSettings) {
                         align_items: AlignItems::Center,
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.5, 0.5, 0.5, 0.8)),
+                    BackgroundColor(Color::srgba(0.3, 0.3, 0.5, 0.6)),
                 ))
                 .with_children(|parent| {
                     parent.spawn((

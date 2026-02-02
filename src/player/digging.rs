@@ -22,6 +22,7 @@ use crate::{
             generate_bevy_mesh,
         },
     },
+    ui::menu::MenuRoot,
 };
 
 const DIG_STRENGTH: f32 = 0.5;
@@ -46,7 +47,11 @@ pub fn handle_digging_input(
     mut mesh_handles: ResMut<Assets<Mesh>>,
     mut terrain_io: TerrainIo,
     write_cmd_sender: Res<WriteCmdSender>,
+    menu_root_query: Query<&MenuRoot>,
 ) {
+    if !menu_root_query.is_empty() {
+        return;
+    }
     let should_dig = if mouse_input.pressed(MouseButton::Left) {
         *dig_timer += time.delta_secs();
         if *dig_timer >= DIG_TIMER {

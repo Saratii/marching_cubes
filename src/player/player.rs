@@ -16,6 +16,7 @@ use crate::{
         chunk_generator::{NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED},
         terrain::NoiseFunction,
     },
+    ui::menu::MenuRoot,
 };
 
 const CAMERA_3RD_PERSON_OFFSET: Vec3 = Vec3 {
@@ -194,7 +195,11 @@ pub fn camera_look(
     mut mouse_motion: MessageReader<MouseMotion>,
     mut camera_transform: Single<&mut Transform, With<MainCameraTag>>,
     mut camera_controller: ResMut<CameraController>,
+    menu_root_query: Query<&MenuRoot>,
 ) {
+    if !menu_root_query.is_empty() {
+        return;
+    }
     if camera_controller.is_cursor_grabbed {
         let mut angles_changed = false;
         for event in mouse_motion.read() {
@@ -271,6 +276,7 @@ pub fn player_movement(
     keyboard: Res<ButtonInput<KeyCode>>,
     key_bindings: Res<KeyBindings>,
     camera_controller: Res<CameraController>,
+    menu_root_query: Query<&MenuRoot>,
 ) {
     let is_grounded = player.2.map_or(false, |output| output.grounded);
     let mut movement_vec = Vec3::ZERO;
@@ -278,24 +284,27 @@ pub fn player_movement(
     let forward = yaw_rotation * Vec3::NEG_Z;
     let right = yaw_rotation * Vec3::X;
     let mut horizontal_movement = Vec3::ZERO;
-    if keyboard.pressed(key_bindings.move_forward) {
-        horizontal_movement += forward;
-    }
-    if keyboard.pressed(key_bindings.move_backward) {
-        horizontal_movement -= forward;
-    }
-    if keyboard.pressed(key_bindings.move_left) {
-        horizontal_movement -= right;
-    }
-    if keyboard.pressed(key_bindings.move_right) {
-        horizontal_movement += right;
+    //only allow movement if menu is not open
+    if menu_root_query.is_empty() {
+        if keyboard.pressed(key_bindings.move_forward) {
+            horizontal_movement += forward;
+        }
+        if keyboard.pressed(key_bindings.move_backward) {
+            horizontal_movement -= forward;
+        }
+        if keyboard.pressed(key_bindings.move_left) {
+            horizontal_movement -= right;
+        }
+        if keyboard.pressed(key_bindings.move_right) {
+            horizontal_movement += right;
+        }
+        if keyboard.just_pressed(key_bindings.jump) && is_grounded {
+            player.1.y = JUMP_IMPULSE;
+        }
     }
     if horizontal_movement.length() > 0.0 {
         horizontal_movement = horizontal_movement.normalize();
         movement_vec += horizontal_movement * PLAYER_SPEED;
-    }
-    if keyboard.just_pressed(key_bindings.jump) && is_grounded {
-        player.1.y = JUMP_IMPULSE;
     }
     if !is_grounded {
         player.1.y += BASE_GRAVITY
