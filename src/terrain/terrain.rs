@@ -15,7 +15,7 @@ use crate::{
     conversions::flatten_index,
     data_loader::file_loader::get_project_root,
     terrain::{
-        chunk_generator::generate_densities,
+        chunk_generator::{fill_voxel_densities, generate_terrain_heights},
         terrain_material::{ATTRIBUTE_MATERIAL_ID, TerrainMaterialExtension},
     },
 };
@@ -37,14 +37,16 @@ pub const Z2_RADIUS: f32 = 2000.0;
 pub const Z2_RADIUS_SQUARED: f32 = Z2_RADIUS * Z2_RADIUS;
 pub const MAX_RADIUS: f32 = Z0_RADIUS.max(Z1_RADIUS).max(Z2_RADIUS);
 pub const MAX_RADIUS_SQUARED: f32 = MAX_RADIUS * MAX_RADIUS;
-pub const REDUCED_FOV_1_RADIUS: f32 = 150.0;
-pub const REDUCED_FOV_2_RADIUS: f32 = 300.0;
-pub const REDUCED_FOV_3_RADIUS: f32 = 600.0;
-pub const REDUCED_FOV_4_RADIUS: f32 = 1200.0;
+pub const REDUCED_FOV_1_RADIUS: f32 = 120.0;
+pub const REDUCED_FOV_2_RADIUS: f32 = 240.0;
+pub const REDUCED_FOV_3_RADIUS: f32 = 480.0;
+pub const REDUCED_FOV_4_RADIUS: f32 = 960.0;
+pub const REDUCED_FOV_5_RADIUS: f32 = 1920.0;
 pub const REDUCED_FOV_1_RADIUS_SQUARED: f32 = REDUCED_FOV_1_RADIUS * REDUCED_FOV_1_RADIUS;
 pub const REDUCED_FOV_2_RADIUS_SQUARED: f32 = REDUCED_FOV_2_RADIUS * REDUCED_FOV_2_RADIUS;
 pub const REDUCED_FOV_3_RADIUS_SQUARED: f32 = REDUCED_FOV_3_RADIUS * REDUCED_FOV_3_RADIUS;
 pub const REDUCED_FOV_4_RADIUS_SQUARED: f32 = REDUCED_FOV_4_RADIUS * REDUCED_FOV_4_RADIUS;
+pub const REDUCED_FOV_5_RADIUS_SQUARED: f32 = REDUCED_FOV_5_RADIUS * REDUCED_FOV_5_RADIUS;
 
 #[derive(Component)]
 pub struct ChunkTag;
@@ -122,15 +124,20 @@ pub fn generate_chunk_into_buffers(
     heightmap_buffer: &mut [f32],
     samples_per_chunk_dim: usize,
 ) -> Uniformity {
-    let is_uniform = generate_densities(
+    generate_terrain_heights(
+        chunk_start.x,
+        chunk_start.z,
         fbm,
-        chunk_start,
-        density_buffer,
-        material_buffer,
         heightmap_buffer,
         samples_per_chunk_dim,
     );
-    //if it does not have a surface it must be uniform dirt or air
+    let is_uniform = fill_voxel_densities(
+        density_buffer,
+        material_buffer,
+        &chunk_start,
+        heightmap_buffer,
+        samples_per_chunk_dim,
+    );
     let uniformity = if !is_uniform {
         Uniformity::NonUniform
     } else {

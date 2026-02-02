@@ -14,31 +14,6 @@ pub fn get_fbm() -> GeneratorWrapper<SafeNode> {
     (mountains).build()
 }
 
-pub fn generate_densities(
-    fbm: &GeneratorWrapper<SafeNode>,
-    chunk_start: Vec3,
-    density_buffer: &mut [i16],
-    material_buffer: &mut [u8],
-    heightmap_buffer: &mut [f32],
-    samples_per_chunk_dim: usize,
-) -> bool {
-    generate_terrain_heights(
-        chunk_start.x,
-        chunk_start.z,
-        fbm,
-        heightmap_buffer,
-        samples_per_chunk_dim,
-    );
-    let is_uniform = fill_voxel_densities(
-        density_buffer,
-        material_buffer,
-        &chunk_start,
-        heightmap_buffer,
-        samples_per_chunk_dim,
-    );
-    is_uniform
-}
-
 pub fn calculate_chunk_start(chunk_coord: &(i16, i16, i16)) -> Vec3 {
     Vec3::new(
         chunk_coord.0 as f32 * CHUNK_SIZE - HALF_CHUNK,
@@ -349,4 +324,142 @@ fn bicubic_interp16(
     let col2 = cubic_interp(g20, g21, g22, g23, t_x);
     let col3 = cubic_interp(g30, g31, g32, g33, t_x);
     cubic_interp(col0, col1, col2, col3, t_z)
+}
+
+#[inline(always)]
+fn lerp(a: f32, b: f32, t: f32) -> f32 {
+    a + (b - a) * t
+}
+
+// Density = trilinear SDF sample at the output grid point
+// Material = scan the corresponding input block;
+// prefer grass/sand if any exist near the surface,
+// otherwise pick the closest-to-surface solid.
+pub fn downscale(
+    densities_in: &[i16],
+    materials_in: &[u8],
+    in_dim: usize,
+    densities_out: &mut [i16],
+    materials_out: &mut [u8],
+    out_dim: usize,
+) {
+    let in_max = (in_dim - 1) as f32;
+    let out_max = (out_dim - 1) as f32;
+    for oz in 0..out_dim {
+        let fz = (oz as f32 / out_max) * in_max;
+        for oy in 0..out_dim {
+            let fy = (oy as f32 / out_max) * in_max;
+            for ox in 0..out_dim {
+                let fx = (ox as f32 / out_max) * in_max;
+                let d = sample_trilinear_density(densities_in, in_dim, fx, fy, fz);
+                let out_i = (oz * out_dim + oy) * out_dim + ox;
+                densities_out[out_i] = quantize_f32_to_i16(d);
+                let m = pick_surface_material_block_prefer_biomes(
+                    densities_in,
+                    materials_in,
+                    in_dim,
+                    ox,
+                    oy,
+                    oz,
+                    out_dim,
+                );
+                materials_out[out_i] = m;
+            }
+        }
+    }
+}
+
+fn pick_surface_material_block_prefer_biomes(
+    densities: &[i16],
+    materials: &[u8],
+    in_dim: usize,
+    ox: usize,
+    oy: usize,
+    oz: usize,
+    out_dim: usize,
+) -> u8 {
+    let rf = (in_dim - 1) / (out_dim - 1);
+    let x0 = ox * rf;
+    let y0 = oy * rf;
+    let z0 = oz * rf;
+    let x1 = (x0 + rf).min(in_dim - 1);
+    let y1 = (y0 + rf).min(in_dim - 1);
+    let z1 = (z0 + rf).min(in_dim - 1);
+    let mut best_m: u8 = 0;
+    let mut best_abs: i32 = i32::MAX;
+    for z in z0..=z1 {
+        for y in y0..=y1 {
+            let base = (z * in_dim + y) * in_dim;
+            for x in x0..=x1 {
+                let i = base + x;
+                let d = densities[i];
+                let m = materials[i];
+                if m == 0 || d >= 0 {
+                    continue;
+                }
+                let abs = (d as i32).abs();
+                if abs < best_abs {
+                    best_abs = abs;
+                    best_m = m;
+                }
+            }
+        }
+    }
+    if best_m != 0 {
+        return best_m;
+    }
+    let mut best_any_m: u8 = 0;
+    let mut best_any_abs: i32 = i32::MAX;
+    let mut best_any_solid = false;
+    for z in z0..=z1 {
+        for y in y0..=y1 {
+            let base = (z * in_dim + y) * in_dim;
+            for x in x0..=x1 {
+                let i = base + x;
+                let d = densities[i];
+                let m = materials[i];
+                if m == 0 {
+                    continue;
+                }
+                let abs = (d as i32).abs();
+                let solid = d < 0;
+                if abs < best_any_abs || (abs == best_any_abs && solid && !best_any_solid) {
+                    best_any_abs = abs;
+                    best_any_solid = solid;
+                    best_any_m = m;
+                }
+            }
+        }
+    }
+    best_any_m
+}
+
+fn sample_trilinear_density(d: &[i16], dim: usize, fx: f32, fy: f32, fz: f32) -> f32 {
+    let x0 = fx.floor() as isize;
+    let y0 = fy.floor() as isize;
+    let z0 = fz.floor() as isize;
+    let x1 = (x0 + 1).min((dim - 1) as isize);
+    let y1 = (y0 + 1).min((dim - 1) as isize);
+    let z1 = (z0 + 1).min((dim - 1) as isize);
+    let tx = fx - x0 as f32;
+    let ty = fy - y0 as f32;
+    let tz = fz - z0 as f32;
+    let idx = |x: isize, y: isize, z: isize| -> usize {
+        (z as usize * dim + y as usize) * dim + x as usize
+    };
+    let d000 = dequantize_i16_to_f32(d[idx(x0, y0, z0)]);
+    let d100 = dequantize_i16_to_f32(d[idx(x1, y0, z0)]);
+    let d010 = dequantize_i16_to_f32(d[idx(x0, y1, z0)]);
+    let d110 = dequantize_i16_to_f32(d[idx(x1, y1, z0)]);
+    let d001 = dequantize_i16_to_f32(d[idx(x0, y0, z1)]);
+    let d101 = dequantize_i16_to_f32(d[idx(x1, y0, z1)]);
+    let d011 = dequantize_i16_to_f32(d[idx(x0, y1, z1)]);
+    let d111 = dequantize_i16_to_f32(d[idx(x1, y1, z1)]);
+    let c00 = lerp(d000, d100, tx);
+    let c10 = lerp(d010, d110, tx);
+    let c01 = lerp(d001, d101, tx);
+    let c11 = lerp(d011, d111, tx);
+    let c0 = lerp(c00, c10, ty);
+    let c1 = lerp(c01, c11, ty);
+    lerp(c0, c1, tz)
 }

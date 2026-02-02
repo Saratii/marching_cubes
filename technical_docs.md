@@ -86,6 +86,8 @@ Mesh LOD
         -98.45% load time
         -98.63% vertices
         -98.86% triangles
+    Materials are downscaled from full res to reduce the effect of thin layer bleeding.
+    Solution is not perfect and needs to be optimized. 
 
 
 Failed Technologies:
@@ -105,6 +107,9 @@ Failed Technologies:
     I reached out to several CAD development companies who use MDC and none of them were willing to share. 
     My implementation works well and the vertex data meets all invariants under every circumstance I could test. Unfortunately it is still far too slow to use in real time rendering. 
     I checked over a dozen open source MDC implementations and all of them had failing invariants and made huge simplifications to the QEF solving. (Yes im salty I wanted MDC for this project)
+
+    When using LODs if you generate the LOD volumetric data from noise it creates a bleed effect because you reduce out thin layers like grass.
+    The solution to this is creating full res volumetric data and down sampling. This is very slow compared to the alternative but its necessary. 
     
 Drucker-Prager Elastoplasticity - https://math.ucdavis.edu/~jteran/papers/KGPSJT16.pdf, https://www.youtube.com/watch?v=Bqme4WWuIVQ, https://math.ucdavis.edu/~jteran/
 visco fluid sim - https://github.com/kotsoft/particle_based_viscoelastic_fluid
