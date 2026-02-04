@@ -45,9 +45,27 @@ impl Default for FpsLimit {
     }
 }
 
+#[derive(Serialize, Deserialize, Resource, Debug, Clone, Copy, PartialEq, Default)]
+pub enum MenuTab {
+    #[default]
+    General,
+    Debug,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum MenuFocus {
+    #[default]
+    Tabs,
+    Setting(usize),
+}
+
 #[derive(Serialize, Deserialize, Resource, Debug)]
 pub struct ConfigurableSettings {
     pub fps_limit: FpsLimit,
+    #[serde(skip)]
+    pub current_tab: MenuTab,
+    #[serde(skip)]
+    pub current_focus: MenuFocus,
 }
 
 pub fn load_configurable_settings() -> ConfigurableSettings {
@@ -61,6 +79,8 @@ impl Default for ConfigurableSettings {
     fn default() -> Self {
         ConfigurableSettings {
             fps_limit: FpsLimit::default(),
+            current_tab: MenuTab::General,
+            current_focus: MenuFocus::Tabs,
         }
     }
 }
