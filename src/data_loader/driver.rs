@@ -2,9 +2,8 @@ use crate::{
     constants::{
         CHUNK_WORLD_SIZE, CHUNKS_PER_CLUSTER, CHUNKS_PER_CLUSTER_DIM, HALF_CHUNK,
         MAX_RENDER_RADIUS_SQUARED, NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED,
-        PLAYER_CUBOID_SIZE, REDUCED_LOD_1_RADIUS, REDUCED_LOD_2_RADIUS, REDUCED_LOD_3_RADIUS,
-        REDUCED_LOD_4_RADIUS, REDUCED_LOD_5_RADIUS, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_2D,
-        SAMPLES_PER_CHUNK_DIM, Z0_RADIUS,
+        PLAYER_CUBOID_SIZE, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_2D, SAMPLES_PER_CHUNK_DIM,
+        SIMULATION_RADIUS_SQUARED,
     },
     conversions::cluster_coord_to_min_chunk_coord,
     data_loader::{
@@ -14,12 +13,13 @@ use crate::{
             load_uniform_chunks, remove_uniform_chunk, update_chunk, write_chunk,
         },
     },
+    sparse_voxel_octree::LoadStatus,
     terrain::{
         chunk_generator::{calculate_chunk_start, downscale, get_fbm},
         terrain::{NonUniformTerrainChunk, generate_chunk_into_buffers},
     },
 };
-use bevy::prelude::*;
+use bevy::{camera::primitives::MeshAabb, prelude::*};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use fastnoise2::{SafeNode, generator::GeneratorWrapper};
@@ -66,10 +66,23 @@ pub struct NoiseGenerator(pub GeneratorWrapper<SafeNode>);
 #[derive(Resource)]
 pub struct TerrainChunkMap(pub Arc<Mutex<FxHashMap<(i16, i16, i16), TerrainChunk>>>);
 
+#[repr(u8)]
+#[derive(Debug, PartialEq)]
+pub enum Lod {
+    NoChange,
+    Full,
+    Lod1,
+    Lod2,
+    Lod3,
+    Lod4,
+    Lod5,
+}
+
 pub enum ChunkSpawnResult {
     ToSpawn(((i16, i16, i16), Option<Collider>, Mesh)),
     ToDespawn((i16, i16, i16)),
     ToGiveCollider(((i16, i16, i16), Collider)),
+    ToChangeLod(((i16, i16, i16), Option<Collider>, Mesh)),
 }
 
 pub enum WriteCmd {
@@ -98,9 +111,10 @@ pub struct ChunkSpawnReciever(Receiver<ChunkSpawnResult>);
 #[derive(Debug)]
 pub struct ClusterRequest {
     pub position: (i16, i16, i16),
-    pub load_status: u8,
+    pub load_status: LoadStatus,
     pub upgrade: bool,
     pub distance_squared: f32, //distance to cluster center in world units
+    pub lod: Lod,
 }
 
 impl PartialEq for ClusterRequest {
@@ -109,6 +123,7 @@ impl PartialEq for ClusterRequest {
             && self.load_status == other.load_status
             && self.upgrade == other.upgrade
             && self.distance_squared == other.distance_squared
+            && self.lod == other.lod
     }
 }
 
@@ -132,7 +147,8 @@ impl PartialOrd for ClusterRequest {
 struct ChunkResult {
     has_entity: [bool; CHUNKS_PER_CLUSTER],
     cluster_coord: (i16, i16, i16),
-    load_status: u8,
+    load_status: LoadStatus,
+    lod_status: Lod,
 }
 
 #[derive(Resource)]
@@ -389,11 +405,7 @@ fn chunk_loader_thread(
     const RF4_SAMPLES_PER_CHUNK: usize = SAMPLES_PER_CHUNK / RF4.pow(3);
     const RF5_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF5;
     const RF5_SAMPLES_PER_CHUNK: usize = SAMPLES_PER_CHUNK / RF5.pow(3);
-    const REDUCED_LOD_1_RADIUS_SQUARED: f32 = REDUCED_LOD_1_RADIUS * REDUCED_LOD_1_RADIUS;
-    const REDUCED_LOD_2_RADIUS_SQUARED: f32 = REDUCED_LOD_2_RADIUS * REDUCED_LOD_2_RADIUS;
-    const REDUCED_LOD_3_RADIUS_SQUARED: f32 = REDUCED_LOD_3_RADIUS * REDUCED_LOD_3_RADIUS;
-    const REDUCED_LOD_4_RADIUS_SQUARED: f32 = REDUCED_LOD_4_RADIUS * REDUCED_LOD_4_RADIUS;
-    const REDUCED_LOD_5_RADIUS_SQUARED: f32 = REDUCED_LOD_5_RADIUS * REDUCED_LOD_5_RADIUS;
+    const PROCESS_BATCH_SIZE: usize = 64;
     let mut internal_queue = Vec::with_capacity(32);
     let mut density_buffer = [0; SAMPLES_PER_CHUNK];
     let mut material_buffer = [0; SAMPLES_PER_CHUNK];
@@ -430,7 +442,6 @@ fn chunk_loader_thread(
         File::create(format!("plots/latest/queue_size_thread_{}.csv", thread_idx)).unwrap();
     #[cfg(feature = "timers")]
     writeln!(queue_size_file, "time_seconds,queue_size").unwrap();
-    const PROCESS_BATCH_SIZE: usize = 64;
     loop {
         let (lock, cv) = &*priority_queue;
         let mut heap = lock.lock().unwrap();
@@ -452,7 +463,7 @@ fn chunk_loader_thread(
                         let chunk_coord = (chunk_x, chunk_y, chunk_z);
                         let uniformity_option = column_range_map_read_only.contains(chunk_coord);
                         let has_surface = if uniformity_option.is_some() {
-                            if request.load_status == 0 {
+                            if request.load_status == LoadStatus::Simulated {
                                 let terrain_chunk = if uniformity_option == Some(Uniformity::Air) {
                                     TerrainChunk::UniformAir
                                 } else {
@@ -477,7 +488,7 @@ fn chunk_loader_thread(
                                     &mut density_buffer,
                                     &mut material_buffer,
                                 );
-                                if request.load_status == 0 {
+                                if request.load_status == LoadStatus::Simulated {
                                     terrain_chunk_map_insert_sender
                                         .send((
                                             chunk_coord,
@@ -540,7 +551,7 @@ fn chunk_loader_thread(
                                             //     .unwrap();
                                         }
                                     }
-                                    if request.load_status == 0 {
+                                    if request.load_status == LoadStatus::Simulated {
                                         let terrain_chunk = match uniformity {
                                             Uniformity::Air => TerrainChunk::UniformAir,
                                             Uniformity::Dirt => TerrainChunk::UniformDirt,
@@ -568,19 +579,18 @@ fn chunk_loader_thread(
                                 }
                             }
                         };
-                        let has_collider = has_surface && request.load_status == 0;
+                        let has_collider =
+                            has_surface && request.load_status == LoadStatus::Simulated;
                         let (collider, mesh) = if has_surface {
-                            let (vertices, normals, material_ids, indices) =
-                                if request.distance_squared > REDUCED_LOD_5_RADIUS_SQUARED {
-                                    let in_dim = SAMPLES_PER_CHUNK_DIM;
-                                    let out_dim = RF5_SAMPLES_PER_CHUNK_DIM;
+                            let (vertices, normals, material_ids, indices) = match request.lod {
+                                Lod::Lod5 => {
                                     downscale(
                                         &density_buffer,
                                         &material_buffer,
-                                        in_dim,
+                                        SAMPLES_PER_CHUNK_DIM,
                                         &mut density_buffer_r5,
                                         &mut material_buffer_r5,
-                                        out_dim,
+                                        RF5_SAMPLES_PER_CHUNK_DIM,
                                     );
                                     mc_mesh_generation(
                                         &density_buffer_r5,
@@ -588,16 +598,15 @@ fn chunk_loader_thread(
                                         RF5_SAMPLES_PER_CHUNK_DIM,
                                         HALF_CHUNK,
                                     )
-                                } else if request.distance_squared > REDUCED_LOD_4_RADIUS_SQUARED {
-                                    let in_dim = SAMPLES_PER_CHUNK_DIM;
-                                    let out_dim = RF4_SAMPLES_PER_CHUNK_DIM;
+                                }
+                                Lod::Lod4 => {
                                     downscale(
                                         &density_buffer,
                                         &material_buffer,
-                                        in_dim,
+                                        SAMPLES_PER_CHUNK_DIM,
                                         &mut density_buffer_r4,
                                         &mut material_buffer_r4,
-                                        out_dim,
+                                        RF4_SAMPLES_PER_CHUNK_DIM,
                                     );
                                     mc_mesh_generation(
                                         &density_buffer_r4,
@@ -605,16 +614,15 @@ fn chunk_loader_thread(
                                         RF4_SAMPLES_PER_CHUNK_DIM,
                                         HALF_CHUNK,
                                     )
-                                } else if request.distance_squared > REDUCED_LOD_3_RADIUS_SQUARED {
-                                    let in_dim = SAMPLES_PER_CHUNK_DIM;
-                                    let out_dim = RF3_SAMPLES_PER_CHUNK_DIM;
+                                }
+                                Lod::Lod3 => {
                                     downscale(
                                         &density_buffer,
                                         &material_buffer,
-                                        in_dim,
+                                        SAMPLES_PER_CHUNK_DIM,
                                         &mut density_buffer_r3,
                                         &mut material_buffer_r3,
-                                        out_dim,
+                                        RF3_SAMPLES_PER_CHUNK_DIM,
                                     );
                                     mc_mesh_generation(
                                         &density_buffer_r3,
@@ -622,16 +630,15 @@ fn chunk_loader_thread(
                                         RF3_SAMPLES_PER_CHUNK_DIM,
                                         HALF_CHUNK,
                                     )
-                                } else if request.distance_squared > REDUCED_LOD_2_RADIUS_SQUARED {
-                                    let in_dim = SAMPLES_PER_CHUNK_DIM;
-                                    let out_dim = RF2_SAMPLES_PER_CHUNK_DIM;
+                                }
+                                Lod::Lod2 => {
                                     downscale(
                                         &density_buffer,
                                         &material_buffer,
-                                        in_dim,
+                                        SAMPLES_PER_CHUNK_DIM,
                                         &mut density_buffer_r2,
                                         &mut material_buffer_r2,
-                                        out_dim,
+                                        RF2_SAMPLES_PER_CHUNK_DIM,
                                     );
                                     mc_mesh_generation(
                                         &density_buffer_r2,
@@ -639,16 +646,15 @@ fn chunk_loader_thread(
                                         RF2_SAMPLES_PER_CHUNK_DIM,
                                         HALF_CHUNK,
                                     )
-                                } else if request.distance_squared > REDUCED_LOD_1_RADIUS_SQUARED {
-                                    let in_dim = SAMPLES_PER_CHUNK_DIM;
-                                    let out_dim = RF1_SAMPLES_PER_CHUNK_DIM;
+                                }
+                                Lod::Lod1 => {
                                     downscale(
                                         &density_buffer,
                                         &material_buffer,
-                                        in_dim,
+                                        SAMPLES_PER_CHUNK_DIM,
                                         &mut density_buffer_r1,
                                         &mut material_buffer_r1,
-                                        out_dim,
+                                        RF1_SAMPLES_PER_CHUNK_DIM,
                                     );
                                     mc_mesh_generation(
                                         &density_buffer_r1,
@@ -656,14 +662,17 @@ fn chunk_loader_thread(
                                         RF1_SAMPLES_PER_CHUNK_DIM,
                                         HALF_CHUNK,
                                     )
-                                } else {
-                                    mc_mesh_generation(
-                                        &density_buffer,
-                                        &material_buffer,
-                                        SAMPLES_PER_CHUNK_DIM,
-                                        HALF_CHUNK,
-                                    )
-                                };
+                                }
+                                Lod::Full => mc_mesh_generation(
+                                    &density_buffer,
+                                    &material_buffer,
+                                    SAMPLES_PER_CHUNK_DIM,
+                                    HALF_CHUNK,
+                                ),
+                                Lod::NoChange => {
+                                    panic!("should not generate mesh for no change lod")
+                                }
+                            };
                             let mesh = generate_bevy_mesh(vertices, normals, material_ids, indices);
                             let collider = if has_collider {
                                 Some(
@@ -681,14 +690,22 @@ fn chunk_loader_thread(
                             (None, None)
                         };
                         if has_collider {
-                            if request.upgrade {
+                            if request.upgrade && request.lod == Lod::NoChange {
                                 chunk_spawn_channel
                                     .send(ChunkSpawnResult::ToGiveCollider((
                                         chunk_coord,
                                         collider.unwrap(),
                                     )))
                                     .unwrap();
-                            } else {
+                            } else if request.upgrade && request.lod != Lod::NoChange {
+                                chunk_spawn_channel
+                                    .send(ChunkSpawnResult::ToChangeLod((
+                                        chunk_coord,
+                                        collider,
+                                        mesh.unwrap(),
+                                    )))
+                                    .unwrap();
+                            } else if !request.upgrade {
                                 chunk_spawn_channel
                                     .send(ChunkSpawnResult::ToSpawn((
                                         chunk_coord,
@@ -703,6 +720,16 @@ fn chunk_loader_thread(
                                     .send(ChunkSpawnResult::ToSpawn((
                                         chunk_coord,
                                         None,
+                                        mesh.unwrap(),
+                                    )))
+                                    .unwrap();
+                            }
+                        } else if request.lod != Lod::NoChange {
+                            if mesh.is_some() {
+                                chunk_spawn_channel
+                                    .send(ChunkSpawnResult::ToChangeLod((
+                                        chunk_coord,
+                                        collider,
                                         mesh.unwrap(),
                                     )))
                                     .unwrap();
@@ -724,6 +751,7 @@ fn chunk_loader_thread(
                 has_entity: has_entity_buffer,
                 cluster_coord: request.position,
                 load_status: request.load_status,
+                lod_status: request.lod,
             });
             #[cfg(feature = "timers")]
             {
@@ -778,7 +806,7 @@ fn svo_manager_thread(
     drop(player_translation_lock);
     svo.root.fill_missing_chunks_in_radius(
         &initial_player_translation,
-        Z0_RADIUS * Z0_RADIUS,
+        SIMULATION_RADIUS_SQUARED,
         &mut chunks_being_loaded,
         &mut request_buffer,
     );
@@ -798,8 +826,12 @@ fn svo_manager_thread(
         }
         drop(terrain_map_lock);
         while let Ok(result) = results_channel.try_recv() {
-            svo.root
-                .insert(result.cluster_coord, result.load_status, result.has_entity);
+            svo.root.insert(
+                result.cluster_coord,
+                result.load_status,
+                result.has_entity,
+                result.lod_status,
+            );
             chunks_being_loaded.remove(&result.cluster_coord);
         }
         let player_translation_lock = player_translation.lock().unwrap();
@@ -862,9 +894,10 @@ fn svo_manager_thread(
 pub fn chunk_spawn_reciever(
     mut commands: Commands,
     standard_material: Res<TerrainMaterialHandle>,
-    mut meshes: ResMut<Assets<Mesh>>,
+    mut mesh_handles: ResMut<Assets<Mesh>>,
     req_rx: Res<ChunkSpawnReciever>,
     mut chunk_entity_map: ResMut<ChunkEntityMap>,
+    mut rendered_chunks_query: Query<(Option<&mut Collider>, &mut Mesh3d), With<ChunkTag>>,
 ) {
     let mut count = 0;
     while let Ok(req) = req_rx.0.try_recv() {
@@ -872,36 +905,55 @@ pub fn chunk_spawn_reciever(
         let t0 = Instant::now();
         count += 1;
         match req {
-            ChunkSpawnResult::ToSpawn((chunk, collider_opt, mesh)) => {
+            ChunkSpawnResult::ToSpawn((chunk_coord, collider_opt, mesh)) => {
                 let entity = match collider_opt {
                     Some(collider) => commands
                         .spawn((
-                            Mesh3d(meshes.add(mesh)),
+                            Mesh3d(mesh_handles.add(mesh)),
                             collider,
                             ChunkTag,
-                            Transform::from_translation(chunk_coord_to_world_pos(&chunk)),
+                            Transform::from_translation(chunk_coord_to_world_pos(&chunk_coord)),
                             MeshMaterial3d(standard_material.0.clone()),
                         ))
                         .id(),
                     None => commands
                         .spawn((
-                            Mesh3d(meshes.add(mesh)),
+                            Mesh3d(mesh_handles.add(mesh)),
                             ChunkTag,
-                            Transform::from_translation(chunk_coord_to_world_pos(&chunk)),
+                            Transform::from_translation(chunk_coord_to_world_pos(&chunk_coord)),
                             MeshMaterial3d(standard_material.0.clone()),
                         ))
                         .id(),
                 };
-                chunk_entity_map.0.insert(chunk, entity);
+                chunk_entity_map.0.insert(chunk_coord, entity);
             }
-            ChunkSpawnResult::ToGiveCollider((chunk, collider)) => {
-                let entity = chunk_entity_map.0.get(&chunk).unwrap();
+            ChunkSpawnResult::ToGiveCollider((chunk_coord, collider)) => {
+                let entity = chunk_entity_map.0.get(&chunk_coord).unwrap();
                 commands.entity(*entity).insert(collider);
             }
             ChunkSpawnResult::ToDespawn(chunk_coord) => {
                 commands
                     .entity(chunk_entity_map.0.remove(&chunk_coord).unwrap())
                     .despawn();
+            }
+            ChunkSpawnResult::ToChangeLod((chunk_coord, new_collider_option, new_mesh)) => {
+                let entity = chunk_entity_map.0.get(&chunk_coord).unwrap();
+                let (collider_option, mut mesh_handle) =
+                    rendered_chunks_query.get_mut(*entity).unwrap();
+                mesh_handles.remove(&mesh_handle.0);
+                if let Some(aabb) = new_mesh.compute_aabb() {
+                    commands.entity(*entity).insert(aabb);
+                }
+                *mesh_handle = Mesh3d(mesh_handles.add(new_mesh));
+                if let Some(mut collider) = collider_option {
+                    if let Some(new_collider) = new_collider_option {
+                        *collider = new_collider;
+                    }
+                } else {
+                    if let Some(new_collider) = new_collider_option {
+                        commands.entity(*entity).insert(new_collider);
+                    }
+                }
             }
         }
         if count >= 40 {

@@ -1,8 +1,7 @@
 use bevy::math::Vec3;
 
-pub const Z0_RADIUS: f32 = 80.0; //in world units. Distance where everything is loaded at all times and physically simulated.
-pub const Z1_RADIUS: f32 = 100.0; //in world units. Distance where chunks are loaded at full res but not stored in memory.
-pub const Z2_RADIUS: f32 = 2600.0;
+pub const SIMULATION_RADIUS: f32 = 80.0; //in world units. Distance where everything is loaded at all times and physically simulated.
+pub const RENDER_RADIUS: f32 = 1000.0; //in world units. Distance where chunks are rendered, only meta data should exist at this point besides vertex data for rendering. 
 pub const CHUNK_WORLD_SIZE: f32 = 12.0; //in world units, required by noise to be an integer and even
 pub const SAMPLES_PER_CHUNK_DIM: usize = 64; // Number of voxel sample points
 pub const CHUNKS_PER_CLUSTER_DIM: usize = 5; //number of chunks along one edge of a cluster
@@ -22,8 +21,15 @@ pub const CLUSTER_WORLD_LENGTH: f32 = CHUNK_WORLD_SIZE * CHUNKS_PER_CLUSTER_DIM 
 pub const SAMPLES_PER_CHUNK: usize = SAMPLES_PER_CHUNK_DIM.pow(3);
 pub const SAMPLES_PER_CHUNK_2D: usize = SAMPLES_PER_CHUNK_DIM.pow(2);
 pub const HALF_CHUNK: f32 = CHUNK_WORLD_SIZE / 2.0;
-pub const MAX_RENDER_RADIUS: f32 = Z0_RADIUS.max(Z1_RADIUS).max(Z2_RADIUS);
+pub const MAX_RENDER_RADIUS: f32 = SIMULATION_RADIUS.max(RENDER_RADIUS);
 pub const VOXEL_WORLD_SIZE: f32 = CHUNK_WORLD_SIZE / (SAMPLES_PER_CHUNK_DIM - 1) as f32;
 pub const CHUNKS_PER_CLUSTER: usize = CHUNKS_PER_CLUSTER_DIM.pow(3);
 pub const CHUNKS_PER_CLUSTER_2D: usize = CHUNKS_PER_CLUSTER_DIM.pow(2);
 pub const MAX_RENDER_RADIUS_SQUARED: f32 = MAX_RENDER_RADIUS * MAX_RENDER_RADIUS;
+pub const SIMULATION_RADIUS_SQUARED: f32 = SIMULATION_RADIUS * SIMULATION_RADIUS;
+pub const RENDER_RADIUS_SQUARED: f32 = RENDER_RADIUS * RENDER_RADIUS;
+pub const REDUCED_LOD_1_RADIUS_SQUARED: f32 = REDUCED_LOD_1_RADIUS * REDUCED_LOD_1_RADIUS;
+pub const REDUCED_LOD_2_RADIUS_SQUARED: f32 = REDUCED_LOD_2_RADIUS * REDUCED_LOD_2_RADIUS;
+pub const REDUCED_LOD_3_RADIUS_SQUARED: f32 = REDUCED_LOD_3_RADIUS * REDUCED_LOD_3_RADIUS;
+pub const REDUCED_LOD_4_RADIUS_SQUARED: f32 = REDUCED_LOD_4_RADIUS * REDUCED_LOD_4_RADIUS;
+pub const REDUCED_LOD_5_RADIUS_SQUARED: f32 = REDUCED_LOD_5_RADIUS * REDUCED_LOD_5_RADIUS;

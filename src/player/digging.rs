@@ -45,7 +45,7 @@ pub fn handle_digging_input(
     mut dig_timer: Local<f32>,
     time: Res<Time>,
     material_handle: Res<TerrainMaterialHandle>,
-    mut solid_chunk_query: Query<(&mut Collider, &mut Mesh3d, Entity), With<ChunkTag>>,
+    mut solid_chunk_query: Query<(&mut Collider, &mut Mesh3d), With<ChunkTag>>,
     mut mesh_handles: ResMut<Assets<Mesh>>,
     mut terrain_io: TerrainIo,
     write_cmd_sender: Res<WriteCmdSender>,
@@ -133,7 +133,7 @@ pub fn handle_digging_input(
                         match entity {
                             //entity already existed, update it
                             Some(entity) => {
-                                let (mut collider_component, mut mesh_handle, _) =
+                                let (mut collider_component, mut mesh_handle) =
                                     solid_chunk_query.get_mut(*entity).unwrap();
                                 *collider_component = collider;
                                 mesh_handles.remove(&mesh_handle.0);
@@ -217,12 +217,12 @@ fn dig_sphere(
                         match terrain_chunk {
                             TerrainChunk::UniformAir => (
                                 Arc::new([i16::MAX; SAMPLES_PER_CHUNK]),
-                                Arc::new([0u8; SAMPLES_PER_CHUNK]),
+                                Arc::new([0; SAMPLES_PER_CHUNK]),
                                 Uniformity::Air,
                             ),
                             TerrainChunk::UniformDirt => (
                                 Arc::new([i16::MIN; SAMPLES_PER_CHUNK]),
-                                Arc::new([1u8; SAMPLES_PER_CHUNK]),
+                                Arc::new([1; SAMPLES_PER_CHUNK]),
                                 Uniformity::Dirt,
                             ),
                             TerrainChunk::NonUniformTerrainChunk(chunk) => (
