@@ -1,14 +1,12 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use marching_cubes::{
+    constants::{SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_2D, SAMPLES_PER_CHUNK_DIM},
     data_loader::file_loader::{
         CHUNK_SERIALIZED_SIZE, load_chunk, load_chunk_index_map, update_chunk, write_chunk,
     },
     terrain::{
         chunk_generator::{calculate_chunk_start, get_fbm},
-        terrain::{
-            HEIGHTMAP_GRID_SIZE, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_DIM,
-            generate_chunk_into_buffers,
-        },
+        terrain::generate_chunk_into_buffers,
     },
 };
 use rustc_hash::FxHashMap;
@@ -79,7 +77,7 @@ fn benchmark_write_single_new_chunk(c: &mut Criterion) {
     let chunk_start = calculate_chunk_start(&(0, 0, 0));
     let mut density_buffer = [0; SAMPLES_PER_CHUNK];
     let mut material_buffer = [0; SAMPLES_PER_CHUNK];
-    let mut heightmap_buffer = [0.0; HEIGHTMAP_GRID_SIZE];
+    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
     generate_chunk_into_buffers(
         &fbm,
         chunk_start,
@@ -156,7 +154,7 @@ fn benchmark_bulk_write_new_chunk(c: &mut Criterion) {
     let mut chunks_data = Vec::new();
     let mut density_buffer = [0; SAMPLES_PER_CHUNK];
     let mut material_buffer = [0; SAMPLES_PER_CHUNK];
-    let mut heightmap_buffer = [0.0; HEIGHTMAP_GRID_SIZE];
+    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
     for i in 0..100 {
         let chunk_coord = (1000 + i, 1000, 1000);
         let chunk_start = calculate_chunk_start(&chunk_coord);

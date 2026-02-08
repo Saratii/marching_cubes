@@ -30,6 +30,7 @@ Chunk Allocation/Deallocation:
     At the furthest level, only vertex data exists. Colliders are not added and memory references are dropped. 
     Generation logic recognises generation precidence, allowing chunks nearest to the player to generate first.
     This is important because as the player moves around, chunks that previously did not have colliders need to get colliders before distant chunks generate to prevent player from falling through the map. 
+    LOD distances are set by eye balling the world looking for instances where the player can see a lower res chunk, in which case I increased the previous LOD range. This is not ideal but I could not find an elegant solution for this. 
 
 World Generation:
     The entire world is created procedurally.

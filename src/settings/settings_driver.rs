@@ -43,12 +43,13 @@ fn save_settings(settings: &Settings) {
 //after monitor moves, save the new centered position to settings
 pub fn save_monitor_on_move(
     mut window_moved: MessageReader<WindowMoved>,
-    window: Single<&Window, With<PrimaryWindow>>,
+    window_query: Query<&Window, With<PrimaryWindow>>,
     monitors: Query<&Monitor>,
 ) {
     if window_moved.read().last().is_none() {
         return;
     }
+    let window = window_query.iter().next().unwrap();
     let WindowPosition::At(pos) = window.position else {
         return;
     };

@@ -1,6 +1,6 @@
-use crate::terrain::{
-    chunk_generator::calculate_chunk_start,
-    terrain::{CLUSTER_SIZE, SAMPLES_PER_CHUNK},
+use crate::{
+    constants::{CHUNKS_PER_CLUSTER_2D, CHUNKS_PER_CLUSTER_DIM, SAMPLES_PER_CHUNK},
+    terrain::chunk_generator::calculate_chunk_start,
 };
 use bytemuck::{Pod, Zeroable, bytes_of, cast_slice};
 use pollster::block_on;
@@ -153,9 +153,8 @@ impl GpuHeightmapGenerator {
             compilation_options: PipelineCompilationOptions::default(),
             cache: None,
         });
-        let total_chunks = (CLUSTER_SIZE * CLUSTER_SIZE) as usize;
         let cluster_params_size = size_of::<ClusterParams>() as u64;
-        let cluster_output_size = HEIGHT_BYTES * total_chunks as u64;
+        let cluster_output_size = HEIGHT_BYTES * CHUNKS_PER_CLUSTER_2D as u64;
         let cluster_params_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("Cluster Params Buffer"),
             size: cluster_params_size,
@@ -330,7 +329,6 @@ impl GpuHeightmapGenerator {
         cluster_x: i32,
         cluster_z: i32,
     ) -> HashMap<(i16, i16), Box<[f32]>> {
-        let total_chunks = (CLUSTER_SIZE * CLUSTER_SIZE) as usize;
         let cluster_params = ClusterParams {
             cluster_lower_chunk: [cluster_x, cluster_z],
             _pad: [0, 0],
@@ -348,14 +346,14 @@ impl GpuHeightmapGenerator {
             compute_pass.set_pipeline(&self.cluster_pipeline);
             compute_pass.set_bind_group(0, &self.bind_group, &[]);
             compute_pass.set_bind_group(1, &self.cluster_bind_group, &[]);
-            compute_pass.dispatch_workgroups(WORKGROUP_SIZE, total_chunks as u32, 1);
+            compute_pass.dispatch_workgroups(WORKGROUP_SIZE, CHUNKS_PER_CLUSTER_2D as u32, 1);
         }
         encoder.copy_buffer_to_buffer(
             &self.cluster_output_buffer,
             0,
             &self.cluster_download_buffer,
             0,
-            HEIGHT_BYTES * total_chunks as u64,
+            HEIGHT_BYTES * CHUNKS_PER_CLUSTER_2D as u64,
         );
         self.queue.submit([encoder.finish()]);
         let slice = self.cluster_download_buffer.slice(..);
@@ -363,14 +361,14 @@ impl GpuHeightmapGenerator {
         self.device.poll(PollType::wait_indefinitely()).unwrap();
         let mapped = slice.get_mapped_range();
         let all_heights: &[f32] = cast_slice(&mapped);
-        let mut results = HashMap::with_capacity(total_chunks);
-        for local_z in 0..CLUSTER_SIZE {
-            for local_x in 0..CLUSTER_SIZE {
+        let mut results = HashMap::with_capacity(CHUNKS_PER_CLUSTER_2D);
+        for local_z in 0..CHUNKS_PER_CLUSTER_DIM {
+            for local_x in 0..CHUNKS_PER_CLUSTER_DIM {
                 let chunk_coord = (
                     cluster_x as i16 + local_x as i16,
                     cluster_z as i16 + local_z as i16,
                 );
-                let chunk_index = (local_z * CLUSTER_SIZE + local_x) as usize;
+                let chunk_index = (local_z * CHUNKS_PER_CLUSTER_DIM + local_x) as usize;
                 let start = chunk_index * NOISE_SAMPLES_PER_CHUNK;
                 let end = start + NOISE_SAMPLES_PER_CHUNK;
                 let heightmap = all_heights[start..end].to_vec().into_boxed_slice();
@@ -387,8 +385,7 @@ impl GpuHeightmapGenerator {
         cluster_coords: &[(i32, i32)],
     ) -> FxHashMap<(i16, i16), Box<[f32]>> {
         let cluster_count = cluster_coords.len();
-        const CHUNKS_PER_CLUSTER: usize = (CLUSTER_SIZE * CLUSTER_SIZE) as usize;
-        let total_chunks = cluster_count * CHUNKS_PER_CLUSTER;
+        let total_chunks = cluster_count * CHUNKS_PER_CLUSTER_2D;
         let header = BatchClusterParamsHeader {
             cluster_count: cluster_count as u32,
             _pad: [0; 3],
@@ -476,7 +473,7 @@ impl GpuHeightmapGenerator {
             compute_pass.set_bind_group(2, &batch_bind_group, &[]);
             compute_pass.dispatch_workgroups(
                 WORKGROUP_SIZE,
-                CHUNKS_PER_CLUSTER as u32,
+                CHUNKS_PER_CLUSTER_DIM as u32,
                 cluster_count as u32,
             );
         }
@@ -496,10 +493,12 @@ impl GpuHeightmapGenerator {
         let mut results =
             FxHashMap::with_capacity_and_hasher(total_chunks, FxBuildHasher::default());
         for (cluster_idx, &(cluster_x, cluster_z)) in cluster_coords.iter().enumerate() {
-            for local_z in 0..CLUSTER_SIZE {
-                for local_x in 0..CLUSTER_SIZE {
-                    let chunk_in_cluster_idx = (local_z * CLUSTER_SIZE + local_x) as usize;
-                    let global_chunk_idx = cluster_idx * CHUNKS_PER_CLUSTER + chunk_in_cluster_idx;
+            for local_z in 0..CHUNKS_PER_CLUSTER_DIM {
+                for local_x in 0..CHUNKS_PER_CLUSTER_DIM {
+                    let chunk_in_cluster_idx =
+                        (local_z * CHUNKS_PER_CLUSTER_DIM + local_x) as usize;
+                    let global_chunk_idx =
+                        cluster_idx * CHUNKS_PER_CLUSTER_DIM + chunk_in_cluster_idx;
                     let start = global_chunk_idx * NOISE_SAMPLES_PER_CHUNK;
                     let end = start + NOISE_SAMPLES_PER_CHUNK;
                     let heightmap = all_heights[start..end].to_vec().into_boxed_slice();

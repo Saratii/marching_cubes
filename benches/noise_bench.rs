@@ -1,20 +1,23 @@
 use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use marching_cubes::terrain::{
-    chunk_generator::{NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED, get_fbm},
-    terrain::{CHUNK_SIZE, HALF_CHUNK, HEIGHTMAP_GRID_SIZE, SAMPLES_PER_CHUNK_DIM},
+use marching_cubes::{
+    constants::{
+        CHUNK_WORLD_SIZE, HALF_CHUNK, NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED,
+        SAMPLES_PER_CHUNK_2D, SAMPLES_PER_CHUNK_DIM,
+    },
+    terrain::chunk_generator::get_fbm,
 };
 
 fn benchmark_full_chunk_noise(c: &mut Criterion) {
     //call noise on every sample in the chunk
     let fbm = get_fbm();
-    let mut heightmap_buffer = [0.0; HEIGHTMAP_GRID_SIZE];
+    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
     c.bench_function("full_chunk_noise", |b| {
         b.iter(|| {
             let start_x = 0.0;
             let start_z = 0.0;
-            let step = CHUNK_SIZE as f32 / SAMPLES_PER_CHUNK_DIM as f32;
+            let step = CHUNK_WORLD_SIZE as f32 / SAMPLES_PER_CHUNK_DIM as f32;
             let mut roller = 0;
             for x in 0..SAMPLES_PER_CHUNK_DIM {
                 let sample_x = start_x + (x as f32 * step);
@@ -37,7 +40,7 @@ fn benchmark_full_chunk_noise(c: &mut Criterion) {
 fn benchmark_corner_lerp_noise(c: &mut Criterion) {
     //only call noise on the 4 corners and lerp in between
     let fbm = get_fbm();
-    let mut heightmap_buffer = [0.0; HEIGHTMAP_GRID_SIZE];
+    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
     c.bench_function("corner_lerp_noise", |b| {
         b.iter(|| {
             let start_x = 0.0;
@@ -48,18 +51,18 @@ fn benchmark_corner_lerp_noise(c: &mut Criterion) {
                 NOISE_SEED,
             ) * NOISE_AMPLITUDE;
             let top_right = fbm.gen_single_2d(
-                (start_x + CHUNK_SIZE as f32) * NOISE_FREQUENCY,
+                (start_x + CHUNK_WORLD_SIZE as f32) * NOISE_FREQUENCY,
                 start_z * NOISE_FREQUENCY,
                 NOISE_SEED,
             ) * NOISE_AMPLITUDE;
             let bottom_left = fbm.gen_single_2d(
                 start_x * NOISE_FREQUENCY,
-                (start_z + CHUNK_SIZE) * NOISE_FREQUENCY,
+                (start_z + CHUNK_WORLD_SIZE) * NOISE_FREQUENCY,
                 NOISE_SEED,
             ) * NOISE_AMPLITUDE;
             let bottom_right = fbm.gen_single_2d(
-                (start_x + CHUNK_SIZE as f32) * NOISE_FREQUENCY,
-                (start_z + CHUNK_SIZE as f32) * NOISE_FREQUENCY,
+                (start_x + CHUNK_WORLD_SIZE as f32) * NOISE_FREQUENCY,
+                (start_z + CHUNK_WORLD_SIZE as f32) * NOISE_FREQUENCY,
                 NOISE_SEED,
             ) * NOISE_AMPLITUDE;
             let inv_samples = 1.0 / (SAMPLES_PER_CHUNK_DIM - 1) as f32;
@@ -83,7 +86,7 @@ fn benchmark_corner_lerp_noise(c: &mut Criterion) {
 fn benchmark_grid_3x3_noise(c: &mut Criterion) {
     //sample the 4 corners, plus the midpoints of each edge and the center, then bilerp between them
     let fbm = get_fbm();
-    let mut heightmap_buffer = [0.0; HEIGHTMAP_GRID_SIZE];
+    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
     c.bench_function("grid_3x3_noise", |b| {
         b.iter(|| {
             let start_x = 0.0;
@@ -101,7 +104,7 @@ fn benchmark_grid_3x3_noise(c: &mut Criterion) {
                         NOISE_SEED,
                     ) * NOISE_AMPLITUDE,
                     fbm.gen_single_2d(
-                        (start_x + CHUNK_SIZE as f32) * NOISE_FREQUENCY,
+                        (start_x + CHUNK_WORLD_SIZE as f32) * NOISE_FREQUENCY,
                         start_z * NOISE_FREQUENCY,
                         NOISE_SEED,
                     ) * NOISE_AMPLITUDE,
@@ -118,7 +121,7 @@ fn benchmark_grid_3x3_noise(c: &mut Criterion) {
                         NOISE_SEED,
                     ) * NOISE_AMPLITUDE,
                     fbm.gen_single_2d(
-                        (start_x + CHUNK_SIZE as f32) * NOISE_FREQUENCY,
+                        (start_x + CHUNK_WORLD_SIZE as f32) * NOISE_FREQUENCY,
                         (start_z + HALF_CHUNK) * NOISE_FREQUENCY,
                         NOISE_SEED,
                     ) * NOISE_AMPLITUDE,
@@ -126,17 +129,17 @@ fn benchmark_grid_3x3_noise(c: &mut Criterion) {
                 [
                     fbm.gen_single_2d(
                         start_x * NOISE_FREQUENCY,
-                        (start_z + CHUNK_SIZE as f32) * NOISE_FREQUENCY,
+                        (start_z + CHUNK_WORLD_SIZE as f32) * NOISE_FREQUENCY,
                         NOISE_SEED,
                     ) * NOISE_AMPLITUDE,
                     fbm.gen_single_2d(
                         (start_x + HALF_CHUNK) * NOISE_FREQUENCY,
-                        (start_z + CHUNK_SIZE as f32) * NOISE_FREQUENCY,
+                        (start_z + CHUNK_WORLD_SIZE as f32) * NOISE_FREQUENCY,
                         NOISE_SEED,
                     ) * NOISE_AMPLITUDE,
                     fbm.gen_single_2d(
-                        (start_x + CHUNK_SIZE as f32) * NOISE_FREQUENCY,
-                        (start_z + CHUNK_SIZE as f32) * NOISE_FREQUENCY,
+                        (start_x + CHUNK_WORLD_SIZE as f32) * NOISE_FREQUENCY,
+                        (start_z + CHUNK_WORLD_SIZE as f32) * NOISE_FREQUENCY,
                         NOISE_SEED,
                     ) * NOISE_AMPLITUDE,
                 ],
@@ -178,12 +181,12 @@ fn benchmark_grid_3x3_noise(c: &mut Criterion) {
 fn benchmark_corner_bicubic_noise(c: &mut Criterion) {
     //sample a 4x4 grid with corners at inner positions, then bicubic interpolate
     let fbm = get_fbm();
-    let mut heightmap_buffer = [0.0; HEIGHTMAP_GRID_SIZE];
+    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
     c.bench_function("corner_bicubic_noise", |b| {
         b.iter(|| {
             let start_x = 0.0;
             let start_z = 0.0;
-            let step = CHUNK_SIZE as f32;
+            let step = CHUNK_WORLD_SIZE as f32;
             let mut grid = [[0.0f32; 4]; 4];
             for gz in 0..4 {
                 let sample_z = start_z + ((gz as i32 - 1) as f32 * step);
@@ -217,12 +220,12 @@ fn benchmark_corner_bicubic_noise(c: &mut Criterion) {
 fn benchmark_grid_bicubic_noise(c: &mut Criterion) {
     //sample a 5x5 evenly spaced grid, then bicubic interpolate between points
     let fbm = get_fbm();
-    let mut heightmap_buffer = [0.0; HEIGHTMAP_GRID_SIZE];
+    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
     c.bench_function("grid_bicubic_noise", |b| {
         b.iter(|| {
             let start_x = 0.0;
             let start_z = 0.0;
-            let step = CHUNK_SIZE as f32 / 4.0;
+            let step = CHUNK_WORLD_SIZE as f32 / 4.0;
             let mut grid = [[0.0f32; 5]; 5];
             for gz in 0..5 {
                 let sample_z = start_z + (gz as f32 * step);

@@ -10,3 +10,4 @@ pub mod ui;
 pub mod marching_cubes;
 pub mod settings;
 pub mod lighting;
+pub mod constants;

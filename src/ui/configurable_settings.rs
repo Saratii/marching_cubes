@@ -45,27 +45,74 @@ impl Default for FpsLimit {
     }
 }
 
-#[derive(Serialize, Deserialize, Resource, Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Serialize, Deserialize, Resource, Debug, Clone, Copy, PartialEq)]
 pub enum MenuTab {
-    #[default]
     General,
+    #[cfg(feature = "debug")]
     Debug,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MenuFocus {
-    #[default]
     Tabs,
     Setting(usize),
 }
 
+#[derive(Copy, PartialEq, Clone)]
+pub enum SettingsType {
+    Lod1Toggle,
+    Lod2Toggle,
+    Lod3Toggle,
+    Lod4Toggle,
+    Lod5Toggle,
+    ShowChunksToggle,
+    FpsChange,
+}
+
+impl SettingsType {
+    pub fn text(&self, s: &ConfigurableSettings) -> String {
+        const fn on_off(b: bool) -> &'static str {
+            if b { "ON" } else { "OFF" }
+        }
+        match self {
+            SettingsType::Lod1Toggle => format!("LOD 1: {}", on_off(s.debug_lod_1)),
+            SettingsType::Lod2Toggle => format!("LOD 2: {}", on_off(s.debug_lod_2)),
+            SettingsType::Lod3Toggle => format!("LOD 3: {}", on_off(s.debug_lod_3)),
+            SettingsType::Lod4Toggle => format!("LOD 4: {}", on_off(s.debug_lod_4)),
+            SettingsType::Lod5Toggle => format!("LOD 5: {}", on_off(s.debug_lod_5)),
+            SettingsType::ShowChunksToggle => format!("Show Chunks: {}", on_off(s.show_chunks)),
+            SettingsType::FpsChange => format!("FPS Limit: {}", s.fps_limit.to_display_string()),
+        }
+    }
+
+    pub fn cycle(&self, settings: &mut ConfigurableSettings, dir_next: bool) {
+        match self {
+            SettingsType::FpsChange => {
+                settings.fps_limit = if dir_next {
+                    settings.fps_limit.next()
+                } else {
+                    settings.fps_limit.previous()
+                };
+            }
+            SettingsType::Lod1Toggle => settings.debug_lod_1 = !settings.debug_lod_1,
+            SettingsType::Lod2Toggle => settings.debug_lod_2 = !settings.debug_lod_2,
+            SettingsType::Lod3Toggle => settings.debug_lod_3 = !settings.debug_lod_3,
+            SettingsType::Lod4Toggle => settings.debug_lod_4 = !settings.debug_lod_4,
+            SettingsType::Lod5Toggle => settings.debug_lod_5 = !settings.debug_lod_5,
+            SettingsType::ShowChunksToggle => settings.show_chunks = !settings.show_chunks,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Resource, Debug)]
 pub struct ConfigurableSettings {
+    pub show_chunks: bool,
     pub fps_limit: FpsLimit,
-    #[serde(skip)]
-    pub current_tab: MenuTab,
-    #[serde(skip)]
-    pub current_focus: MenuFocus,
+    pub debug_lod_1: bool,
+    pub debug_lod_2: bool,
+    pub debug_lod_3: bool,
+    pub debug_lod_4: bool,
+    pub debug_lod_5: bool,
 }
 
 pub fn load_configurable_settings() -> ConfigurableSettings {
@@ -78,9 +125,13 @@ pub fn load_configurable_settings() -> ConfigurableSettings {
 impl Default for ConfigurableSettings {
     fn default() -> Self {
         ConfigurableSettings {
+            show_chunks: false,
             fps_limit: FpsLimit::default(),
-            current_tab: MenuTab::General,
-            current_focus: MenuFocus::Tabs,
+            debug_lod_1: false,
+            debug_lod_2: false,
+            debug_lod_3: false,
+            debug_lod_4: false,
+            debug_lod_5: false,
         }
     }
 }

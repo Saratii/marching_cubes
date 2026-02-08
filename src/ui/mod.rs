@@ -1,6 +1,6 @@
-pub mod minimap;
+pub mod configurable_settings;
 pub mod crosshair;
-#[cfg(feature = "debug_lines")]
+#[cfg(feature = "debug")]
 pub mod debug_lines;
 pub mod menu;
-pub mod configurable_settings;
+pub mod minimap;

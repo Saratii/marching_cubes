@@ -1,16 +1,15 @@
 use bevy::{
-    mesh::{MeshVertexAttribute, MeshVertexBufferLayoutRef},
+    mesh::MeshVertexBufferLayoutRef,
     pbr::{MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline},
     prelude::*,
     reflect::TypePath,
     render::render_resource::{
-        AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError, VertexFormat,
+        AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError,
     },
     shader::ShaderRef,
 };
 
-pub const ATTRIBUTE_MATERIAL_ID: MeshVertexAttribute =
-    MeshVertexAttribute::new("MaterialId", 988540918, VertexFormat::Uint32);
+use crate::terrain::ATTRIBUTE_MATERIAL_ID;
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
 pub struct TerrainMaterialExtension {

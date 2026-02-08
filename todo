@@ -1,0 +1,9 @@
+1. Somehow reduce VRAM usage/mesh upload
+2. Trees
+3. Better grass and sand textures
+4. Fix visible triangles in marching marching cubes caused by material IDs
+5. Biome variation in noise
+6. LOD upgrade and downgrade in real time
+7. Reduce memory usage
+8. Lighting
+9. rare bug causing player to spawn in floor despite my function telling player to not spawn in floor

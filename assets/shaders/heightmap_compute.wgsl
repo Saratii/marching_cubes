@@ -2,7 +2,7 @@ const SAMPLES_PER_CHUNK_DIM: u32 = 50u;
 const SAMPLES_PER_CHUNK: u32 = SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM;
 const NOISE_SAMPLES_DIM: u32 = 9u;  // 9x9 noise samples per chunk
 const NOISE_SAMPLES_PER_CHUNK: u32 = NOISE_SAMPLES_DIM * NOISE_SAMPLES_DIM;
-const CLUSTER_SIZE: u32 = 5u;
+const CHUNKS_PER_CLUSTER_DIM: u32 = 5u;
 
 struct Params {
     chunk_start: vec2<f32>,
@@ -102,11 +102,11 @@ fn generate_heightmap(@builtin(global_invocation_id) global_id: vec3<u32>) {
 fn generate_cluster_heightmap(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let chunk_index = global_id.y;
     let sample_index = global_id.x;
-    if (sample_index >= NOISE_SAMPLES_PER_CHUNK || chunk_index >= CLUSTER_SIZE * CLUSTER_SIZE) {
+    if (sample_index >= NOISE_SAMPLES_PER_CHUNK || chunk_index >= CHUNKS_PER_CLUSTER_DIM * CHUNKS_PER_CLUSTER_DIM) {
         return;
     }
-    let local_x = chunk_index % CLUSTER_SIZE;
-    let local_z = chunk_index / CLUSTER_SIZE;
+    let local_x = chunk_index % CHUNKS_PER_CLUSTER_DIM;
+    let local_z = chunk_index / CHUNKS_PER_CLUSTER_DIM;
     let chunk_x = cluster_params.cluster_lower_chunk.x + i32(local_x);
     let chunk_z = cluster_params.cluster_lower_chunk.z + i32(local_z);
     let chunk_start = vec2<f32>(f32(chunk_x) * f32(SAMPLES_PER_CHUNK_DIM), f32(chunk_z) * f32(SAMPLES_PER_CHUNK_DIM));
@@ -128,7 +128,7 @@ fn generate_batch_clusters(@builtin(global_invocation_id) global_id: vec3<u32>) 
     let sample_index = global_id.x;
     
     if (cluster_index >= batch_cluster_params.cluster_count || 
-        chunk_in_cluster_index >= CLUSTER_SIZE * CLUSTER_SIZE ||
+        chunk_in_cluster_index >= CHUNKS_PER_CLUSTER_DIM * CHUNKS_PER_CLUSTER_DIM ||
         sample_index >= NOISE_SAMPLES_PER_CHUNK) {
         return;
     }
@@ -137,8 +137,8 @@ fn generate_batch_clusters(@builtin(global_invocation_id) global_id: vec3<u32>) 
     let cluster_coord = batch_cluster_params.cluster_coords[cluster_index];
     
     // Calculate chunk position within cluster
-    let local_x = chunk_in_cluster_index % CLUSTER_SIZE;
-    let local_z = chunk_in_cluster_index / CLUSTER_SIZE;
+    let local_x = chunk_in_cluster_index % CHUNKS_PER_CLUSTER_DIM;
+    let local_z = chunk_in_cluster_index / CHUNKS_PER_CLUSTER_DIM;
     
     let chunk_x = cluster_coord.x + i32(local_x);
     let chunk_z = cluster_coord.y + i32(local_z);
@@ -158,7 +158,7 @@ fn generate_batch_clusters(@builtin(global_invocation_id) global_id: vec3<u32>) 
     let height = fbm(world_pos * 0.01) * 100.0;
     
     // Calculate output index
-    let chunks_per_cluster = CLUSTER_SIZE * CLUSTER_SIZE;
+    let chunks_per_cluster = CHUNKS_PER_CLUSTER_DIM * CHUNKS_PER_CLUSTER_DIM;
     let output_index = cluster_index * chunks_per_cluster * NOISE_SAMPLES_PER_CHUNK + 
                       chunk_in_cluster_index * NOISE_SAMPLES_PER_CHUNK + 
                       sample_index;

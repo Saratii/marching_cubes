@@ -8,14 +8,15 @@ use bevy::{
 use bevy_rapier3d::prelude::*;
 
 use crate::{
+    constants::{
+        CAMERA_FIRST_PERSON_OFFSET, NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED,
+        PLAYER_CUBOID_SIZE, PLAYER_SPAWN,
+    },
     data_loader::{
         driver::{INITIAL_CHUNKS_LOADED, PlayerTranslationMutexHandle},
         file_loader::{PlayerDataFile, read_player_position, write_player_position},
     },
-    terrain::{
-        chunk_generator::{NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED},
-        terrain::NoiseFunction,
-    },
+    terrain::terrain::NoiseFunction,
     ui::menu::MenuRoot,
 };
 
@@ -25,9 +26,6 @@ const CAMERA_3RD_PERSON_OFFSET: Vec3 = Vec3 {
     z: 10.0,
 };
 const PLAYER_SPEED: f32 = 5.0;
-pub const PLAYER_SPAWN: Vec3 = Vec3::new(0., 0., 0.);
-pub const PLAYER_CUBOID_SIZE: Vec3 = Vec3::new(0.5, 1.5, 0.5);
-pub const CAMERA_FIRST_PERSON_OFFSET: Vec3 = Vec3::new(0., 0.75 * PLAYER_CUBOID_SIZE.y, 0.);
 const MIN_ZOOM_DISTANCE: f32 = 4.0;
 const MAX_ZOOM_DISTANCE: f32 = 3000.0;
 const MIN_ZOOM_SPEED: f32 = 0.5;
@@ -97,7 +95,7 @@ pub fn spawn_player(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut player_data_file: ResMut<PlayerDataFile>,
     fbm: Res<NoiseFunction>,
-    main_camera: Single<Entity, With<MainCameraTag>>,
+    main_camera: Query<Entity, With<MainCameraTag>>,
 ) {
     let player_spawn = match read_player_position(&mut player_data_file.0) {
         Some(pos) => pos,
@@ -146,37 +144,43 @@ pub fn spawn_player(
             Visibility::Hidden,
         ))
         .id();
-    commands.entity(player).add_child(*main_camera);
+    commands
+        .entity(player)
+        .add_child(main_camera.iter().next().unwrap());
 }
 
 pub fn toggle_camera(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut camera_transform: Single<&mut Transform, With<MainCameraTag>>,
+    mut camera_transform: Query<&mut Transform, With<MainCameraTag>>,
     mut camera_controller: ResMut<CameraController>,
-    mut player_visibility: Single<&mut Visibility, With<PlayerTag>>,
+    mut player_visibility: Query<&mut Visibility, With<PlayerTag>>,
 ) {
     if keyboard.just_pressed(KeyCode::KeyC) {
+        let mut camera_transform = camera_transform.iter_mut().next().unwrap();
         if !camera_controller.is_first_person {
             camera_controller.is_first_person = true;
             camera_transform.translation = CAMERA_FIRST_PERSON_OFFSET;
             update_first_person_camera(&mut camera_transform, &camera_controller);
-            **player_visibility = Visibility::Hidden;
+            let mut player_visibility = player_visibility.iter_mut().next().unwrap();
+            *player_visibility = Visibility::Hidden;
         } else {
             camera_controller.is_first_person = false;
             update_camera_position(&mut camera_transform, &camera_controller);
-            **player_visibility = Visibility::Visible;
+            let mut player_visibility = player_visibility.iter_mut().next().unwrap();
+            *player_visibility = Visibility::Visible;
         }
     }
 }
 
 pub fn camera_zoom(
     mut scroll_events: MessageReader<MouseWheel>,
-    mut camera_transform: Single<&mut Transform, With<MainCameraTag>>,
+    mut camera_transform_query: Query<&mut Transform, With<MainCameraTag>>,
     mut camera_controller: ResMut<CameraController>,
 ) {
     if camera_controller.is_first_person || !camera_controller.is_cursor_grabbed {
         return;
     }
+    let mut camera_transform = camera_transform_query.iter_mut().next().unwrap();
     for event in scroll_events.read() {
         let current_distance = camera_transform.translation.length();
         let t = (current_distance - MIN_ZOOM_DISTANCE) / (MAX_ZOOM_DISTANCE - MIN_ZOOM_DISTANCE);
@@ -193,7 +197,7 @@ pub fn camera_zoom(
 
 pub fn camera_look(
     mut mouse_motion: MessageReader<MouseMotion>,
-    mut camera_transform: Single<&mut Transform, With<MainCameraTag>>,
+    mut camera_transform_query: Query<&mut Transform, With<MainCameraTag>>,
     mut camera_controller: ResMut<CameraController>,
     menu_root_query: Query<&MenuRoot>,
 ) {
@@ -213,6 +217,7 @@ pub fn camera_look(
             }
         }
         if angles_changed {
+            let mut camera_transform = camera_transform_query.iter_mut().next().unwrap();
             if camera_controller.is_first_person {
                 update_first_person_camera(&mut camera_transform, &camera_controller);
             } else {
@@ -238,10 +243,11 @@ fn update_first_person_camera(camera_transform: &mut Transform, controller: &Cam
     camera_transform.rotation = rotation;
 }
 
-fn toggle_grab_cursor(
-    primary_cursor_options: &mut CursorOptions,
-    camera_controller: &mut CameraController,
+pub fn initial_grab_cursor(
+    mut primary_cursor_options_query: Query<&mut CursorOptions, With<PrimaryWindow>>,
+    mut camera_controller: ResMut<CameraController>,
 ) {
+    let mut primary_cursor_options = primary_cursor_options_query.iter_mut().next().unwrap();
     match primary_cursor_options.grab_mode {
         CursorGrabMode::None => {
             primary_cursor_options.grab_mode = CursorGrabMode::Confined;
@@ -256,16 +262,9 @@ fn toggle_grab_cursor(
     }
 }
 
-pub fn initial_grab_cursor(
-    mut primary_cursor_options: Single<&mut CursorOptions, With<PrimaryWindow>>,
-    mut camera_controller: ResMut<CameraController>,
-) {
-    toggle_grab_cursor(&mut primary_cursor_options, &mut camera_controller);
-}
-
 pub fn player_movement(
     time: Res<Time>,
-    mut player: Single<
+    mut player_query: Query<
         (
             &mut KinematicCharacterController,
             &mut VerticalVelocity,
@@ -278,6 +277,7 @@ pub fn player_movement(
     camera_controller: Res<CameraController>,
     menu_root_query: Query<&MenuRoot>,
 ) {
+    let mut player = player_query.iter_mut().next().unwrap();
     let is_grounded = player.2.map_or(false, |output| output.grounded);
     let mut movement_vec = Vec3::ZERO;
     let yaw_rotation = Quat::from_rotation_y(camera_controller.yaw);
@@ -319,22 +319,24 @@ pub fn player_movement(
 
 pub fn sync_player_mutex(
     player_transform_mutex_handle: ResMut<PlayerTranslationMutexHandle>,
-    player_transform: Single<&Transform, With<PlayerTag>>,
+    player_transform_query: Query<&Transform, With<PlayerTag>>,
     mut player_data_file: ResMut<PlayerDataFile>,
 ) {
     let mut player_transform_lock = player_transform_mutex_handle.0.lock().unwrap();
-    if *player_transform_lock != player_transform.translation {
-        *player_transform_lock = player_transform.translation;
+    let player_translation = player_transform_query.iter().next().unwrap().translation;
+    if *player_transform_lock != player_translation {
+        *player_transform_lock = player_translation;
         write_player_position(&mut player_data_file.0, *player_transform_lock);
     }
 }
 
 pub fn handle_focus_change(
     mut focus_events: MessageReader<WindowFocused>,
-    mut primary_cursor_options: Single<&mut CursorOptions, With<PrimaryWindow>>,
+    mut primary_cursor_options_query: Query<&mut CursorOptions, With<PrimaryWindow>>,
     mut camera_controller: ResMut<CameraController>,
 ) {
     for event in focus_events.read() {
+        let mut primary_cursor_options = primary_cursor_options_query.iter_mut().next().unwrap();
         if event.focused {
             camera_controller.is_cursor_grabbed = true;
             primary_cursor_options.grab_mode = CursorGrabMode::Confined;
@@ -349,14 +351,15 @@ pub fn handle_focus_change(
 
 pub fn grab_on_click(
     mouse_button: Res<ButtonInput<MouseButton>>,
-    mut primary_cursor_options: Single<&mut CursorOptions, With<PrimaryWindow>>,
+    mut primary_cursor_options_query: Query<&mut CursorOptions, With<PrimaryWindow>>,
     mut camera_controller: ResMut<CameraController>,
-    window_focused: Single<&Window, With<PrimaryWindow>>,
+    window_focused_query: Query<&Window, With<PrimaryWindow>>,
 ) {
     if mouse_button.just_pressed(MouseButton::Left)
-        && window_focused.focused
+        && window_focused_query.iter().next().unwrap().focused
         && !camera_controller.is_cursor_grabbed
     {
+        let mut primary_cursor_options = primary_cursor_options_query.iter_mut().next().unwrap();
         primary_cursor_options.grab_mode = CursorGrabMode::Confined;
         primary_cursor_options.visible = false;
         camera_controller.is_cursor_grabbed = true;

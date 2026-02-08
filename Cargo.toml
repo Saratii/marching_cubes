@@ -43,6 +43,5 @@ debug = true
 
 [features]
 timers = [] #cargo run -r --features timers
-debug_lines = [] #cargo run -r --features "timers,debug_lines"
-debug = []
+debug = []  #cargo run -r --features "timers,debug"
 

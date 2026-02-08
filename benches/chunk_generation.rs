@@ -2,6 +2,10 @@ use bevy::math::Vec3;
 use criterion::{Criterion, criterion_group, criterion_main};
 
 use marching_cubes::{
+    constants::{
+        CHUNKS_PER_CLUSTER_DIM, HALF_CHUNK, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_2D,
+        SAMPLES_PER_CHUNK_DIM,
+    },
     conversions::{chunk_coord_to_cluster_coord, world_pos_to_chunk_coord},
     marching_cubes::mc::mc_mesh_generation,
     terrain::{
@@ -10,10 +14,7 @@ use marching_cubes::{
             calculate_chunk_start, chunk_contains_surface, generate_terrain_heights, get_fbm,
         },
         heightmap_compute_pipeline::GpuHeightmapGenerator,
-        terrain::{
-            CLUSTER_SIZE, HALF_CHUNK, HEIGHTMAP_GRID_SIZE, SAMPLES_PER_CHUNK,
-            SAMPLES_PER_CHUNK_DIM, generate_chunk_into_buffers,
-        },
+        terrain::generate_chunk_into_buffers,
     },
 };
 use std::{collections::HashMap, hint::black_box};
@@ -23,7 +24,7 @@ fn benchmark_generate_densities_cpu(c: &mut Criterion) {
     let fbm = get_fbm();
     let mut densities_buffer = [0; SAMPLES_PER_CHUNK];
     let mut materials_buffer = [0; SAMPLES_PER_CHUNK];
-    let mut heightmap_buffer = [0.0; HEIGHTMAP_GRID_SIZE];
+    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
     c.bench_function("generate_densities_cpu", |b| {
         b.iter(|| {
             let chunk_start = calculate_chunk_start(&chunk_coord);
@@ -43,7 +44,7 @@ fn benchmark_generate_uniform_densities_cpu(c: &mut Criterion) {
     let fbm = get_fbm();
     let mut densities_buffer = [0; SAMPLES_PER_CHUNK];
     let mut materials_buffer = [0; SAMPLES_PER_CHUNK];
-    let mut heightmap_buffer = [0.0; HEIGHTMAP_GRID_SIZE];
+    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
     c.bench_function("generate_uniform_densities_cpu", |b| {
         b.iter(|| {
             let chunk_start = calculate_chunk_start(&(0, 2000, 0));
@@ -77,7 +78,7 @@ fn benchmark_marching_cubes(c: &mut Criterion) {
     let chunk_start = calculate_chunk_start(&chunk);
     let mut densities_buffer = [0; SAMPLES_PER_CHUNK];
     let mut materials_buffer = [0; SAMPLES_PER_CHUNK];
-    let mut heightmap_buffer = [0.0; HEIGHTMAP_GRID_SIZE];
+    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
     generate_chunk_into_buffers(
         &fbm,
         chunk_start,
@@ -101,7 +102,7 @@ fn benchmark_marching_cubes(c: &mut Criterion) {
 fn benchmark_heightmap_single_chunk_cpu(c: &mut Criterion) {
     let chunk_coord = (0, 0, 0);
     let fbm = get_fbm();
-    let mut heightmap_buffer = [0.0; HEIGHTMAP_GRID_SIZE];
+    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
     let chunk_start = calculate_chunk_start(&chunk_coord);
     c.bench_function("heightmap_single_cpu", |b| {
         b.iter(|| {
@@ -130,12 +131,12 @@ fn benchmark_cluster_heightmap_cpu(c: &mut Criterion) {
     let fbm = get_fbm();
     let chunk = world_pos_to_chunk_coord(&Vec3::ZERO);
     let cluster = chunk_coord_to_cluster_coord(&chunk);
-    let mut heightmap_buffer = [0.0; HEIGHTMAP_GRID_SIZE];
+    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
     c.bench_function("cluster_heightmap_cpu", |b| {
         b.iter(|| {
             let mut results = HashMap::new();
-            for x in cluster.0..cluster.0 + CLUSTER_SIZE as i16 {
-                for z in cluster.2..cluster.2 + CLUSTER_SIZE as i16 {
+            for x in cluster.0..cluster.0 + CHUNKS_PER_CLUSTER_DIM as i16 {
+                for z in cluster.2..cluster.2 + CHUNKS_PER_CLUSTER_DIM as i16 {
                     let chunk_coord = (x, cluster.1, z);
                     let chunk_start = calculate_chunk_start(&chunk_coord);
                     let heights = generate_terrain_heights(
@@ -185,7 +186,7 @@ fn benchmark_batch_cluster_heightmaps_gpu(c: &mut Criterion) {
 fn find_chunk_with_surface() -> (i16, i16, i16) {
     let mut densities_buffer = [0; SAMPLES_PER_CHUNK];
     let mut materials_buffer = [0; SAMPLES_PER_CHUNK];
-    let mut heightmap_buffer = [0.0; HEIGHTMAP_GRID_SIZE];
+    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
     let fbm = get_fbm();
     for chunk_y in -100..100 {
         let chunk_coord = (0, chunk_y, 0);

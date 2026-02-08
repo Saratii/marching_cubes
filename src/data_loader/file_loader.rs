@@ -1,4 +1,3 @@
-use crate::terrain::terrain::SAMPLES_PER_CHUNK;
 use bevy::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
@@ -6,6 +5,8 @@ use std::fs::{File, OpenOptions, create_dir_all};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+
+use crate::constants::SAMPLES_PER_CHUNK;
 
 const BYTES_PER_VOXEL: usize = std::mem::size_of::<i16>() + std::mem::size_of::<u8>();
 pub const CHUNK_SERIALIZED_SIZE: usize = SAMPLES_PER_CHUNK * BYTES_PER_VOXEL;

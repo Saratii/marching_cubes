@@ -1,20 +1,19 @@
 use crate::{
+    constants::{
+        CHUNK_WORLD_SIZE, CHUNKS_PER_CLUSTER, CHUNKS_PER_CLUSTER_DIM, HALF_CHUNK,
+        MAX_RENDER_RADIUS_SQUARED, NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED,
+        PLAYER_CUBOID_SIZE, REDUCED_LOD_1_RADIUS, REDUCED_LOD_2_RADIUS, REDUCED_LOD_3_RADIUS,
+        REDUCED_LOD_4_RADIUS, REDUCED_LOD_5_RADIUS, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_2D,
+        SAMPLES_PER_CHUNK_DIM, Z0_RADIUS,
+    },
     conversions::cluster_coord_to_min_chunk_coord,
     data_loader::file_loader::{
         CHUNK_SERIALIZED_SIZE, get_project_root, load_chunk, load_chunk_index_map,
         load_uniform_chunks, remove_uniform_chunk, update_chunk, write_chunk,
     },
-    player::player::PLAYER_CUBOID_SIZE,
     terrain::{
-        chunk_generator::{
-            NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED, calculate_chunk_start, downscale, get_fbm,
-        },
-        terrain::{
-            CHUNK_SIZE, CLUSTER_SIZE, HEIGHTMAP_GRID_SIZE, MAX_RADIUS_SQUARED,
-            NonUniformTerrainChunk, REDUCED_FOV_1_RADIUS_SQUARED, REDUCED_FOV_2_RADIUS_SQUARED,
-            REDUCED_FOV_3_RADIUS_SQUARED, REDUCED_FOV_4_RADIUS_SQUARED,
-            REDUCED_FOV_5_RADIUS_SQUARED, Z0_RADIUS_SQUARED, generate_chunk_into_buffers,
-        },
+        chunk_generator::{calculate_chunk_start, downscale, get_fbm},
+        terrain::{NonUniformTerrainChunk, generate_chunk_into_buffers},
     },
 };
 use bevy::prelude::*;
@@ -44,10 +43,7 @@ use crate::{
     sparse_voxel_octree::ChunkSvo,
     terrain::{
         chunk_generator::chunk_contains_surface,
-        terrain::{
-            ChunkTag, HALF_CHUNK, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_DIM, TerrainChunk,
-            TerrainMaterialHandle, Uniformity, generate_bevy_mesh,
-        },
+        terrain::{ChunkTag, TerrainChunk, TerrainMaterialHandle, Uniformity, generate_bevy_mesh},
     },
 };
 
@@ -131,7 +127,7 @@ impl PartialOrd for ClusterRequest {
 }
 
 struct ChunkResult {
-    has_entity: [bool; CLUSTER_SIZE * CLUSTER_SIZE * CLUSTER_SIZE],
+    has_entity: [bool; CHUNKS_PER_CLUSTER],
     cluster_coord: (i16, i16, i16),
     load_status: u8,
 }
@@ -392,10 +388,15 @@ fn chunk_loader_thread(
     const RF4_SAMPLES_PER_CHUNK: usize = SAMPLES_PER_CHUNK / RF4.pow(3);
     const RF5_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF5;
     const RF5_SAMPLES_PER_CHUNK: usize = SAMPLES_PER_CHUNK / RF5.pow(3);
+    const REDUCED_LOD_1_RADIUS_SQUARED: f32 = REDUCED_LOD_1_RADIUS * REDUCED_LOD_1_RADIUS;
+    const REDUCED_LOD_2_RADIUS_SQUARED: f32 = REDUCED_LOD_2_RADIUS * REDUCED_LOD_2_RADIUS;
+    const REDUCED_LOD_3_RADIUS_SQUARED: f32 = REDUCED_LOD_3_RADIUS * REDUCED_LOD_3_RADIUS;
+    const REDUCED_LOD_4_RADIUS_SQUARED: f32 = REDUCED_LOD_4_RADIUS * REDUCED_LOD_4_RADIUS;
+    const REDUCED_LOD_5_RADIUS_SQUARED: f32 = REDUCED_LOD_5_RADIUS * REDUCED_LOD_5_RADIUS;
     let mut internal_queue = Vec::with_capacity(32);
     let mut density_buffer = [0; SAMPLES_PER_CHUNK];
     let mut material_buffer = [0; SAMPLES_PER_CHUNK];
-    let mut heightmap_buffer = [0.0; HEIGHTMAP_GRID_SIZE];
+    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
     let mut density_buffer_r1 = [0; RF1_SAMPLES_PER_CHUNK];
     let mut material_buffer_r1 = [0; RF1_SAMPLES_PER_CHUNK];
     let mut density_buffer_r2 = [0; RF2_SAMPLES_PER_CHUNK];
@@ -441,12 +442,12 @@ fn chunk_loader_thread(
         }
         drop(heap);
         for request in internal_queue.drain(..) {
-            let mut has_entity_buffer = [false; CLUSTER_SIZE * CLUSTER_SIZE * CLUSTER_SIZE];
+            let mut has_entity_buffer = [false; CHUNKS_PER_CLUSTER];
             let mut rolling = 0;
             let min_chunk = cluster_coord_to_min_chunk_coord(&request.position);
-            for chunk_x in min_chunk.0..min_chunk.0 + CLUSTER_SIZE as i16 {
-                for chunk_y in min_chunk.1..min_chunk.1 + CLUSTER_SIZE as i16 {
-                    for chunk_z in min_chunk.2..min_chunk.2 + CLUSTER_SIZE as i16 {
+            for chunk_x in min_chunk.0..min_chunk.0 + CHUNKS_PER_CLUSTER_DIM as i16 {
+                for chunk_y in min_chunk.1..min_chunk.1 + CHUNKS_PER_CLUSTER_DIM as i16 {
+                    for chunk_z in min_chunk.2..min_chunk.2 + CHUNKS_PER_CLUSTER_DIM as i16 {
                         let chunk_coord = (chunk_x, chunk_y, chunk_z);
                         let (found_in_uniform_air, found_in_uniform_dirt) = search_uniform_maps(
                             &chunk_coord,
@@ -502,7 +503,7 @@ fn chunk_loader_thread(
                                     NOISE_SEED,
                                 ) * NOISE_AMPLITUDE;
                                 //conservative heuristic: if the surface height at the first sample is greater than one chunk above the bottom of the chunk, we assume it is uniform air
-                                if chunk_center_sample + CHUNK_SIZE * 3.0 < chunk_start.y {
+                                if chunk_center_sample + CHUNK_WORLD_SIZE * 3.0 < chunk_start.y {
                                     write_sender
                                         .send(WriteCmd::WriteUniformAir { coord: chunk_coord })
                                         .unwrap();
@@ -573,7 +574,7 @@ fn chunk_loader_thread(
                         let has_collider = has_surface && request.load_status == 0;
                         let (collider, mesh) = if has_surface {
                             let (vertices, normals, material_ids, indices) =
-                                if request.distance_squared > REDUCED_FOV_5_RADIUS_SQUARED {
+                                if request.distance_squared > REDUCED_LOD_5_RADIUS_SQUARED {
                                     let in_dim = SAMPLES_PER_CHUNK_DIM;
                                     let out_dim = RF5_SAMPLES_PER_CHUNK_DIM;
                                     downscale(
@@ -590,7 +591,7 @@ fn chunk_loader_thread(
                                         RF5_SAMPLES_PER_CHUNK_DIM,
                                         HALF_CHUNK,
                                     )
-                                } else if request.distance_squared > REDUCED_FOV_4_RADIUS_SQUARED {
+                                } else if request.distance_squared > REDUCED_LOD_4_RADIUS_SQUARED {
                                     let in_dim = SAMPLES_PER_CHUNK_DIM;
                                     let out_dim = RF4_SAMPLES_PER_CHUNK_DIM;
                                     downscale(
@@ -607,7 +608,7 @@ fn chunk_loader_thread(
                                         RF4_SAMPLES_PER_CHUNK_DIM,
                                         HALF_CHUNK,
                                     )
-                                } else if request.distance_squared > REDUCED_FOV_3_RADIUS_SQUARED {
+                                } else if request.distance_squared > REDUCED_LOD_3_RADIUS_SQUARED {
                                     let in_dim = SAMPLES_PER_CHUNK_DIM;
                                     let out_dim = RF3_SAMPLES_PER_CHUNK_DIM;
                                     downscale(
@@ -624,7 +625,7 @@ fn chunk_loader_thread(
                                         RF3_SAMPLES_PER_CHUNK_DIM,
                                         HALF_CHUNK,
                                     )
-                                } else if request.distance_squared > REDUCED_FOV_2_RADIUS_SQUARED {
+                                } else if request.distance_squared > REDUCED_LOD_2_RADIUS_SQUARED {
                                     let in_dim = SAMPLES_PER_CHUNK_DIM;
                                     let out_dim = RF2_SAMPLES_PER_CHUNK_DIM;
                                     downscale(
@@ -641,7 +642,7 @@ fn chunk_loader_thread(
                                         RF2_SAMPLES_PER_CHUNK_DIM,
                                         HALF_CHUNK,
                                     )
-                                } else if request.distance_squared > REDUCED_FOV_1_RADIUS_SQUARED {
+                                } else if request.distance_squared > REDUCED_LOD_1_RADIUS_SQUARED {
                                     let in_dim = SAMPLES_PER_CHUNK_DIM;
                                     let out_dim = RF1_SAMPLES_PER_CHUNK_DIM;
                                     downscale(
@@ -780,7 +781,7 @@ fn svo_manager_thread(
     drop(player_translation_lock);
     svo.root.fill_missing_chunks_in_radius(
         &initial_player_translation,
-        Z0_RADIUS_SQUARED,
+        Z0_RADIUS * Z0_RADIUS,
         &mut chunks_being_loaded,
         &mut request_buffer,
     );
@@ -817,9 +818,9 @@ fn svo_manager_thread(
         let mut terrain_map_lock = terrain_chunk_map.lock().unwrap();
         for (cluster_coord, has_entity) in &chunks_to_deallocate {
             let min_chunk = cluster_coord_to_min_chunk_coord(cluster_coord);
-            for chunk_x in min_chunk.0..min_chunk.0 + CLUSTER_SIZE as i16 {
-                for chunk_y in min_chunk.1..min_chunk.1 + CLUSTER_SIZE as i16 {
-                    for chunk_z in min_chunk.2..min_chunk.2 + CLUSTER_SIZE as i16 {
+            for chunk_x in min_chunk.0..min_chunk.0 + CHUNKS_PER_CLUSTER_DIM as i16 {
+                for chunk_y in min_chunk.1..min_chunk.1 + CHUNKS_PER_CLUSTER_DIM as i16 {
+                    for chunk_z in min_chunk.2..min_chunk.2 + CHUNKS_PER_CLUSTER_DIM as i16 {
                         let chunk_coord = (chunk_x, chunk_y, chunk_z);
                         if has_entity[roller] {
                             chunk_spawn_channel
@@ -837,7 +838,7 @@ fn svo_manager_thread(
         drop(terrain_map_lock);
         svo.root.fill_missing_chunks_in_radius(
             &player_translation,
-            MAX_RADIUS_SQUARED,
+            MAX_RENDER_RADIUS_SQUARED,
             &mut chunks_being_loaded,
             &mut request_buffer,
         );
@@ -923,10 +924,11 @@ pub fn chunk_spawn_reciever(
 //wait for player's chunk to be spawned
 pub fn project_downward(
     chunk_entity_map: Res<ChunkEntityMap>,
-    mut player_position: Single<&mut Transform, (With<PlayerTag>, Without<ChunkTag>)>,
+    mut player_position_query: Query<&mut Transform, (With<PlayerTag>, Without<ChunkTag>)>,
     spawned_chunks_query: Query<(), (With<ChunkTag>, With<Collider>)>,
     terrain_chunk_map: Res<TerrainChunkMap>,
 ) {
+    let mut player_position = player_position_query.iter_mut().next().unwrap();
     let player_chunk = world_pos_to_chunk_coord(&player_position.translation);
     for chunk_y in (player_chunk.1 - 10..=player_chunk.1).rev() {
         if let Some(entity) = chunk_entity_map
@@ -960,7 +962,7 @@ fn validate_player_spawn(
     let chunk_start = calculate_chunk_start(chunk_coord);
     let local_x = SAMPLES_PER_CHUNK_DIM / 2;
     let local_z = SAMPLES_PER_CHUNK_DIM / 2;
-    let voxel_size = CHUNK_SIZE / SAMPLES_PER_CHUNK_DIM as f32;
+    let voxel_size = CHUNK_WORLD_SIZE / SAMPLES_PER_CHUNK_DIM as f32;
     let original_y = player_transform.translation.y;
     let player_local_y = ((original_y - chunk_start.y) / voxel_size).floor() as usize;
     let start_y = player_local_y.min(SAMPLES_PER_CHUNK_DIM - 1);

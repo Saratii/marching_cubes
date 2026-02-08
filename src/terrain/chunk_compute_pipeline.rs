@@ -10,7 +10,7 @@ use wgpu::{
     PipelineCompilationOptions, PollType, Queue,
 };
 
-use crate::terrain::terrain::{CHUNK_SIZE, HALF_CHUNK, SAMPLES_PER_CHUNK};
+use crate::constants::{CHUNK_WORLD_SIZE, HALF_CHUNK, SAMPLES_PER_CHUNK};
 
 const WORKGROUP_SIZE: u32 = SAMPLES_PER_CHUNK.div_ceil(64) as u32;
 const DENSITY_BYTES: u64 = (SAMPLES_PER_CHUNK * std::mem::size_of::<i32>()) as u64;
@@ -208,8 +208,8 @@ impl GpuTerrainGenerator {
 
 pub fn calculate_chunk_start(chunk_coord: &(i16, i16, i16)) -> Vec3 {
     Vec3::new(
-        chunk_coord.0 as f32 * CHUNK_SIZE - HALF_CHUNK,
-        chunk_coord.1 as f32 * CHUNK_SIZE - HALF_CHUNK,
-        chunk_coord.2 as f32 * CHUNK_SIZE - HALF_CHUNK,
+        chunk_coord.0 as f32 * CHUNK_WORLD_SIZE - HALF_CHUNK,
+        chunk_coord.1 as f32 * CHUNK_WORLD_SIZE - HALF_CHUNK,
+        chunk_coord.2 as f32 * CHUNK_WORLD_SIZE - HALF_CHUNK,
     )
 }

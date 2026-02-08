@@ -31,13 +31,13 @@ use marching_cubes::settings::settings_driver::{load_settings, save_monitor_on_m
 use marching_cubes::terrain::chunk_generator::get_fbm;
 use marching_cubes::terrain::terrain::{NoiseFunction, setup_map};
 use marching_cubes::terrain::terrain_material::TerrainMaterialExtension;
-use marching_cubes::ui::configurable_settings::{FpsLimit, load_configurable_settings};
-use marching_cubes::ui::crosshair::spawn_crosshair;
-#[cfg(feature = "debug_lines")]
-use marching_cubes::ui::debug_lines::{
-    draw_cluster_debug, draw_collider_debug, spawn_debug_spheres, update_debug_sphere_positions,
+use marching_cubes::ui::configurable_settings::{
+    FpsLimit, MenuFocus, MenuTab, load_configurable_settings,
 };
-use marching_cubes::ui::menu::{menu_toggle, menu_update};
+use marching_cubes::ui::crosshair::spawn_crosshair;
+#[cfg(feature = "debug")]
+use marching_cubes::ui::debug_lines::{draw_cluster_debug, draw_collider_debug, draw_lod_debug};
+use marching_cubes::ui::menu::{SettingsState, menu_toggle, menu_update};
 use marching_cubes::ui::minimap::spawn_minimap;
 
 fn main() {
@@ -51,6 +51,10 @@ fn main() {
     };
     App::new()
         .insert_resource(settings)
+        .insert_resource(SettingsState {
+            current_tab: MenuTab::General,
+            current_focus: MenuFocus::Tabs,
+        })
         .insert_resource(configurable_settings)
         .insert_resource(KeyBindings::default())
         .insert_resource(CameraController::default())
@@ -106,8 +110,6 @@ fn main() {
                 spawn_player.after(setup_chunk_loading).after(setup_camera),
                 spawn_minimap.after(spawn_player),
                 initial_grab_cursor,
-                #[cfg(feature = "debug_lines")]
-                spawn_debug_spheres.after(spawn_player),
                 setup_lighting,
                 setup_camera,
             ),
@@ -126,14 +128,16 @@ fn main() {
                     .after(PhysicsSet::SyncBackend)
                     .run_if(|| !INITIAL_CHUNKS_LOADED.load(Ordering::Relaxed)),
                 save_monitor_on_move,
-                #[cfg(feature = "debug_lines")]
-                update_debug_sphere_positions,
-                #[cfg(feature = "debug_lines")]
+                // #[cfg(feature = "debug")]
+                // update_debug_sphere_positions,
+                #[cfg(feature = "debug")]
                 draw_cluster_debug,
-                #[cfg(feature = "debug_lines")]
+                #[cfg(feature = "debug")]
                 draw_collider_debug,
+                #[cfg(feature = "debug")]
+                draw_lod_debug,
                 menu_toggle,
-                menu_update,
+                menu_update.after(menu_toggle),
                 handle_focus_change,
                 grab_on_click,
                 count_vertices_on_key,

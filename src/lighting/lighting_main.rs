@@ -9,7 +9,7 @@ use bevy::{
     prelude::*,
 };
 
-use crate::player::player::{CAMERA_FIRST_PERSON_OFFSET, MainCameraTag};
+use crate::{constants::CAMERA_FIRST_PERSON_OFFSET, player::player::MainCameraTag};
 
 pub fn setup_lighting(mut commands: Commands) {
     commands.spawn((

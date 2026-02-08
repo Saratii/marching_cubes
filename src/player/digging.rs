@@ -4,6 +4,9 @@ use bevy::{camera::primitives::MeshAabb, ecs::system::SystemParam, prelude::*};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
 
 use crate::{
+    constants::{
+        CHUNK_WORLD_SIZE, HALF_CHUNK, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_DIM, VOXEL_WORLD_SIZE,
+    },
     conversions::{
         chunk_coord_to_world_pos, flatten_index, world_pos_to_chunk_coord, world_pos_to_voxel_index,
     },
@@ -17,8 +20,7 @@ use crate::{
     terrain::{
         chunk_generator::{dequantize_i16_to_f32, quantize_f32_to_i16},
         terrain::{
-            CHUNK_SIZE, ChunkTag, HALF_CHUNK, NonUniformTerrainChunk, SAMPLES_PER_CHUNK,
-            SAMPLES_PER_CHUNK_DIM, TerrainChunk, TerrainMaterialHandle, Uniformity, VOXEL_SIZE,
+            ChunkTag, NonUniformTerrainChunk, TerrainChunk, TerrainMaterialHandle, Uniformity,
             generate_bevy_mesh,
         },
     },
@@ -37,8 +39,8 @@ pub struct TerrainIo<'w> {
 }
 pub fn handle_digging_input(
     mouse_input: Res<ButtonInput<MouseButton>>,
-    camera: Single<(&Camera, &GlobalTransform), With<MainCameraTag>>,
-    window: Single<&Window>,
+    camera: Query<(&Camera, &GlobalTransform), With<MainCameraTag>>,
+    window: Query<&Window>,
     mut commands: Commands,
     mut dig_timer: Local<f32>,
     time: Res<Time>,
@@ -65,11 +67,12 @@ pub fn handle_digging_input(
         false
     };
     if should_dig {
-        if let Some(cursor_pos) = window.cursor_position() {
+        if let Some(cursor_pos) = window.iter().next().unwrap().cursor_position() {
+            let (camera, camera_transform) = camera.iter().next().unwrap();
             if let Some((world_pos, _, _)) = screen_to_world_ray(
                 cursor_pos,
-                camera.0,
-                camera.1,
+                camera,
+                camera_transform,
                 &terrain_io.terrain_chunk_map,
             ) {
                 let modified_chunks = dig_sphere(
@@ -205,7 +208,7 @@ fn dig_sphere(
                     chunk_center.y - HALF_CHUNK,
                     chunk_center.z - HALF_CHUNK,
                 );
-                let node_max = node_min + Vec3::splat(CHUNK_SIZE);
+                let node_max = node_min + Vec3::splat(CHUNK_WORLD_SIZE);
                 if sphere_intersects_aabb(&center, radius_squared, &node_min, &node_max) {
                     let terrain_chunk = terrain_chunk_map_lock.get_mut(&chunk_coord).expect(
                         "During dig, tried to modify a chunk that does not exist in the terrain chunk map!",
@@ -264,11 +267,11 @@ fn modify_chunk_voxels(
     );
     let mut chunk_modified = false;
     for z in 0..SAMPLES_PER_CHUNK_DIM {
-        let world_z = node_min.z + z as f32 * VOXEL_SIZE;
+        let world_z = node_min.z + z as f32 * VOXEL_WORLD_SIZE;
         for y in 0..SAMPLES_PER_CHUNK_DIM {
-            let world_y = node_min.y + y as f32 * VOXEL_SIZE;
+            let world_y = node_min.y + y as f32 * VOXEL_WORLD_SIZE;
             for x in 0..SAMPLES_PER_CHUNK_DIM {
-                let world_x = node_min.x + x as f32 * VOXEL_SIZE;
+                let world_x = node_min.x + x as f32 * VOXEL_WORLD_SIZE;
                 let voxel_world_pos = Vec3::new(world_x, world_y, world_z);
                 let distance_squared = voxel_world_pos.distance_squared(dig_center);
                 if distance_squared <= radius_squared {

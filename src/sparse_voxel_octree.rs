@@ -2,12 +2,12 @@ use bevy::prelude::*;
 use rustc_hash::FxHashSet;
 
 use crate::{
+    constants::{
+        CHUNK_WORLD_SIZE, CHUNKS_PER_CLUSTER, CHUNKS_PER_CLUSTER_DIM, CLUSTER_WORLD_LENGTH,
+        MAX_RENDER_RADIUS_SQUARED, Z0_RADIUS, Z1_RADIUS, Z2_RADIUS,
+    },
     conversions::{cluster_coord_to_world_center, cluster_coord_to_world_pos},
     data_loader::driver::ClusterRequest,
-    terrain::terrain::{
-        CHUNK_SIZE, CLUSTER_SIZE, MAX_RADIUS_SQUARED, Z0_RADIUS_SQUARED, Z1_RADIUS_SQUARED,
-        Z2_RADIUS_SQUARED,
-    },
 };
 
 const MAX_WORLD_SIZE: i16 = 512; //in chunks
@@ -32,16 +32,15 @@ pub struct SvoNode {
     pub lower_cluster_coord: (i16, i16, i16), // cluster coord of lower corner (RENAMED)
     pub size: i16,                            // region size in clusters (power of 2)
     pub children: Option<Box<[Option<SvoNode>; 8]>>,
-    pub chunk: Option<([bool; CLUSTER_SIZE * CLUSTER_SIZE * CLUSTER_SIZE], u8)>, // (has_entity, load status)
+    pub chunk: Option<([bool; CHUNKS_PER_CLUSTER], u8)>, // (has_entity, load status)
     pub node_min: Vec3,
     pub node_max: Vec3,
 }
 
 impl SvoNode {
     pub fn new(lower_cluster_coord: (i16, i16, i16), size: i16) -> Self {
-        let cluster_size_world = CHUNK_SIZE * CLUSTER_SIZE as f32;
         let node_min = cluster_coord_to_world_pos(&lower_cluster_coord);
-        let node_max = node_min + Vec3::splat(size as f32 * cluster_size_world);
+        let node_max = node_min + Vec3::splat(size as f32 * CLUSTER_WORLD_LENGTH);
         Self {
             lower_cluster_coord,
             size,
@@ -73,10 +72,7 @@ impl SvoNode {
         index
     }
 
-    pub fn get(
-        &self,
-        coord: (i16, i16, i16),
-    ) -> Option<&([bool; CLUSTER_SIZE * CLUSTER_SIZE * CLUSTER_SIZE], u8)> {
+    pub fn get(&self, coord: (i16, i16, i16)) -> Option<&([bool; CHUNKS_PER_CLUSTER], u8)> {
         if self.size == 1 {
             return self.chunk.as_ref();
         }
@@ -88,7 +84,7 @@ impl SvoNode {
     pub fn get_mut(
         &mut self,
         coord: (i16, i16, i16),
-    ) -> Option<&mut ([bool; CLUSTER_SIZE * CLUSTER_SIZE * CLUSTER_SIZE], u8)> {
+    ) -> Option<&mut ([bool; CHUNKS_PER_CLUSTER], u8)> {
         if self.size == 1 {
             return self.chunk.as_mut();
         }
@@ -101,7 +97,7 @@ impl SvoNode {
         &mut self,
         coord: (i16, i16, i16),
         load_status: u8,
-        has_entity: [bool; CLUSTER_SIZE * CLUSTER_SIZE * CLUSTER_SIZE],
+        has_entity: [bool; CHUNKS_PER_CLUSTER],
     ) {
         if self.size == 1 {
             debug_assert!(
@@ -211,7 +207,7 @@ impl SvoNode {
                 {
                     let distance_squared = center
                         .distance_squared(cluster_coord_to_world_center(&self.lower_cluster_coord));
-                    if distance_squared > MAX_RADIUS_SQUARED {
+                    if distance_squared > MAX_RENDER_RADIUS_SQUARED {
                         return; //skip chunks where the sphere intersects but chunk center is outside max radius
                     }
                     chunks_being_loaded.insert(self.lower_cluster_coord);
@@ -252,7 +248,7 @@ impl SvoNode {
                 );
                 if children[i].is_none() {
                     let child_center = cluster_coord_to_world_pos(&child_pos);
-                    let cluster_size_world = CHUNK_SIZE * CLUSTER_SIZE as f32;
+                    let cluster_size_world = CHUNK_WORLD_SIZE * CHUNKS_PER_CLUSTER_DIM as f32;
                     let half_cluster = cluster_size_world * 0.5;
                     let child_min = child_center - Vec3::splat(half_cluster);
                     let child_max = child_min + Vec3::splat(half as f32 * cluster_size_world);
@@ -278,12 +274,9 @@ impl SvoNode {
     pub fn query_chunks_outside_sphere(
         &self,
         center: &Vec3,
-        results: &mut Vec<(
-            (i16, i16, i16),
-            [bool; CLUSTER_SIZE * CLUSTER_SIZE * CLUSTER_SIZE],
-        )>,
+        results: &mut Vec<((i16, i16, i16), [bool; CHUNKS_PER_CLUSTER])>,
     ) {
-        // Quick prune: if the node’s nearest point is still beyond MAX_RADIUS, skip this node entirely.
+        // Quick prune: if the node’s nearest point is still beyond MAX_RENDER_RADIUS, skip this node entirely.
         let node_center_to_sphere = {
             let mut sq_dist = 0.0;
             let mut v = center.x;
@@ -306,8 +299,8 @@ impl SvoNode {
             }
             sq_dist
         };
-        //if this entire node is beyond MAX_RADIUS, collect all chunks inside it
-        if node_center_to_sphere > MAX_RADIUS_SQUARED {
+        //if this entire node is beyond MAX_RENDER_RADIUS, collect all chunks inside it
+        if node_center_to_sphere > MAX_RENDER_RADIUS_SQUARED {
             self.collect_all_chunks(results);
             return;
         }
@@ -315,7 +308,7 @@ impl SvoNode {
             if let Some((has_entity, _)) = &self.chunk {
                 let chunk_center = cluster_coord_to_world_center(&self.lower_cluster_coord);
                 let dist_sq = center.distance_squared(chunk_center);
-                if dist_sq > MAX_RADIUS_SQUARED {
+                if dist_sq > MAX_RENDER_RADIUS_SQUARED {
                     results.push((self.lower_cluster_coord, *has_entity));
                 }
             }
@@ -328,13 +321,7 @@ impl SvoNode {
         }
     }
 
-    fn collect_all_chunks(
-        &self,
-        results: &mut Vec<(
-            (i16, i16, i16),
-            [bool; CLUSTER_SIZE * CLUSTER_SIZE * CLUSTER_SIZE],
-        )>,
-    ) {
+    fn collect_all_chunks(&self, results: &mut Vec<((i16, i16, i16), [bool; CHUNKS_PER_CLUSTER])>) {
         if self.size == 1 {
             if let Some((has_entity, _)) = &self.chunk {
                 results.push((self.lower_cluster_coord, *has_entity));
@@ -383,11 +370,11 @@ pub fn sphere_intersects_aabb(center: &Vec3, radius_squared: f32, min: &Vec3, ma
 }
 
 fn get_load_priority(distance_squared: f32) -> u8 {
-    if distance_squared <= Z0_RADIUS_SQUARED {
+    if distance_squared <= Z0_RADIUS * Z0_RADIUS {
         0
-    } else if distance_squared <= Z1_RADIUS_SQUARED {
+    } else if distance_squared <= Z1_RADIUS * Z1_RADIUS {
         1
-    } else if distance_squared <= Z2_RADIUS_SQUARED {
+    } else if distance_squared <= Z2_RADIUS * Z2_RADIUS {
         2
     } else {
         3

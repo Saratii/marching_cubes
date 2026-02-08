@@ -4,10 +4,7 @@ use fastnoise2::{
     generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
 };
 
-use crate::terrain::terrain::{CHUNK_SIZE, HALF_CHUNK};
-pub const NOISE_SEED: i32 = 111; // Seed for noise generation
-pub const NOISE_FREQUENCY: f32 = 0.0005; // Frequency of the noise
-pub const NOISE_AMPLITUDE: f32 = 300.0; // Amplitude of the noise
+use crate::constants::{CHUNK_WORLD_SIZE, HALF_CHUNK, NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED};
 
 pub fn get_fbm() -> GeneratorWrapper<SafeNode> {
     let mountains = opensimplex2().ridged(0.5, 0.5, 5, 2.0);
@@ -16,9 +13,9 @@ pub fn get_fbm() -> GeneratorWrapper<SafeNode> {
 
 pub fn calculate_chunk_start(chunk_coord: &(i16, i16, i16)) -> Vec3 {
     Vec3::new(
-        chunk_coord.0 as f32 * CHUNK_SIZE - HALF_CHUNK,
-        chunk_coord.1 as f32 * CHUNK_SIZE - HALF_CHUNK,
-        chunk_coord.2 as f32 * CHUNK_SIZE - HALF_CHUNK,
+        chunk_coord.0 as f32 * CHUNK_WORLD_SIZE - HALF_CHUNK,
+        chunk_coord.1 as f32 * CHUNK_WORLD_SIZE - HALF_CHUNK,
+        chunk_coord.2 as f32 * CHUNK_WORLD_SIZE - HALF_CHUNK,
     )
 }
 
@@ -122,7 +119,7 @@ pub fn fill_voxel_densities(
     terrain_heights: &[f32],
     samples_per_chunk_dim: usize,
 ) -> bool {
-    let voxel_size = CHUNK_SIZE / (samples_per_chunk_dim - 1) as f32;
+    let voxel_size = CHUNK_WORLD_SIZE / (samples_per_chunk_dim - 1) as f32;
     let heightmap_grid_size: usize = samples_per_chunk_dim * samples_per_chunk_dim;
     let solid_threshold = quantize_f32_to_i16(-1.0);
     let mut is_uniform = true;

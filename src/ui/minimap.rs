@@ -14,7 +14,7 @@ const BORDER_COLOR: Color = Color::srgb(0.4, 0.4, 0.45);
 
 //depends on player existing from spawn_player
 pub fn spawn_minimap(
-    player: Single<Entity, With<PlayerTag>>,
+    player_query: Query<Entity, With<PlayerTag>>,
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
 ) {
@@ -81,5 +81,7 @@ pub fn spawn_minimap(
             }),
         ))
         .id();
-    commands.entity(*player).add_child(child);
+    commands
+        .entity(player_query.iter().next().unwrap())
+        .add_child(child);
 }
