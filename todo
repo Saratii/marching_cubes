@@ -7,3 +7,4 @@
 7. Reduce memory usage
 8. Lighting
 9. rare bug causing player to spawn in floor despite my function telling player to not spawn in floor
+10. rare startup crash in fn validate_player_spawn

@@ -7,9 +7,12 @@ use crate::{
         SAMPLES_PER_CHUNK_DIM, Z0_RADIUS,
     },
     conversions::cluster_coord_to_min_chunk_coord,
-    data_loader::file_loader::{
-        CHUNK_SERIALIZED_SIZE, get_project_root, load_chunk, load_chunk_index_map,
-        load_uniform_chunks, remove_uniform_chunk, update_chunk, write_chunk,
+    data_loader::{
+        column_range_map::ColumnRangeMap,
+        file_loader::{
+            CHUNK_SERIALIZED_SIZE, get_project_root, load_chunk, load_chunk_index_map,
+            load_uniform_chunks, remove_uniform_chunk, update_chunk, write_chunk,
+        },
     },
     terrain::{
         chunk_generator::{calculate_chunk_start, downscale, get_fbm},
@@ -166,22 +169,25 @@ pub fn setup_chunk_driver(
         .create(true)
         .open(root.join("data/dirt_compression_data.txt"))
         .unwrap();
-    let mut t0 = Instant::now();
-    let (uniform_air_chunks, empty_air_offsets) = load_uniform_chunks(&mut air_compression_file);
+    let t0 = Instant::now();
+    let mut column_range_map = ColumnRangeMap::new();
+    let empty_air_offsets = load_uniform_chunks(
+        &mut air_compression_file,
+        Uniformity::Air,
+        &mut column_range_map,
+    );
+    let empty_dirt_offsets = load_uniform_chunks(
+        &mut dirt_compression_file,
+        Uniformity::Dirt,
+        &mut column_range_map,
+    );
     println!(
-        "Loaded {} compressed air chunks in {} ms.",
-        uniform_air_chunks.len(),
+        "Loaded ColumnRangeMap with {} bytes in {} ms.",
+        column_range_map.size_in_bytes(),
         t0.elapsed().as_millis()
     );
-    let uniform_air_chunks = Arc::new(uniform_air_chunks);
-    t0 = Instant::now();
-    let (uniform_dirt_chunks, empty_dirt_offsets) = load_uniform_chunks(&mut dirt_compression_file);
-    println!(
-        "Loaded {} compressed dirt chunks in {} ms.",
-        uniform_dirt_chunks.len(),
-        t0.elapsed().as_millis()
-    );
-    let uniform_dirt_chunks = Arc::new(uniform_dirt_chunks);
+    let column_range_map_clone = column_range_map.clone();
+    let column_range_map = Arc::new(column_range_map);
     let fbm = get_fbm();
     commands.insert_resource(NoiseGenerator(fbm.clone()));
     let (write_tx, write_rx) = crossbeam_channel::unbounded();
@@ -208,8 +214,6 @@ pub fn setup_chunk_driver(
         index_map_read.len(),
         t0.elapsed().as_millis()
     );
-    let uniform_air_set = uniform_air_chunks.as_ref().clone();
-    let uniform_dirt_set = uniform_dirt_chunks.as_ref().clone();
     thread::spawn(move || {
         dedicated_write_thread(
             write_rx,
@@ -221,8 +225,7 @@ pub fn setup_chunk_driver(
             empty_air_offsets,
             empty_dirt_offsets,
             index_map_read_arc,
-            uniform_air_set,
-            uniform_dirt_set,
+            column_range_map_clone,
         );
     });
     let priority_queue = Arc::new((Mutex::new(BinaryHeap::new()), Condvar::new()));
@@ -237,8 +240,7 @@ pub fn setup_chunk_driver(
         let res_tx_clone = res_tx.clone();
         let chunk_spawn_channel = chunk_spawn_sender.clone();
         let fbm_clone = fbm.clone();
-        let uniform_air_chunks_read_only = Arc::clone(&uniform_air_chunks);
-        let uniform_dirt_chunks_read_only = Arc::clone(&uniform_dirt_chunks);
+        let column_range_map_read_only = Arc::clone(&column_range_map);
         let write_sender_clone = write_tx.clone();
         let priority_queue_arc = Arc::clone(&priority_queue);
         let terrain_chunk_map_insert_sender_clone = terrain_chunk_map_insert_sender.clone();
@@ -254,8 +256,7 @@ pub fn setup_chunk_driver(
                     chunk_data_file_read,
                     chunk_spawn_channel,
                     fbm_clone,
-                    uniform_air_chunks_read_only,
-                    uniform_dirt_chunks_read_only,
+                    column_range_map_read_only,
                     write_sender_clone,
                     priority_queue_arc,
                     terrain_chunk_map_insert_sender_clone,
@@ -289,8 +290,7 @@ fn dedicated_write_thread(
     mut air_empty_offsets: VecDeque<u64>,
     mut dirt_empty_offsets: VecDeque<u64>,
     chunk_index_map_read: Arc<FxHashMap<(i16, i16, i16), u64>>,
-    mut uniform_air_set: FxHashSet<(i16, i16, i16)>, //track locally to avoid duplicate writes
-    mut uniform_dirt_set: FxHashSet<(i16, i16, i16)>, //these are real time sets whereas thee worker thread sets are initial snapshots. It may be worth using the arc here and storing a delta instead
+    mut column_range_map: ColumnRangeMap, //track locally to avoid duplicate writes. //these are real time sets whereas the worker thread sets are initial snapshots. It may be worth using the arc here and storing a delta instead
 ) {
     let mut chunk_write_reuse = Vec::with_capacity(14); //sizeof (i16, i16, i16, u64)
     let mut serial_buffer = [0; CHUNK_SERIALIZED_SIZE];
@@ -333,24 +333,26 @@ fn dedicated_write_thread(
                 }
             }
             WriteCmd::WriteUniformAir { coord } => {
-                if !uniform_air_set.contains(&coord) {
+                let uniformity = column_range_map.contains(coord);
+                if uniformity.is_none() {
                     write_uniform_chunk(&coord, &mut air_file, &mut air_empty_offsets);
-                    uniform_air_set.insert(coord);
+                    column_range_map.insert(coord, Uniformity::Air);
                 }
             }
             WriteCmd::WriteUniformDirt { coord } => {
-                if !uniform_dirt_set.contains(&coord) {
+                let uniformity = column_range_map.contains(coord);
+                if uniformity.is_none() {
                     write_uniform_chunk(&coord, &mut dirt_file, &mut dirt_empty_offsets);
-                    uniform_dirt_set.insert(coord);
+                    column_range_map.insert(coord, Uniformity::Dirt);
                 }
             }
             WriteCmd::RemoveUniformAir { coord } => {
                 remove_uniform_chunk(&coord, &mut air_file, &mut air_empty_offsets);
-                uniform_air_set.remove(&coord);
+                column_range_map.remove(coord, Uniformity::Air);
             }
             WriteCmd::RemoveUniformDirt { coord } => {
                 remove_uniform_chunk(&coord, &mut dirt_file, &mut dirt_empty_offsets);
-                uniform_dirt_set.remove(&coord);
+                column_range_map.remove(coord, Uniformity::Dirt);
             }
         }
     }
@@ -367,8 +369,7 @@ fn chunk_loader_thread(
     mut chunk_data_file_read: File,
     chunk_spawn_channel: Sender<ChunkSpawnResult>,
     fbm: GeneratorWrapper<SafeNode>,
-    uniform_air_chunks_read_only: Arc<FxHashSet<(i16, i16, i16)>>,
-    uniform_dirt_chunks_read_only: Arc<FxHashSet<(i16, i16, i16)>>,
+    column_range_map_read_only: Arc<ColumnRangeMap>,
     write_sender: Sender<WriteCmd>,
     priority_queue: Arc<(Mutex<BinaryHeap<ClusterRequest>>, Condvar)>,
     terrain_chunk_map_insert_sender: Sender<((i16, i16, i16), TerrainChunk)>,
@@ -449,14 +450,10 @@ fn chunk_loader_thread(
                 for chunk_y in min_chunk.1..min_chunk.1 + CHUNKS_PER_CLUSTER_DIM as i16 {
                     for chunk_z in min_chunk.2..min_chunk.2 + CHUNKS_PER_CLUSTER_DIM as i16 {
                         let chunk_coord = (chunk_x, chunk_y, chunk_z);
-                        let (found_in_uniform_air, found_in_uniform_dirt) = search_uniform_maps(
-                            &chunk_coord,
-                            &uniform_air_chunks_read_only,
-                            &uniform_dirt_chunks_read_only,
-                        );
-                        let has_surface = if found_in_uniform_air || found_in_uniform_dirt {
+                        let uniformity_option = column_range_map_read_only.contains(chunk_coord);
+                        let has_surface = if uniformity_option.is_some() {
                             if request.load_status == 0 {
-                                let terrain_chunk = if found_in_uniform_air {
+                                let terrain_chunk = if uniformity_option == Some(Uniformity::Air) {
                                     TerrainChunk::UniformAir
                                 } else {
                                     TerrainChunk::UniformDirt
@@ -993,19 +990,4 @@ fn validate_player_spawn(
             return;
         }
     }
-}
-
-fn search_uniform_maps(
-    chunk_coord: &(i16, i16, i16),
-    uniform_air_chunks_read_only: &Arc<FxHashSet<(i16, i16, i16)>>,
-    uniform_dirt_chunks_read_only: &Arc<FxHashSet<(i16, i16, i16)>>,
-) -> (bool, bool) {
-    //first search the read only without locking
-    let is_uniform_air = uniform_air_chunks_read_only.contains(&chunk_coord);
-    let is_uniform_dirt = if is_uniform_air {
-        false
-    } else {
-        uniform_dirt_chunks_read_only.contains(&chunk_coord)
-    };
-    (is_uniform_air, is_uniform_dirt)
 }

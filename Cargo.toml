@@ -33,6 +33,10 @@ name = "svo_bench"
 harness = false
 
 [[bench]]
+name = "column_range_map"
+harness = false
+
+[[bench]]
 name = "noise_bench"
 harness = false
 

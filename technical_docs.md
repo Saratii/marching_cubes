@@ -90,6 +90,11 @@ Mesh LOD
     Materials are downscaled from full res to reduce the effect of thin layer bleeding.
     Solution is not perfect and needs to be optimized. 
 
+ColumnRangeMap
+    - Even fast hashing hashmaps are too slow and too large to store tens of millions of cached chunks. 
+    - I built an acceleration structure that tracks vertical ranges of uniform chunks instead of individual coordinates.
+    - Initially brought cache load time from 5 seconds to 0.4 seconds and memory usage from an unknown heap allocation 1GB+ to 14MB
+    - It may be worth looking into storing it on disk in range structure but that may be challening. I could also try sorting the internal buckets. 
 
 Failed Technologies:
     8 bit symmetric quantization - too much data loss, causes visual artifacts

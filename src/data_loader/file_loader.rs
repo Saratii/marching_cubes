@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
 use std::fs::{File, OpenOptions, create_dir_all};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -7,6 +7,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::constants::SAMPLES_PER_CHUNK;
+use crate::data_loader::column_range_map::ColumnRangeMap;
+use crate::terrain::terrain::Uniformity;
 
 const BYTES_PER_VOXEL: usize = std::mem::size_of::<i16>() + std::mem::size_of::<u8>();
 pub const CHUNK_SERIALIZED_SIZE: usize = SAMPLES_PER_CHUNK * BYTES_PER_VOXEL;
@@ -153,12 +155,15 @@ pub fn setup_chunk_loading(mut commands: Commands) {
 }
 
 // Load all chunk coords and track empty slots
-pub fn load_uniform_chunks(f: &mut File) -> (FxHashSet<(i16, i16, i16)>, VecDeque<u64>) {
+pub fn load_uniform_chunks(
+    f: &mut File,
+    uniformity: Uniformity,
+    column_range_map: &mut ColumnRangeMap,
+) -> VecDeque<u64> {
     f.seek(SeekFrom::Start(0)).unwrap();
     let mut data = Vec::new();
     f.read_to_end(&mut data).unwrap();
-    let count = data.len() / 6;
-    let mut uniform_chunks = FxHashSet::with_capacity_and_hasher(count, Default::default());
+    // let count = data.len() / 6;
     let mut free_slots = VecDeque::new();
     for (i, b) in data.chunks_exact(6).enumerate() {
         let offset = (i * 6) as u64;
@@ -170,21 +175,10 @@ pub fn load_uniform_chunks(f: &mut File) -> (FxHashSet<(i16, i16, i16)>, VecDequ
                 i16::from_le_bytes([b[2], b[3]]),
                 i16::from_le_bytes([b[4], b[5]]),
             );
-            #[cfg(feature = "debug")]
-            {
-                let result = uniform_chunks.insert(coord);
-                if !result {
-                    println!(
-                        "Warning: duplicate uniform chunk entry found in uniform chunks file at offset {}: {:?}",
-                        offset, coord
-                    );
-                }
-            }
-            #[cfg(not(feature = "debug"))]
-            uniform_chunks.insert(coord);
+            column_range_map.insert(coord, uniformity);
         }
     }
-    (uniform_chunks, free_slots)
+    free_slots
 }
 
 // Write either into a free slot or append
