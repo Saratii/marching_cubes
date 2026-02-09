@@ -34,7 +34,7 @@ pub struct TerrainMaterialHandle(
 );
 
 #[derive(Resource)]
-pub struct TextureAtlasHandle(pub Handle<Image>);
+pub struct TextureArrayHandle(pub Handle<Image>);
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy)]
 pub enum Uniformity {
@@ -133,7 +133,7 @@ pub fn setup_map(
     asset_server: Res<AssetServer>,
 ) {
     let root = get_project_root();
-    let atlas_texture_handle: Handle<Image> = asset_server
+    let texture_array_handle: Handle<Image> = asset_server
         .load_with_settings::<Image, ImageLoaderSettings>(
             root.join("assets/texture_array.ktx2"),
             |settings| {
@@ -156,12 +156,12 @@ pub fn setup_map(
             ..Default::default()
         },
         extension: TerrainMaterialExtension {
-            base_texture: atlas_texture_handle.clone(),
+            base_texture: texture_array_handle.clone(),
             scale: 0.5,
         },
     });
     commands.insert_resource(TerrainMaterialHandle(standard_terrain_material_handle));
-    commands.insert_resource(TextureAtlasHandle(atlas_texture_handle));
+    commands.insert_resource(TextureArrayHandle(texture_array_handle));
 }
 
 pub fn generate_bevy_mesh(

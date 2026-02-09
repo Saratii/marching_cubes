@@ -42,7 +42,7 @@ Rendering Graphics:
     Much of high end renderieng algorithms are also locked behind triple A studios and game engines like Unreal and Unity so nearly all graphic elements are done by hand. 
 
     The textures I use are procedurally generated and have several levels of LOD KTX data. Mipmap data reduces visual artifacts at distance and can lower the rendering load.
-    Custom triplaner shader for texture wrapping. Also allows multiple textures to be loaded onto the same mesh via a texture atlas. 
+    Custom triplaner shader for texture wrapping. Also allows multiple textures to be loaded onto the same mesh via a texture array. 
 
     To save on PCIE bandwidth I rewrote the vertex shader to excluse UV coordinates.
 
@@ -116,6 +116,8 @@ Failed Technologies:
 
     When using LODs if you generate the LOD volumetric data from noise it creates a bleed effect because you reduce out thin layers like grass.
     The solution to this is creating full res volumetric data and down sampling. This is very slow compared to the alternative but its necessary. 
+
+    Don't use texture atlas in 3d, it causes artifacts. 
     
 Drucker-Prager Elastoplasticity - https://math.ucdavis.edu/~jteran/papers/KGPSJT16.pdf, https://www.youtube.com/watch?v=Bqme4WWuIVQ, https://math.ucdavis.edu/~jteran/
 visco fluid sim - https://github.com/kotsoft/particle_based_viscoelastic_fluid
