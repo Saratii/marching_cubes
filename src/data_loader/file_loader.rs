@@ -92,7 +92,7 @@ pub fn update_chunk(
     chunk_data_file.flush().unwrap();
 }
 
-//loadsa chunk data into provided density and material buffers
+//loads chunk data into provided density and material buffers
 pub fn load_chunk(
     chunk_data_file: &mut File,
     byte_offset: u64,

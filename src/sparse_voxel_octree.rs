@@ -6,20 +6,13 @@ use crate::{
         CHUNK_WORLD_SIZE, CHUNKS_PER_CLUSTER, CHUNKS_PER_CLUSTER_DIM, CLUSTER_WORLD_LENGTH,
         MAX_RENDER_RADIUS_SQUARED, REDUCED_LOD_1_RADIUS_SQUARED, REDUCED_LOD_2_RADIUS_SQUARED,
         REDUCED_LOD_3_RADIUS_SQUARED, REDUCED_LOD_4_RADIUS_SQUARED, REDUCED_LOD_5_RADIUS_SQUARED,
-        RENDER_RADIUS_SQUARED, SIMULATION_RADIUS_SQUARED,
+        SIMULATION_RADIUS_SQUARED,
     },
     conversions::{cluster_coord_to_world_center, cluster_coord_to_world_pos},
-    data_loader::driver::{ClusterRequest, Lod},
+    data_loader::driver::{ClusterRequest, LoadState, LoadStateTransition},
 };
 
 const MAX_WORLD_SIZE: i16 = 512; //in chunks
-
-#[repr(u8)]
-#[derive(Debug, PartialEq)]
-pub enum LoadStatus {
-    Simulated,
-    Rendered,
-}
 
 pub struct ChunkSvo {
     pub root: SvoNode,
@@ -41,7 +34,7 @@ pub struct SvoNode {
     pub lower_cluster_coord: (i16, i16, i16), // cluster coord of lower corner (RENAMED)
     pub size: i16,                            // region size in clusters (power of 2)
     pub children: Option<Box<[Option<SvoNode>; 8]>>,
-    pub chunk: Option<([bool; CHUNKS_PER_CLUSTER], LoadStatus, Lod)>, // (has_entity, load status)
+    pub chunk: Option<([bool; CHUNKS_PER_CLUSTER], LoadState)>,
     pub node_min: Vec3,
     pub node_max: Vec3,
 }
@@ -81,10 +74,7 @@ impl SvoNode {
         index
     }
 
-    pub fn get(
-        &self,
-        coord: (i16, i16, i16),
-    ) -> Option<&([bool; CHUNKS_PER_CLUSTER], LoadStatus, Lod)> {
+    pub fn get(&self, coord: (i16, i16, i16)) -> Option<&([bool; CHUNKS_PER_CLUSTER], LoadState)> {
         if self.size == 1 {
             return self.chunk.as_ref();
         }
@@ -96,7 +86,7 @@ impl SvoNode {
     pub fn get_mut(
         &mut self,
         coord: (i16, i16, i16),
-    ) -> Option<&mut ([bool; CHUNKS_PER_CLUSTER], LoadStatus, Lod)> {
+    ) -> Option<&mut ([bool; CHUNKS_PER_CLUSTER], LoadState)> {
         if self.size == 1 {
             return self.chunk.as_mut();
         }
@@ -108,9 +98,8 @@ impl SvoNode {
     pub fn insert(
         &mut self,
         coord: (i16, i16, i16),
-        load_status: LoadStatus,
         has_entity: [bool; CHUNKS_PER_CLUSTER],
-        lod: Lod,
+        load_state: LoadState,
     ) {
         if self.size == 1 {
             debug_assert!(
@@ -118,7 +107,7 @@ impl SvoNode {
                 "Overwriting existing chunk at {:?}",
                 coord
             );
-            self.chunk = Some((has_entity, load_status, lod));
+            self.chunk = Some((has_entity, load_state));
             return;
         }
         let index = self.child_index(&coord);
@@ -138,7 +127,7 @@ impl SvoNode {
         children[index]
             .as_mut()
             .unwrap()
-            .insert(coord, load_status, has_entity, lod);
+            .insert(coord, has_entity, load_state);
     }
 
     pub fn contains(&self, cluster_coord: &(i16, i16, i16)) -> bool {
@@ -218,37 +207,38 @@ impl SvoNode {
             if self.size == 1 {
                 if self.chunk.is_none() && !chunks_being_loaded.contains(&self.lower_cluster_coord)
                 {
+                    //chunk did not already exist
                     let distance_squared = center
                         .distance_squared(cluster_coord_to_world_center(&self.lower_cluster_coord));
                     if distance_squared > MAX_RENDER_RADIUS_SQUARED {
                         return; //skip chunks where the sphere intersects but chunk center is outside max radius
                     }
                     chunks_being_loaded.insert(self.lower_cluster_coord);
-                    let desired_load_status = get_load_status(distance_squared);
-                    let desired_lod = get_lod_status(distance_squared);
+                    let load_state_transition = get_load_state_transition_first(distance_squared);
                     request_buffer.push(ClusterRequest {
                         position: self.lower_cluster_coord,
-                        load_status: desired_load_status,
-                        upgrade: false,
                         distance_squared,
-                        lod: desired_lod,
+                        load_state_transition,
+                        prev_has_entity: None,
                     });
                 } else if !chunks_being_loaded.contains(&self.lower_cluster_coord) {
-                    let current_load_status = &self.chunk.as_ref().unwrap().1;
+                    //chunk already existed
+                    let current_load_state = self.chunk.as_ref().unwrap().1;
                     let distance_squared = center
                         .distance_squared(cluster_coord_to_world_center(&self.lower_cluster_coord));
-                    let desired_load_status = get_load_status(distance_squared);
-                    let desired_lod = get_lod_status(distance_squared);
-                    if desired_load_status != *current_load_status
-                        || desired_lod != self.chunk.as_ref().unwrap().2
-                    {
+                    let desired_load_state = get_desired_state(distance_squared);
+                    if desired_load_state != current_load_state {
+                        let load_state_transition = get_load_state_transition_from_states(
+                            current_load_state,
+                            desired_load_state,
+                        );
+                        let prev_has_entity = self.chunk.as_ref().unwrap().0;
                         chunks_being_loaded.insert(self.lower_cluster_coord);
                         request_buffer.push(ClusterRequest {
                             position: self.lower_cluster_coord,
-                            load_status: desired_load_status,
-                            upgrade: true,
                             distance_squared,
-                            lod: desired_lod,
+                            load_state_transition,
+                            prev_has_entity: Some(prev_has_entity),
                         });
                     }
                 }
@@ -324,7 +314,7 @@ impl SvoNode {
             return;
         }
         if self.size == 1 {
-            if let Some((has_entity, _, _)) = &self.chunk {
+            if let Some((has_entity, _)) = &self.chunk {
                 let chunk_center = cluster_coord_to_world_center(&self.lower_cluster_coord);
                 let dist_sq = center.distance_squared(chunk_center);
                 if dist_sq > MAX_RENDER_RADIUS_SQUARED {
@@ -342,7 +332,7 @@ impl SvoNode {
 
     fn collect_all_chunks(&self, results: &mut Vec<((i16, i16, i16), [bool; CHUNKS_PER_CLUSTER])>) {
         if self.size == 1 {
-            if let Some((has_entity, _, _)) = &self.chunk {
+            if let Some((has_entity, _)) = &self.chunk {
                 results.push((self.lower_cluster_coord, *has_entity));
             }
             return;
@@ -388,32 +378,62 @@ pub fn sphere_intersects_aabb(center: &Vec3, radius_squared: f32, min: &Vec3, ma
     d <= radius_squared
 }
 
-fn get_load_status(distance_squared: f32) -> LoadStatus {
-    if distance_squared <= SIMULATION_RADIUS_SQUARED {
-        LoadStatus::Simulated
-    } else if distance_squared <= RENDER_RADIUS_SQUARED {
-        LoadStatus::Rendered
+#[inline(always)]
+fn get_load_state_transition_from_states(
+    current: LoadState,
+    desired: LoadState,
+) -> LoadStateTransition {
+    debug_assert!(desired != current);
+    match (current, desired) {
+        (LoadState::Full, LoadState::FullWithCollider) => LoadStateTransition::NoChangeAddCollider,
+        (_, LoadState::FullWithCollider) => LoadStateTransition::ToFullWithCollider,
+        (_, LoadState::Full) => LoadStateTransition::ToFull,
+        (_, LoadState::Lod1) => LoadStateTransition::ToLod1,
+        (_, LoadState::Lod2) => LoadStateTransition::ToLod2,
+        (_, LoadState::Lod3) => LoadStateTransition::ToLod3,
+        (_, LoadState::Lod4) => LoadStateTransition::ToLod4,
+        (_, LoadState::Lod5) => LoadStateTransition::ToLod5,
+    }
+}
+
+//assume no current state
+#[inline(always)]
+fn get_load_state_transition_first(distance_squared: f32) -> LoadStateTransition {
+    if distance_squared > REDUCED_LOD_5_RADIUS_SQUARED {
+        LoadStateTransition::ToLod5
+    } else if distance_squared > REDUCED_LOD_4_RADIUS_SQUARED {
+        LoadStateTransition::ToLod4
+    } else if distance_squared > REDUCED_LOD_3_RADIUS_SQUARED {
+        LoadStateTransition::ToLod3
+    } else if distance_squared > REDUCED_LOD_2_RADIUS_SQUARED {
+        LoadStateTransition::ToLod2
+    } else if distance_squared > REDUCED_LOD_1_RADIUS_SQUARED {
+        LoadStateTransition::ToLod1
+    } else if distance_squared <= SIMULATION_RADIUS_SQUARED {
+        //not in full lod and needs collider
+        return LoadStateTransition::ToFullWithCollider;
     } else {
-        panic!(
-            "Bad distance passed to get_load_priority: {}",
-            distance_squared
-        );
+        //in full lod but out of simulation range
+        LoadStateTransition::ToFull
     }
 }
 
 #[inline(always)]
-fn get_lod_status(distance_squared: f32) -> Lod {
+pub fn get_desired_state(distance_squared: f32) -> LoadState {
     if distance_squared > REDUCED_LOD_5_RADIUS_SQUARED {
-        Lod::Lod5
+        LoadState::Lod5
     } else if distance_squared > REDUCED_LOD_4_RADIUS_SQUARED {
-        Lod::Lod4
+        LoadState::Lod4
     } else if distance_squared > REDUCED_LOD_3_RADIUS_SQUARED {
-        Lod::Lod3
+        LoadState::Lod3
     } else if distance_squared > REDUCED_LOD_2_RADIUS_SQUARED {
-        Lod::Lod2
+        LoadState::Lod2
     } else if distance_squared > REDUCED_LOD_1_RADIUS_SQUARED {
-        Lod::Lod1
+        LoadState::Lod1
+    } else if distance_squared <= SIMULATION_RADIUS_SQUARED {
+        LoadState::FullWithCollider
     } else {
-        Lod::Full
+        //in full lod but out of simulation range
+        LoadState::Full
     }
 }
