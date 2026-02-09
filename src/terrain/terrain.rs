@@ -135,7 +135,7 @@ pub fn setup_map(
     let root = get_project_root();
     let atlas_texture_handle: Handle<Image> = asset_server
         .load_with_settings::<Image, ImageLoaderSettings>(
-            root.join("assets/texture_atlas.ktx2"),
+            root.join("assets/texture_array.ktx2"),
             |settings| {
                 settings.sampler = ImageSampler::Descriptor(
                     SamplerDescriptor {

@@ -13,7 +13,7 @@ use crate::terrain::ATTRIBUTE_MATERIAL_ID;
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
 pub struct TerrainMaterialExtension {
-    #[texture(103)]
+    #[texture(103, dimension = "2d_array")]
     #[sampler(104)]
     pub base_texture: Handle<Image>,
     #[uniform(105)]

@@ -6,7 +6,7 @@
     mesh_functions::{get_world_from_local, mesh_position_local_to_clip},
 }
 
-@group(3) @binding(103) var base_texture: texture_2d<f32>;
+@group(3) @binding(103) var base_texture: texture_2d_array<f32>;
 @group(3) @binding(104) var base_sampler: sampler;
 @group(3) @binding(105) var<uniform> scale: f32;
 
@@ -55,19 +55,28 @@ fn fragment(
     blend = pow(blend, vec3(4.0));
     blend = blend / (blend.x + blend.y + blend.z);
     let id = i32(in.material_id);
-    var material_offset_u = 0.0;  // dirt = 1
+    var layer = 0;
     if (id == 2) {
-        material_offset_u = 0.333333;  // grass
+        layer = 1;
     } else if (id == 3) {
-        material_offset_u = 0.666666;  // sand
+        layer = 2;
     }
     let scale_vec = vec2(scale);
-    let uv_x = fract(world_pos.yz * scale_vec);
-    let uv_y = fract(world_pos.xz * scale_vec);
-    let uv_z = fract(world_pos.xy * scale_vec);
-    let color_x = textureSample(base_texture, base_sampler, vec2(uv_x.x * 0.333333 + material_offset_u, uv_x.y)).rgb;
-    let color_y = textureSample(base_texture, base_sampler, vec2(uv_y.x * 0.333333 + material_offset_u, uv_y.y)).rgb;
-    let color_z = textureSample(base_texture, base_sampler, vec2(uv_z.x * 0.333333 + material_offset_u, uv_z.y)).rgb;
+    let uv_x_raw = world_pos.yz * scale_vec;
+    let uv_y_raw = world_pos.xz * scale_vec;
+    let uv_z_raw = world_pos.xy * scale_vec;
+    let uv_x = fract(uv_x_raw);
+    let uv_y = fract(uv_y_raw);
+    let uv_z = fract(uv_z_raw);
+    let duvdx_x = dpdx(uv_x_raw);
+    let duvdy_x = dpdy(uv_x_raw);
+    let duvdx_y = dpdx(uv_y_raw);
+    let duvdy_y = dpdy(uv_y_raw);
+    let duvdx_z = dpdx(uv_z_raw);
+    let duvdy_z = dpdy(uv_z_raw);
+    let color_x = textureSampleGrad(base_texture, base_sampler, uv_x, layer, duvdx_x, duvdy_x).rgb;
+    let color_y = textureSampleGrad(base_texture, base_sampler, uv_y, layer, duvdx_y, duvdy_y).rgb;
+    let color_z = textureSampleGrad(base_texture, base_sampler, uv_z, layer, duvdx_z, duvdy_z).rgb;
     let final_color = color_x * blend.x + color_y * blend.y + color_z * blend.z;
     pbr_input.material.base_color = vec4<f32>(final_color, 1.0);
     pbr_input.material.base_color = alpha_discard(pbr_input.material, pbr_input.material.base_color);
