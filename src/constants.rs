@@ -1,7 +1,7 @@
 use bevy::math::Vec3;
 
 pub const SIMULATION_RADIUS: f32 = 80.0; //in world units. Distance where everything is loaded at all times and physically simulated.
-pub const RENDER_RADIUS: f32 = 1000.0; //in world units. Distance where chunks are rendered, only meta data should exist at this point besides vertex data for rendering. 
+pub const RENDER_RADIUS: f32 = 100.0; //in world units. Distance where chunks are rendered, only meta data should exist at this point besides vertex data for rendering. 
 pub const CHUNK_WORLD_SIZE: f32 = 12.0; //in world units, required by noise to be an integer and even
 pub const SAMPLES_PER_CHUNK_DIM: usize = 64; // Number of voxel sample points
 pub const CHUNKS_PER_CLUSTER_DIM: usize = 5; //number of chunks along one edge of a cluster

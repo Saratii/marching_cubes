@@ -1,7 +1,8 @@
-use std::sync::Arc;
+use std::{fs::File, sync::Arc};
 
 use bevy::{camera::primitives::MeshAabb, ecs::system::SystemParam, prelude::*};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
+use std::io::Write;
 
 use crate::{
     constants::{
@@ -75,6 +76,7 @@ pub fn handle_digging_input(
                 camera_transform,
                 &terrain_io.terrain_chunk_map,
             ) {
+                write_surface_voxel_debug(world_pos, DIG_RADIUS, &terrain_io.terrain_chunk_map);
                 let modified_chunks = dig_sphere(
                     world_pos,
                     DIG_RADIUS,
@@ -321,4 +323,90 @@ fn screen_to_world_ray(
         }
     }
     None
+}
+
+fn write_surface_voxel_debug(center: Vec3, radius: f32, terrain_chunk_map: &TerrainChunkMap) {
+    let radius_squared = radius * radius;
+    let min_world = center - Vec3::splat(radius);
+    let max_world = center + Vec3::splat(radius);
+    let min_chunk = world_pos_to_chunk_coord(&min_world);
+    let max_chunk = world_pos_to_chunk_coord(&max_world);
+
+    let terrain_chunk_map_lock = terrain_chunk_map.0.lock().unwrap();
+
+    for chunk_x in min_chunk.0..=max_chunk.0 {
+        for chunk_y in min_chunk.1..=max_chunk.1 {
+            for chunk_z in min_chunk.2..=max_chunk.2 {
+                let chunk_coord = (chunk_x, chunk_y, chunk_z);
+                let chunk_center = chunk_coord_to_world_pos(&chunk_coord);
+                let node_min = Vec3::new(
+                    chunk_center.x - HALF_CHUNK,
+                    chunk_center.y - HALF_CHUNK,
+                    chunk_center.z - HALF_CHUNK,
+                );
+                let node_max = node_min + Vec3::splat(CHUNK_WORLD_SIZE);
+
+                if sphere_intersects_aabb(&center, radius_squared, &node_min, &node_max) {
+                    if let Some(terrain_chunk) = terrain_chunk_map_lock.get(&chunk_coord) {
+                        let filename = format!(
+                            "surface_debug_{}_{}_{}_{}.txt",
+                            chunk_x,
+                            chunk_y,
+                            chunk_z,
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_millis()
+                        );
+
+                        if let Ok(mut file) = File::create(&filename) {
+                            writeln!(file, "Chunk: ({}, {}, {})", chunk_x, chunk_y, chunk_z).ok();
+                            writeln!(file, "Surface voxels (x, z, height_y, material):").ok();
+                            writeln!(file, "").ok();
+
+                            let (densities, materials) = match terrain_chunk {
+                                TerrainChunk::UniformAir => continue,
+                                TerrainChunk::UniformDirt => {
+                                    writeln!(file, "Uniform Dirt Chunk").ok();
+                                    continue;
+                                }
+                                TerrainChunk::NonUniformTerrainChunk(chunk) => {
+                                    (&chunk.densities, &chunk.materials)
+                                }
+                            };
+
+                            // For each x,z position, find the highest solid voxel
+                            for x in 0..SAMPLES_PER_CHUNK_DIM {
+                                for z in 0..SAMPLES_PER_CHUNK_DIM {
+                                    let mut surface_y = None;
+                                    let mut surface_material = 0u8;
+
+                                    for y in (0..SAMPLES_PER_CHUNK_DIM).rev() {
+                                        let flat_index = flatten_index(
+                                            x as u32,
+                                            y as u32,
+                                            z as u32,
+                                            SAMPLES_PER_CHUNK_DIM,
+                                        );
+                                        let density = densities[flat_index as usize];
+
+                                        if density < 0 {
+                                            surface_y = Some(y);
+                                            surface_material = materials[flat_index as usize];
+                                            break;
+                                        }
+                                    }
+
+                                    if let Some(y) = surface_y {
+                                        writeln!(file, "{}, {}, {}, {}", x, z, y, surface_material)
+                                            .ok();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

@@ -185,7 +185,7 @@ pub fn setup_chunk_driver(
 ) {
     #[cfg(feature = "timers")]
     {
-        std::fs::create_dir_all("plots").unwrap();
+        std::fs::create_dir_all("plots/latest").unwrap();
     }
     let index_map_delta = Arc::new(RwLock::new(FxHashMap::default()));
     let num_processors = thread::available_parallelism().unwrap().get();

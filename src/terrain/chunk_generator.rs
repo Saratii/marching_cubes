@@ -4,7 +4,10 @@ use fastnoise2::{
     generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
 };
 
-use crate::constants::{CHUNK_WORLD_SIZE, HALF_CHUNK, NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED};
+use crate::constants::{
+    CHUNK_WORLD_SIZE, HALF_CHUNK, NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED, SAMPLES_PER_CHUNK,
+    SAMPLES_PER_CHUNK_DIM,
+};
 
 pub fn get_fbm() -> GeneratorWrapper<SafeNode> {
     let mountains = opensimplex2().ridged(0.5, 0.5, 5, 2.0);
@@ -113,17 +116,18 @@ pub fn generate_terrain_heights(
 //assumes that the surface passes through one of the chunk sides
 //will break if a "cave" is fully enclosed within the chunk
 pub fn fill_voxel_densities(
-    densities: &mut [i16],
+    densities_old_ignore_temp_debug: &mut [i16],
     materials: &mut [u8],
     chunk_start: &Vec3,
     terrain_heights: &[f32],
     samples_per_chunk_dim: usize,
 ) -> bool {
+    let mut densities = [0.0; SAMPLES_PER_CHUNK];
     let voxel_size = CHUNK_WORLD_SIZE / (samples_per_chunk_dim - 1) as f32;
     let heightmap_grid_size: usize = samples_per_chunk_dim * samples_per_chunk_dim;
-    let solid_threshold = quantize_f32_to_i16(-1.0);
+    let solid_threshold = -1.0;
     let mut is_uniform = true;
-    let mut init_distance = 0;
+    let mut init_distance = 0.0;
     let mut init_material = 0;
     let mut has_init = false;
     for z in [0, samples_per_chunk_dim - 1] {
@@ -136,10 +140,9 @@ pub fn fill_voxel_densities(
             for x in 0..samples_per_chunk_dim {
                 let rolling_voxel_index = base_rolling_voxel_index + x;
                 let terrain_height = terrain_heights[height_base + x];
-                let distance_to_surface =
-                    quantize_f32_to_i16((world_y - terrain_height).clamp(-10.0, 10.0));
+                let distance_to_surface = (world_y - terrain_height).clamp(-10.0, 10.0);
                 densities[rolling_voxel_index] = distance_to_surface;
-                let mat = if distance_to_surface >= 0 {
+                let mat = if distance_to_surface >= 0.0 {
                     0 //air
                 } else if distance_to_surface < solid_threshold {
                     1 //dirt
@@ -171,10 +174,9 @@ pub fn fill_voxel_densities(
             for x in 0..samples_per_chunk_dim {
                 let rolling_voxel_index = base_rolling_voxel_index + x;
                 let terrain_height = terrain_heights[height_base + x];
-                let distance_to_surface =
-                    quantize_f32_to_i16((world_y - terrain_height).clamp(-10.0, 10.0));
+                let distance_to_surface = (world_y - terrain_height).clamp(-10.0, 10.0);
                 densities[rolling_voxel_index] = distance_to_surface;
-                let mat = if distance_to_surface >= 0 {
+                let mat = if distance_to_surface >= 0.0 {
                     0 //air
                 } else if distance_to_surface < solid_threshold {
                     1 //dirt
@@ -206,10 +208,9 @@ pub fn fill_voxel_densities(
             for x in [0, samples_per_chunk_dim - 1] {
                 let rolling_voxel_index = base_rolling_voxel_index + x;
                 let terrain_height = terrain_heights[height_base + x];
-                let distance_to_surface =
-                    quantize_f32_to_i16((world_y - terrain_height).clamp(-10.0, 10.0));
+                let distance_to_surface = (world_y - terrain_height).clamp(-10.0, 10.0);
                 densities[rolling_voxel_index] = distance_to_surface;
-                let mat = if distance_to_surface >= 0 {
+                let mat = if distance_to_surface >= 0.0 {
                     0 //air
                 } else if distance_to_surface < solid_threshold {
                     1 //dirt
@@ -244,10 +245,9 @@ pub fn fill_voxel_densities(
                 for x in 1..samples_per_chunk_dim - 1 {
                     let rolling_voxel_index = base_rolling_voxel_index + x;
                     let terrain_height = terrain_heights[height_base + x];
-                    let distance_to_surface =
-                        quantize_f32_to_i16((world_y - terrain_height).clamp(-10.0, 10.0));
+                    let distance_to_surface = (world_y - terrain_height).clamp(-10.0, 10.0);
                     densities[rolling_voxel_index] = distance_to_surface;
-                    let mat = if distance_to_surface >= 0 {
+                    let mat = if distance_to_surface >= 0.0 {
                         0 //air
                     } else if distance_to_surface < solid_threshold {
                         1 //dirt
@@ -269,6 +269,48 @@ pub fn fill_voxel_densities(
                 }
             }
         }
+    }
+    //check if there is any dirt above grass
+    for x in 0..SAMPLES_PER_CHUNK_DIM {
+        for y in 0..SAMPLES_PER_CHUNK_DIM {
+            for z in 0..SAMPLES_PER_CHUNK_DIM {
+                let index = x * SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM
+                    + y * SAMPLES_PER_CHUNK_DIM
+                    + z;
+                let material = materials[index];
+                let is_grass = material == 2;
+                if is_grass && y < SAMPLES_PER_CHUNK_DIM - 1 {
+                    let above_index: isize = x as isize
+                        * SAMPLES_PER_CHUNK_DIM as isize
+                        * SAMPLES_PER_CHUNK_DIM as isize
+                        + (y as isize + 1) * SAMPLES_PER_CHUNK_DIM as isize
+                        + z as isize;
+                    if above_index < SAMPLES_PER_CHUNK as isize {
+                        let above_mat = materials[above_index as usize];
+                        if above_mat == 1 {
+                            //print the column
+                            println!(
+                                "invariant broken, dirt above grass at ({}, {}, {})",
+                                x, y, z
+                            );
+                            for yy in 0..SAMPLES_PER_CHUNK_DIM {
+                                let indexx = x * SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM
+                                    + yy * SAMPLES_PER_CHUNK_DIM
+                                    + z;
+                                println!(
+                                    "index {} material {}, density {}",
+                                    yy, materials[indexx], densities[indexx]
+                                )
+                            }
+                            std::process::exit(0);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for i in 0..densities.len() {
+        densities_old_ignore_temp_debug[i] = quantize_f32_to_i16(densities[i])
     }
     is_uniform
 }
