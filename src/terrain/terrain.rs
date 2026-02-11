@@ -16,8 +16,7 @@ use crate::{
     conversions::flatten_index,
     data_loader::file_loader::get_project_root,
     terrain::{
-        ATTRIBUTE_MATERIAL_ID,
-        chunk_generator::{fill_voxel_densities, generate_terrain_heights},
+        ATTRIBUTE_MATERIAL_ID, chunk_generator::MaterialCode,
         terrain_material::TerrainMaterialExtension,
     },
 };
@@ -46,7 +45,7 @@ pub enum Uniformity {
 #[derive(Clone)]
 pub struct NonUniformTerrainChunk {
     pub densities: Arc<[i16]>, //arc, so the write thread can read them
-    pub materials: Arc<[u8]>,
+    pub materials: Arc<[MaterialCode]>,
 }
 
 pub enum TerrainChunk {
@@ -67,7 +66,7 @@ impl TerrainChunk {
 }
 
 impl NonUniformTerrainChunk {
-    pub fn new(densities: Arc<[i16]>, materials: Arc<[u8]>) -> Self {
+    pub fn new(densities: Arc<[i16]>, materials: Arc<[MaterialCode]>) -> Self {
         Self {
             densities,
             materials,
@@ -88,43 +87,6 @@ impl NonUniformTerrainChunk {
     pub fn is_solid(&self, x: u32, y: u32, z: u32) -> bool {
         self.get_density(x, y, z) < 0
     }
-}
-
-pub fn generate_chunk_into_buffers(
-    fbm: &GeneratorWrapper<SafeNode>,
-    chunk_start: Vec3,
-    density_buffer: &mut [i16],
-    material_buffer: &mut [u8],
-    heightmap_buffer: &mut [f32],
-    samples_per_chunk_dim: usize,
-) -> Uniformity {
-    generate_terrain_heights(
-        chunk_start.x,
-        chunk_start.z,
-        fbm,
-        heightmap_buffer,
-        samples_per_chunk_dim,
-    );
-    let is_uniform = fill_voxel_densities(
-        density_buffer,
-        material_buffer,
-        &chunk_start,
-        heightmap_buffer,
-        samples_per_chunk_dim,
-    );
-    let uniformity = if !is_uniform {
-        Uniformity::NonUniform
-    } else {
-        if material_buffer[0] == 1 {
-            Uniformity::Dirt
-        } else if material_buffer[0] == 0 {
-            Uniformity::Air
-        } else {
-            println!("materials[0]: {}", material_buffer[0]);
-            panic!("Generated uniform chunk with unknown material type!");
-        }
-    };
-    uniformity
 }
 
 pub fn setup_map(

@@ -3,7 +3,7 @@ use crate::{
         CHUNK_WORLD_SIZE, CHUNKS_PER_CLUSTER, CHUNKS_PER_CLUSTER_DIM, HALF_CHUNK,
         MAX_RENDER_RADIUS_SQUARED, NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED,
         PLAYER_CUBOID_SIZE, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_2D, SAMPLES_PER_CHUNK_DIM,
-        SIMULATION_RADIUS_SQUARED,
+        SIMULATION_RADIUS_SQUARED, VOXEL_WORLD_SIZE,
     },
     conversions::cluster_coord_to_min_chunk_coord,
     data_loader::{
@@ -14,8 +14,10 @@ use crate::{
         },
     },
     terrain::{
-        chunk_generator::{calculate_chunk_start, downscale, get_fbm},
-        terrain::{NonUniformTerrainChunk, generate_chunk_into_buffers},
+        chunk_generator::{
+            MaterialCode, calculate_chunk_start, downscale, generate_chunk_into_buffers, get_fbm,
+        },
+        terrain::NonUniformTerrainChunk,
     },
 };
 use bevy::{camera::primitives::MeshAabb, prelude::*};
@@ -117,7 +119,7 @@ pub enum ChunkSpawnResult {
 pub enum WriteCmd {
     UpdateNonUniform {
         densities: Arc<[i16]>,
-        materials: Arc<[u8]>,
+        materials: Arc<[MaterialCode]>,
         coord: (i16, i16, i16),
     },
     WriteUniformAir {
@@ -432,19 +434,21 @@ fn chunk_loader_thread(
     const RF5_SAMPLES_PER_CHUNK: usize = SAMPLES_PER_CHUNK / RF5.pow(3);
     const PROCESS_BATCH_SIZE: usize = 64;
     let mut internal_queue = Vec::with_capacity(32);
-    let mut density_buffer = [0; SAMPLES_PER_CHUNK];
-    let mut material_buffer = [0; SAMPLES_PER_CHUNK];
     let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
+    let mut dhdx_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
+    let mut dhdz_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
+    let mut density_buffer = [0; SAMPLES_PER_CHUNK];
+    let mut material_buffer = [MaterialCode::Air; SAMPLES_PER_CHUNK];
     let mut density_buffer_r1 = [0; RF1_SAMPLES_PER_CHUNK];
-    let mut material_buffer_r1 = [0; RF1_SAMPLES_PER_CHUNK];
+    let mut material_buffer_r1 = [MaterialCode::Air; RF1_SAMPLES_PER_CHUNK];
     let mut density_buffer_r2 = [0; RF2_SAMPLES_PER_CHUNK];
-    let mut material_buffer_r2 = [0; RF2_SAMPLES_PER_CHUNK];
+    let mut material_buffer_r2 = [MaterialCode::Air; RF2_SAMPLES_PER_CHUNK];
     let mut density_buffer_r3 = [0; RF3_SAMPLES_PER_CHUNK];
-    let mut material_buffer_r3 = [0; RF3_SAMPLES_PER_CHUNK];
+    let mut material_buffer_r3 = [MaterialCode::Air; RF3_SAMPLES_PER_CHUNK];
     let mut density_buffer_r4 = [0; RF4_SAMPLES_PER_CHUNK];
-    let mut material_buffer_r4 = [0; RF4_SAMPLES_PER_CHUNK];
+    let mut material_buffer_r4 = [MaterialCode::Air; RF4_SAMPLES_PER_CHUNK];
     let mut density_buffer_r5 = [0; RF5_SAMPLES_PER_CHUNK];
-    let mut material_buffer_r5 = [0; RF5_SAMPLES_PER_CHUNK];
+    let mut material_buffer_r5 = [MaterialCode::Air; RF5_SAMPLES_PER_CHUNK];
     #[cfg(feature = "timers")]
     let mut chunks_generated = 0;
     #[cfg(feature = "timers")]
@@ -523,6 +527,8 @@ fn chunk_loader_thread(
                                         &mut density_buffer,
                                         &mut material_buffer,
                                         &mut heightmap_buffer,
+                                        &mut dhdx_buffer,
+                                        &mut dhdz_buffer,
                                         SAMPLES_PER_CHUNK_DIM,
                                     );
                                     uniformity
@@ -1257,14 +1263,13 @@ fn validate_player_spawn(
     let chunk_start = calculate_chunk_start(chunk_coord);
     let local_x = SAMPLES_PER_CHUNK_DIM / 2;
     let local_z = SAMPLES_PER_CHUNK_DIM / 2;
-    let voxel_size = CHUNK_WORLD_SIZE / SAMPLES_PER_CHUNK_DIM as f32;
     let original_y = player_transform.translation.y;
-    let player_local_y = ((original_y - chunk_start.y) / voxel_size).floor() as usize;
+    let player_local_y = ((original_y - chunk_start.y) / VOXEL_WORLD_SIZE).floor() as usize;
     let start_y = player_local_y.min(SAMPLES_PER_CHUNK_DIM - 1);
     for y in start_y..SAMPLES_PER_CHUNK_DIM {
         let mut all_air = true;
-        for dx in 0..=(PLAYER_CUBOID_SIZE.x / voxel_size).ceil() as usize {
-            for dz in 0..=(PLAYER_CUBOID_SIZE.z / voxel_size).ceil() as usize {
+        for dx in 0..=(PLAYER_CUBOID_SIZE.x / VOXEL_WORLD_SIZE).ceil() as usize {
+            for dz in 0..=(PLAYER_CUBOID_SIZE.z / VOXEL_WORLD_SIZE).ceil() as usize {
                 let check_x = (local_x + dx).min(SAMPLES_PER_CHUNK_DIM - 1);
                 let check_z = (local_z + dz).min(SAMPLES_PER_CHUNK_DIM - 1);
                 let idx = y * SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM
@@ -1280,7 +1285,7 @@ fn validate_player_spawn(
             }
         }
         if all_air {
-            let new_y = chunk_start.y + (y as f32 * voxel_size);
+            let new_y = chunk_start.y + (y as f32 * VOXEL_WORLD_SIZE);
             if new_y != original_y {
                 player_transform.translation.y = new_y;
                 println!("Moved player up from {} to {}", original_y, new_y);

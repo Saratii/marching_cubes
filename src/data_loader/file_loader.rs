@@ -3,11 +3,13 @@ use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
 use std::fs::{File, OpenOptions, create_dir_all};
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::mem::transmute;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::constants::SAMPLES_PER_CHUNK;
 use crate::data_loader::column_range_map::ColumnRangeMap;
+use crate::terrain::chunk_generator::MaterialCode;
 use crate::terrain::terrain::Uniformity;
 
 const BYTES_PER_VOXEL: usize = std::mem::size_of::<i16>() + std::mem::size_of::<u8>();
@@ -29,32 +31,36 @@ pub struct ChunkEntityMap(pub FxHashMap<(i16, i16, i16), Entity>);
 // - Material values: num_voxels * u8 (1 byte each)
 
 //serialize densities and materials into a byte buffer
-fn serialize_chunk_data(densities: &[i16], materials: &[u8], mut buffer: &mut [u8]) {
+fn serialize_chunk_data(densities: &[i16], materials: &[MaterialCode], mut buffer: &mut [u8]) {
     for &d in densities.iter() {
         let (dst, rest) = buffer.split_at_mut(2);
         dst.copy_from_slice(&d.to_le_bytes());
         buffer = rest;
     }
     for &m in materials.iter() {
-        buffer[0] = m;
+        buffer[0] = unsafe { transmute::<MaterialCode, u8>(m) };
         buffer = &mut buffer[1..];
     }
 }
 
 //read density and material data into provided buffers
-pub fn deserialize_chunk_data(data: &[u8], density_buffer: &mut [i16], material_buffer: &mut [u8]) {
+pub fn deserialize_chunk_data(
+    data: &[u8],
+    density_buffer: &mut [i16],
+    material_buffer: &mut [MaterialCode],
+) {
     let (sdf_bytes, material_bytes) = data.split_at(SAMPLES_PER_CHUNK * 2);
     for (index, (sdf_chunk, &material)) in sdf_bytes.chunks_exact(2).zip(material_bytes).enumerate()
     {
         let density = i16::from_le_bytes([sdf_chunk[0], sdf_chunk[1]]);
         density_buffer[index] = density;
-        material_buffer[index] = material;
+        material_buffer[index] = unsafe { transmute::<u8, MaterialCode>(material) };
     }
 }
 
 pub fn write_chunk(
     densities: &[i16],
-    materials: &[u8],
+    materials: &[MaterialCode],
     chunk_coord: &(i16, i16, i16),
     index_map_delta: &mut FxHashMap<(i16, i16, i16), u64>,
     chunk_data_file: &mut File,
@@ -82,7 +88,7 @@ pub fn write_chunk(
 pub fn update_chunk(
     byte_offset: u64,
     densities: &[i16],
-    materials: &[u8],
+    materials: &[MaterialCode],
     chunk_data_file: &mut File,
     serial_buffer: &mut [u8],
 ) {
@@ -97,7 +103,7 @@ pub fn load_chunk(
     chunk_data_file: &mut File,
     byte_offset: u64,
     density_buffer: &mut [i16],
-    material_buffer: &mut [u8],
+    material_buffer: &mut [MaterialCode],
 ) {
     chunk_data_file.seek(SeekFrom::Start(byte_offset)).unwrap();
     let mut buffer = [0u8; CHUNK_SERIALIZED_SIZE];
@@ -134,7 +140,7 @@ pub fn get_project_root() -> PathBuf {
 
 pub fn setup_chunk_loading(mut commands: Commands) {
     let root = get_project_root();
-    create_dir_all(root.join("data")).expect("Failed to create data directory");
+    create_dir_all(root.join("data/latest")).expect("Failed to create data directory");
     commands.insert_resource(ChunkEntityMap {
         0: FxHashMap::default(),
     }); //store entities on the main thread

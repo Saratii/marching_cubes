@@ -2,8 +2,9 @@ use std::collections::hash_map::Entry;
 
 use rustc_hash::{FxBuildHasher, FxHashMap as HashMap};
 
-use crate::marching_cubes::tables::{
-    CORNER_OFFSETS, EDGE_ID_OFFSETS, EDGE_VERTICES, TRIANGLE_TABLE,
+use crate::{
+    marching_cubes::tables::{CORNER_OFFSETS, EDGE_ID_OFFSETS, EDGE_VERTICES, TRIANGLE_TABLE},
+    terrain::chunk_generator::MaterialCode,
 };
 
 type EdgeKey = u64;
@@ -15,7 +16,7 @@ fn make_edge_key(x: u16, y: u16, z: u16, dir: u8) -> u64 {
 
 pub fn mc_mesh_generation(
     densities: &[i16],
-    materials: &[u8],
+    materials: &[MaterialCode],
     samples_per_chunk_dim: usize,
     half_extent: f32,
 ) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>, Vec<u32>) {
@@ -91,7 +92,7 @@ fn process_cube_with_cache(
     material_ids: &mut Vec<u32>,
     indices: &mut Vec<u32>,
     densities: &[i16],
-    materials: &[u8],
+    materials: &[MaterialCode],
     samples_per_chunk_dim: usize,
     voxel_size: f32,
     stride: usize,
@@ -137,7 +138,7 @@ fn triangulate_cube_with_cache(
     vertices: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
     material_ids: &mut Vec<u32>,
-    materials: &[u8],
+    materials: &[MaterialCode],
     samples_per_chunk_dim: usize,
     indices: &mut Vec<u32>,
     stride: usize,
@@ -252,7 +253,7 @@ fn get_or_create_edge_vertex(
     vertices: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
     material_ids: &mut Vec<u32>,
-    materials: &[u8],
+    materials: &[MaterialCode],
     samples_per_chunk_dim: usize,
     stride: usize,
     base: usize,
@@ -276,9 +277,9 @@ fn get_or_create_edge_vertex(
             let (dx2, dy2, dz2) = CORNER_OFFSETS[v2_idx];
             let material1 = materials[base + dz1 * stride + dy1 * samples_per_chunk_dim + dx1];
             let material2 = materials[base + dz2 * stride + dy2 * samples_per_chunk_dim + dx2];
-            let material = if material1 == 2 || material2 == 2 {
-                2
-            } else if material1 != 0 {
+            let material = if material1 == MaterialCode::Grass || material2 == MaterialCode::Grass {
+                MaterialCode::Grass
+            } else if material1 != MaterialCode::Air {
                 material1
             } else {
                 material2
