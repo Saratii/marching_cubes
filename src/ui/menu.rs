@@ -105,28 +105,30 @@ pub fn menu_update(
         match settings_state.current_focus {
             MenuFocus::Tabs => {
                 settings_state.current_focus = MenuFocus::Setting(0);
-                focus_changed = true;
             }
             MenuFocus::Setting(index) => {
-                if index + 1 < settings_list.len() {
-                    settings_state.current_focus = MenuFocus::Setting(index + 1);
-                    focus_changed = true;
-                }
+                settings_state.current_focus = if index + 1 < settings_list.len() {
+                    MenuFocus::Setting(index + 1)
+                } else {
+                    MenuFocus::Tabs
+                };
             }
         }
+        focus_changed = true;
     } else if keyboard.just_pressed(KeyCode::ArrowUp) || keyboard.just_pressed(KeyCode::KeyW) {
         match settings_state.current_focus {
-            MenuFocus::Tabs => {}
+            MenuFocus::Tabs => {
+                settings_state.current_focus = MenuFocus::Setting(settings_list.len() - 1);
+            }
             MenuFocus::Setting(index) => {
-                if index == 0 {
-                    settings_state.current_focus = MenuFocus::Tabs;
-                    focus_changed = true;
+                settings_state.current_focus = if index == 0 {
+                    MenuFocus::Tabs
                 } else {
-                    settings_state.current_focus = MenuFocus::Setting(index - 1);
-                    focus_changed = true;
-                }
+                    MenuFocus::Setting(index - 1)
+                };
             }
         }
+        focus_changed = true;
     }
     let right = keyboard.just_pressed(KeyCode::ArrowRight) || keyboard.just_pressed(KeyCode::KeyD);
     let left = keyboard.just_pressed(KeyCode::ArrowLeft) || keyboard.just_pressed(KeyCode::KeyA);
