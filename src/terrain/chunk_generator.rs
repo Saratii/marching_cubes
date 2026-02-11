@@ -9,6 +9,9 @@ use crate::{
     terrain::terrain::Uniformity,
 };
 
+const SCALE: f32 = 32767.0 / 10.0; // Map [-10, 10] to [-32767, 32767]
+const SCALE_INV: f32 = 1.0 / SCALE;
+
 #[repr(u8)]
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub enum MaterialCode {
@@ -365,8 +368,6 @@ pub fn fill_voxel_densities(
     is_uniform
 }
 
-const SCALE: f32 = 32767.0 / 10.0; // Map [-10, 10] to [-32767, 32767]
-
 #[inline(always)]
 pub fn quantize_f32_to_i16(value: f32) -> i16 {
     (value * SCALE).round() as i16
@@ -374,7 +375,7 @@ pub fn quantize_f32_to_i16(value: f32) -> i16 {
 
 #[inline(always)]
 pub fn dequantize_i16_to_f32(q: i16) -> f32 {
-    q as f32 / SCALE
+    q as f32 * SCALE_INV
 }
 
 #[inline(always)]
@@ -432,25 +433,34 @@ pub fn downscale(
     materials_out: &mut [MaterialCode],
     out_dim: usize,
 ) {
-    let in_max = (in_dim - 1) as f32;
-    let out_max = (out_dim - 1) as f32;
-    for oz in 0..out_dim {
-        let fz = (oz as f32 / out_max) * in_max;
-        for oy in 0..out_dim {
-            let fy = (oy as f32 / out_max) * in_max;
-            for ox in 0..out_dim {
-                let fx = (ox as f32 / out_max) * in_max;
+    let in_max = in_dim - 1;
+    let out_max = out_dim - 1;
+    let stride = in_max / out_max;
+    for target_z in 0..out_dim {
+        let fz = (target_z as f32 / out_max as f32) * in_max as f32;
+        let full_res_target_z = target_z * stride;
+        let full_res_end_z = (full_res_target_z + stride).min(in_dim - 1);
+        for target_y in 0..out_dim {
+            let fy = (target_y as f32 / out_max as f32) * in_max as f32;
+            let full_res_target_y = target_y * stride;
+            let full_res_end_y = (full_res_target_y + stride).min(in_dim - 1);
+            for target_x in 0..out_dim {
+                let full_res_target_x = target_x * stride;
+                let fx = (target_x as f32 / out_max as f32) * in_max as f32;
                 let d = sample_trilinear_density(densities_in, in_dim, fx, fy, fz);
-                let out_i = (oz * out_dim + oy) * out_dim + ox;
+                let out_i = (target_z * out_dim + target_y) * out_dim + target_x;
                 densities_out[out_i] = quantize_f32_to_i16(d);
+                let full_res_end_x = (full_res_target_x + stride).min(in_dim - 1);
                 let m = pick_surface_material_block_prefer_biomes(
                     densities_in,
                     materials_in,
                     in_dim,
-                    ox,
-                    oy,
-                    oz,
-                    out_dim,
+                    full_res_target_x,
+                    full_res_target_y,
+                    full_res_target_z,
+                    full_res_end_x,
+                    full_res_end_y,
+                    full_res_end_z,
                 );
                 materials_out[out_i] = m;
             }
@@ -462,34 +472,29 @@ fn pick_surface_material_block_prefer_biomes(
     densities: &[i16],
     materials: &[MaterialCode],
     in_dim: usize,
-    ox: usize,
-    oy: usize,
-    oz: usize,
-    out_dim: usize,
+    full_res_start_x: usize,
+    full_res_start_y: usize,
+    full_res_start_z: usize,
+    full_res_end_x: usize,
+    full_res_end_y: usize,
+    full_res_end_z: usize,
 ) -> MaterialCode {
-    let rf = (in_dim - 1) / (out_dim - 1);
-    let x0 = ox * rf;
-    let y0 = oy * rf;
-    let z0 = oz * rf;
-    let x1 = (x0 + rf).min(in_dim - 1);
-    let y1 = (y0 + rf).min(in_dim - 1);
-    let z1 = (z0 + rf).min(in_dim - 1);
     let mut best_m = MaterialCode::Air;
     let mut best_abs = i32::MAX;
-    for z in z0..=z1 {
-        for y in y0..=y1 {
-            let base = (z * in_dim + y) * in_dim;
-            for x in x0..=x1 {
-                let i = base + x;
-                let d = densities[i];
-                let m = materials[i];
-                if m == MaterialCode::Air || d >= 0 {
+    for full_res_z in full_res_start_z..=full_res_end_z {
+        for full_res_y in full_res_start_y..=full_res_end_y {
+            let base = (full_res_z * in_dim + full_res_y) * in_dim;
+            for full_res_x in full_res_start_x..=full_res_end_x {
+                let index = base + full_res_x;
+                let density = densities[index];
+                let material = materials[index];
+                if material == MaterialCode::Air || density >= 0 {
                     continue;
                 }
-                let abs = (d as i32).abs();
+                let abs = (density as i32).abs();
                 if abs < best_abs {
                     best_abs = abs;
-                    best_m = m;
+                    best_m = material;
                 }
             }
         }
@@ -500,22 +505,22 @@ fn pick_surface_material_block_prefer_biomes(
     let mut best_any_m = MaterialCode::Air;
     let mut best_any_abs = i32::MAX;
     let mut best_any_solid = false;
-    for z in z0..=z1 {
-        for y in y0..=y1 {
-            let base = (z * in_dim + y) * in_dim;
-            for x in x0..=x1 {
-                let i = base + x;
-                let d = densities[i];
-                let m = materials[i];
-                if m == MaterialCode::Air {
+    for full_res_z in full_res_start_z..=full_res_end_z {
+        for full_res_y in full_res_start_y..=full_res_end_y {
+            let base = (full_res_z * in_dim + full_res_y) * in_dim;
+            for full_res_x in full_res_start_x..=full_res_end_x {
+                let index = base + full_res_x;
+                let density = densities[index];
+                let material = materials[index];
+                if material == MaterialCode::Air {
                     continue;
                 }
-                let abs = (d as i32).abs();
-                let solid = d < 0;
+                let abs = (density as i32).abs();
+                let solid = density < 0;
                 if abs < best_any_abs || (abs == best_any_abs && solid && !best_any_solid) {
                     best_any_abs = abs;
                     best_any_solid = solid;
-                    best_any_m = m;
+                    best_any_m = material;
                 }
             }
         }
