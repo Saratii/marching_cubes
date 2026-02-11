@@ -35,6 +35,13 @@ const MIN_PITCH: f32 = -1.5;
 const MAX_PITCH: f32 = 1.5;
 const BASE_GRAVITY: f32 = -9.81;
 const JUMP_IMPULSE: f32 = 7.0;
+const FLY_SPEED: f32 = 20.0;
+const FLY_FAST_MULTIPLIER: f32 = 4.0;
+
+#[derive(Component)]
+pub struct FlyMode {
+    pub active: bool,
+}
 
 #[derive(Component)]
 pub struct PlayerTag;
@@ -75,6 +82,10 @@ pub struct KeyBindings {
     pub move_left: KeyCode,
     pub move_right: KeyCode,
     pub jump: KeyCode,
+    pub fly_up: KeyCode,
+    pub fly_down: KeyCode,
+    pub toggle_fly: KeyCode,
+    pub fly_fast: KeyCode,
 }
 
 impl Default for KeyBindings {
@@ -85,6 +96,10 @@ impl Default for KeyBindings {
             move_left: KeyCode::KeyA,
             move_right: KeyCode::KeyD,
             jump: KeyCode::Space,
+            fly_up: KeyCode::KeyE,
+            fly_down: KeyCode::KeyQ,
+            toggle_fly: KeyCode::KeyF,
+            fly_fast: KeyCode::ShiftLeft,
         }
     }
 }
@@ -142,6 +157,7 @@ pub fn spawn_player(
             PlayerTag,
             VerticalVelocity { y: 0.0 },
             Visibility::Hidden,
+            FlyMode { active: false },
         ))
         .id();
     commands
@@ -268,6 +284,7 @@ pub fn player_movement(
         (
             &mut KinematicCharacterController,
             &mut VerticalVelocity,
+            &FlyMode,
             Option<&KinematicCharacterControllerOutput>,
         ),
         With<PlayerTag>,
@@ -277,44 +294,65 @@ pub fn player_movement(
     camera_controller: Res<CameraController>,
     menu_root_query: Query<&MenuRoot>,
 ) {
-    let mut player = player_query.iter_mut().next().unwrap();
-    let is_grounded = player.2.map_or(false, |output| output.grounded);
-    let mut movement_vec = Vec3::ZERO;
+    let Ok((mut controller, mut vertical_velocity, fly_mode, controller_output)) =
+        player_query.single_mut()
+    else {
+        return;
+    };
+    let menu_open = !menu_root_query.is_empty();
+    let is_grounded = controller_output.map_or(false, |o| o.grounded);
     let yaw_rotation = Quat::from_rotation_y(camera_controller.yaw);
     let forward = yaw_rotation * Vec3::NEG_Z;
     let right = yaw_rotation * Vec3::X;
-    let mut horizontal_movement = Vec3::ZERO;
-    //only allow movement if menu is not open
-    if menu_root_query.is_empty() {
+    let mut movement_vec = Vec3::ZERO;
+    if !menu_open {
+        let mut horizontal = Vec3::ZERO;
         if keyboard.pressed(key_bindings.move_forward) {
-            horizontal_movement += forward;
+            horizontal += forward;
         }
         if keyboard.pressed(key_bindings.move_backward) {
-            horizontal_movement -= forward;
+            horizontal -= forward;
         }
         if keyboard.pressed(key_bindings.move_left) {
-            horizontal_movement -= right;
+            horizontal -= right;
         }
         if keyboard.pressed(key_bindings.move_right) {
-            horizontal_movement += right;
+            horizontal += right;
         }
-        if keyboard.just_pressed(key_bindings.jump) && is_grounded {
-            player.1.y = JUMP_IMPULSE;
+        if horizontal.length_squared() > 0.0 {
+            horizontal = horizontal.normalize();
+        }
+        if fly_mode.active {
+            let speed_multiplier = if keyboard.pressed(key_bindings.fly_fast) {
+                FLY_FAST_MULTIPLIER
+            } else {
+                1.0
+            };
+            let speed = FLY_SPEED * speed_multiplier;
+            movement_vec += horizontal * speed;
+            if keyboard.pressed(key_bindings.fly_up) {
+                movement_vec.y += speed;
+            }
+            if keyboard.pressed(key_bindings.fly_down) {
+                movement_vec.y -= speed;
+            }
+            vertical_velocity.y = 0.0;
+        } else {
+            movement_vec += horizontal * PLAYER_SPEED;
+            if keyboard.just_pressed(key_bindings.jump) && is_grounded {
+                vertical_velocity.y = JUMP_IMPULSE;
+            }
+            if !is_grounded {
+                vertical_velocity.y += BASE_GRAVITY
+                    * time.delta_secs()
+                    * INITIAL_CHUNKS_LOADED.load(Ordering::Relaxed) as u8 as f32;
+            } else if vertical_velocity.y < 0.0 {
+                vertical_velocity.y = 0.0;
+            }
+            movement_vec.y = vertical_velocity.y;
         }
     }
-    if horizontal_movement.length() > 0.0 {
-        horizontal_movement = horizontal_movement.normalize();
-        movement_vec += horizontal_movement * PLAYER_SPEED;
-    }
-    if !is_grounded {
-        player.1.y += BASE_GRAVITY
-            * time.delta_secs()
-            * INITIAL_CHUNKS_LOADED.load(Ordering::Relaxed) as u8 as f32;
-    } else if player.1.y < 0.0 {
-        player.1.y = 0.0;
-    }
-    movement_vec.y = player.1.y;
-    player.0.translation = Some(movement_vec * time.delta_secs());
+    controller.translation = Some(movement_vec * time.delta_secs());
 }
 
 pub fn sync_player_mutex(
@@ -363,5 +401,19 @@ pub fn grab_on_click(
         primary_cursor_options.grab_mode = CursorGrabMode::Confined;
         primary_cursor_options.visible = false;
         camera_controller.is_cursor_grabbed = true;
+    }
+}
+
+pub fn toggle_fly_mode(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    key_bindings: Res<KeyBindings>,
+    mut fly_mode_query: Query<(&mut FlyMode, &mut VerticalVelocity), With<PlayerTag>>,
+) {
+    if keyboard.just_pressed(key_bindings.toggle_fly) {
+        let Ok((mut fly_mode, mut vertical_velocity)) = fly_mode_query.single_mut() else {
+            return;
+        };
+        fly_mode.active = !fly_mode.active;
+        vertical_velocity.y = 0.0;
     }
 }

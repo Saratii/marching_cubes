@@ -26,6 +26,7 @@ use marching_cubes::player::digging::handle_digging_input;
 use marching_cubes::player::player::{
     CameraController, KeyBindings, camera_look, camera_zoom, grab_on_click, handle_focus_change,
     initial_grab_cursor, player_movement, spawn_player, sync_player_mutex, toggle_camera,
+    toggle_fly_mode,
 };
 use marching_cubes::settings::settings_driver::{load_settings, save_monitor_on_move};
 use marching_cubes::terrain::chunk_generator::get_fbm;
@@ -141,6 +142,7 @@ fn main() {
                 handle_focus_change,
                 grab_on_click,
                 count_vertices_on_key,
+                toggle_fly_mode,
             ),
         )
         .run();
