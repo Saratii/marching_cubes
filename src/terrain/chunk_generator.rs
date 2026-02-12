@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use core::arch::x86_64::*;
 use fastnoise2::{
     SafeNode,
     generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
@@ -146,26 +147,25 @@ pub fn generate_terrain_heights(
             let gx2 = (grid_x_idx + 1).min(4);
             let gx3 = (grid_x_idx + 2).min(4);
             let local_t_x = grid_x - grid_x_idx as f32;
-            let height = bicubic_interp16(
+            let g = [
                 noise_samples[b0 + gx0],
-                noise_samples[b0 + gx1],
-                noise_samples[b0 + gx2],
-                noise_samples[b0 + gx3],
                 noise_samples[b1 + gx0],
-                noise_samples[b1 + gx1],
-                noise_samples[b1 + gx2],
-                noise_samples[b1 + gx3],
                 noise_samples[b2 + gx0],
-                noise_samples[b2 + gx1],
-                noise_samples[b2 + gx2],
-                noise_samples[b2 + gx3],
                 noise_samples[b3 + gx0],
+                noise_samples[b0 + gx1],
+                noise_samples[b1 + gx1],
+                noise_samples[b2 + gx1],
                 noise_samples[b3 + gx1],
+                noise_samples[b0 + gx2],
+                noise_samples[b1 + gx2],
+                noise_samples[b2 + gx2],
                 noise_samples[b3 + gx2],
+                noise_samples[b0 + gx3],
+                noise_samples[b1 + gx3],
+                noise_samples[b2 + gx3],
                 noise_samples[b3 + gx3],
-                local_t_x,
-                local_t_z,
-            );
+            ];
+            let height = bicubic_4x4_simd(&g, local_t_x, local_t_z);
             heightmap_buffer[roller] = height;
             roller += 1;
         }
@@ -379,44 +379,6 @@ pub fn dequantize_i16_to_f32(q: i16) -> f32 {
 }
 
 #[inline(always)]
-fn cubic_interp(p0: f32, p1: f32, p2: f32, p3: f32, t: f32) -> f32 {
-    let t2 = t * t;
-    let t3 = t2 * t;
-    0.5 * ((2.0 * p1)
-        + (-p0 + p2) * t
-        + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
-        + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3)
-}
-
-#[inline(always)]
-fn bicubic_interp16(
-    g00: f32,
-    g01: f32,
-    g02: f32,
-    g03: f32,
-    g10: f32,
-    g11: f32,
-    g12: f32,
-    g13: f32,
-    g20: f32,
-    g21: f32,
-    g22: f32,
-    g23: f32,
-    g30: f32,
-    g31: f32,
-    g32: f32,
-    g33: f32,
-    t_x: f32,
-    t_z: f32,
-) -> f32 {
-    let col0 = cubic_interp(g00, g01, g02, g03, t_x);
-    let col1 = cubic_interp(g10, g11, g12, g13, t_x);
-    let col2 = cubic_interp(g20, g21, g22, g23, t_x);
-    let col3 = cubic_interp(g30, g31, g32, g33, t_x);
-    cubic_interp(col0, col1, col2, col3, t_z)
-}
-
-#[inline(always)]
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
@@ -437,21 +399,29 @@ pub fn downscale(
     let out_max = out_dim - 1;
     let stride = in_max / out_max;
     for target_z in 0..out_dim {
-        let fz = (target_z as f32 / out_max as f32) * in_max as f32;
+        let high_sample_z = (target_z as f32 / out_max as f32) * in_max as f32;
         let full_res_target_z = target_z * stride;
         let full_res_end_z = (full_res_target_z + stride).min(in_dim - 1);
+        let z_base = target_z * out_dim;
         for target_y in 0..out_dim {
-            let fy = (target_y as f32 / out_max as f32) * in_max as f32;
+            let high_sample_y = (target_y as f32 / out_max as f32) * in_max as f32;
             let full_res_target_y = target_y * stride;
             let full_res_end_y = (full_res_target_y + stride).min(in_dim - 1);
+            let zy_base = (z_base + target_y) * out_dim;
             for target_x in 0..out_dim {
                 let full_res_target_x = target_x * stride;
-                let fx = (target_x as f32 / out_max as f32) * in_max as f32;
-                let d = sample_trilinear_density(densities_in, in_dim, fx, fy, fz);
-                let out_i = (target_z * out_dim + target_y) * out_dim + target_x;
-                densities_out[out_i] = quantize_f32_to_i16(d);
+                let high_sample_x = (target_x as f32 / out_max as f32) * in_max as f32;
+                let new_density = sample_trilinear_density(
+                    densities_in,
+                    in_dim,
+                    high_sample_x,
+                    high_sample_y,
+                    high_sample_z,
+                );
+                let out_i = zy_base + target_x;
+                densities_out[out_i] = quantize_f32_to_i16(new_density);
                 let full_res_end_x = (full_res_target_x + stride).min(in_dim - 1);
-                let m = pick_surface_material_block_prefer_biomes(
+                let new_material = pick_surface_material_block_prefer_biomes(
                     densities_in,
                     materials_in,
                     in_dim,
@@ -462,7 +432,7 @@ pub fn downscale(
                     full_res_end_y,
                     full_res_end_z,
                 );
-                materials_out[out_i] = m;
+                materials_out[out_i] = new_material;
             }
         }
     }
@@ -480,7 +450,7 @@ fn pick_surface_material_block_prefer_biomes(
     full_res_end_z: usize,
 ) -> MaterialCode {
     let mut best_m = MaterialCode::Air;
-    let mut best_abs = i32::MAX;
+    let mut best_abs = i16::MAX;
     for full_res_z in full_res_start_z..=full_res_end_z {
         for full_res_y in full_res_start_y..=full_res_end_y {
             let base = (full_res_z * in_dim + full_res_y) * in_dim;
@@ -491,7 +461,7 @@ fn pick_surface_material_block_prefer_biomes(
                 if material == MaterialCode::Air || density >= 0 {
                     continue;
                 }
-                let abs = (density as i32).abs();
+                let abs = density.abs();
                 if abs < best_abs {
                     best_abs = abs;
                     best_m = material;
@@ -503,7 +473,7 @@ fn pick_surface_material_block_prefer_biomes(
         return best_m;
     }
     let mut best_any_m = MaterialCode::Air;
-    let mut best_any_abs = i32::MAX;
+    let mut best_any_abs = i16::MAX;
     let mut best_any_solid = false;
     for full_res_z in full_res_start_z..=full_res_end_z {
         for full_res_y in full_res_start_y..=full_res_end_y {
@@ -515,7 +485,7 @@ fn pick_surface_material_block_prefer_biomes(
                 if material == MaterialCode::Air {
                     continue;
                 }
-                let abs = (density as i32).abs();
+                let abs = density.abs();
                 let solid = density < 0;
                 if abs < best_any_abs || (abs == best_any_abs && solid && !best_any_solid) {
                     best_any_abs = abs;
@@ -528,16 +498,22 @@ fn pick_surface_material_block_prefer_biomes(
     best_any_m
 }
 
-fn sample_trilinear_density(d: &[i16], dim: usize, fx: f32, fy: f32, fz: f32) -> f32 {
-    let x0 = fx.floor() as isize;
-    let y0 = fy.floor() as isize;
-    let z0 = fz.floor() as isize;
+fn sample_trilinear_density(
+    d: &[i16],
+    dim: usize,
+    high_sample_x: f32,
+    high_sample_y: f32,
+    high_sample_z: f32,
+) -> f32 {
+    let x0 = high_sample_x.floor() as isize;
+    let y0 = high_sample_y.floor() as isize;
+    let z0 = high_sample_z.floor() as isize;
     let x1 = (x0 + 1).min((dim - 1) as isize);
     let y1 = (y0 + 1).min((dim - 1) as isize);
     let z1 = (z0 + 1).min((dim - 1) as isize);
-    let tx = fx - x0 as f32;
-    let ty = fy - y0 as f32;
-    let tz = fz - z0 as f32;
+    let tx = high_sample_x - x0 as f32;
+    let ty = high_sample_y - y0 as f32;
+    let tz = high_sample_z - z0 as f32;
     let idx = |x: isize, y: isize, z: isize| -> usize {
         (z as usize * dim + y as usize) * dim + x as usize
     };
@@ -564,21 +540,24 @@ pub fn compute_heightmap_gradients(
     dim: usize,
     noise_height_samples: &[f32],
 ) {
-    let inv_2h = 1.0 / (2.0 * HALF_CHUNK);
+    const INV_CHUNK_SIZE: f32 = 1.0 / CHUNK_WORLD_SIZE;
     let mut gx = [0.0; 25];
     let mut gz = [0.0; 25];
     for zz in 0..5 {
+        let zz_5 = zz * 5;
         for xx in 0..5 {
             let xm = if xx > 0 { xx - 1 } else { 0 };
             let xp = if xx < 4 { xx + 1 } else { 4 };
             let zm = if zz > 0 { zz - 1 } else { 0 };
             let zp = if zz < 4 { zz + 1 } else { 4 };
-            gx[zz * 5 + xx] =
-                (noise_height_samples[zz * 5 + xp] - noise_height_samples[zz * 5 + xm]) * inv_2h;
-            gz[zz * 5 + xx] =
-                (noise_height_samples[zp * 5 + xx] - noise_height_samples[zm * 5 + xx]) * inv_2h;
+            gx[zz_5 + xx] = (noise_height_samples[zz * 5 + xp] - noise_height_samples[zz_5 + xm])
+                * INV_CHUNK_SIZE;
+            gz[zz_5 + xx] = (noise_height_samples[zp * 5 + xx] - noise_height_samples[zm * 5 + xx])
+                * INV_CHUNK_SIZE;
         }
     }
+    let mut vg = [0.0; 16];
+    let mut zg = [0.0; 16];
     let inv_samples = 1.0 / (dim - 1) as f32;
     for z in 0..dim {
         let t_z = z as f32 * inv_samples;
@@ -593,6 +572,7 @@ pub fn compute_heightmap_gradients(
         let b1 = gz1 * 5;
         let b2 = gz2 * 5;
         let b3 = gz3 * 5;
+        let base_z = z * dim;
         for x in 0..dim {
             let t_x = x as f32 * inv_samples;
             let grid_x = 1.0 + t_x * 2.0;
@@ -602,47 +582,96 @@ pub fn compute_heightmap_gradients(
             let gx2i = (ix + 1).min(4);
             let gx3i = (ix + 2).min(4);
             let tx = grid_x - ix as f32;
-            let out = z * dim + x;
-            dhdx[out] = bicubic_interp16(
-                gx[b0 + gx0i],
-                gx[b0 + gx1i],
-                gx[b0 + gx2i],
-                gx[b0 + gx3i],
-                gx[b1 + gx0i],
-                gx[b1 + gx1i],
-                gx[b1 + gx2i],
-                gx[b1 + gx3i],
-                gx[b2 + gx0i],
-                gx[b2 + gx1i],
-                gx[b2 + gx2i],
-                gx[b2 + gx3i],
-                gx[b3 + gx0i],
-                gx[b3 + gx1i],
-                gx[b3 + gx2i],
-                gx[b3 + gx3i],
-                tx,
-                tz,
-            );
-            dhdz[out] = bicubic_interp16(
-                gz[b0 + gx0i],
-                gz[b0 + gx1i],
-                gz[b0 + gx2i],
-                gz[b0 + gx3i],
-                gz[b1 + gx0i],
-                gz[b1 + gx1i],
-                gz[b1 + gx2i],
-                gz[b1 + gx3i],
-                gz[b2 + gx0i],
-                gz[b2 + gx1i],
-                gz[b2 + gx2i],
-                gz[b2 + gx3i],
-                gz[b3 + gx0i],
-                gz[b3 + gx1i],
-                gz[b3 + gx2i],
-                gz[b3 + gx3i],
-                tx,
-                tz,
-            );
+            let out = base_z + x;
+            let i0 = b0 + gx0i;
+            let i1 = b0 + gx1i;
+            let i2 = b0 + gx2i;
+            let i3 = b0 + gx3i;
+            let i4 = b1 + gx0i;
+            let i5 = b1 + gx1i;
+            let i6 = b1 + gx2i;
+            let i7 = b1 + gx3i;
+            let i8 = b2 + gx0i;
+            let i9 = b2 + gx1i;
+            let i10 = b2 + gx2i;
+            let i11 = b2 + gx3i;
+            let i12 = b3 + gx0i;
+            let i13 = b3 + gx1i;
+            let i14 = b3 + gx2i;
+            let i15 = b3 + gx3i;
+            vg[0] = gx[i0];
+            vg[1] = gx[i4];
+            vg[2] = gx[i8];
+            vg[3] = gx[i12];
+            vg[4] = gx[i1];
+            vg[5] = gx[i5];
+            vg[6] = gx[i9];
+            vg[7] = gx[i13];
+            vg[8] = gx[i2];
+            vg[9] = gx[i6];
+            vg[10] = gx[i10];
+            vg[11] = gx[i14];
+            vg[12] = gx[i3];
+            vg[13] = gx[i7];
+            vg[14] = gx[i11];
+            vg[15] = gx[i15];
+            zg[0] = gz[i0];
+            zg[1] = gz[i4];
+            zg[2] = gz[i8];
+            zg[3] = gz[i12];
+            zg[4] = gz[i1];
+            zg[5] = gz[i5];
+            zg[6] = gz[i9];
+            zg[7] = gz[i13];
+            zg[8] = gz[i2];
+            zg[9] = gz[i6];
+            zg[10] = gz[i10];
+            zg[11] = gz[i14];
+            zg[12] = gz[i3];
+            zg[13] = gz[i7];
+            zg[14] = gz[i11];
+            zg[15] = gz[i15];
+            dhdx[out] = bicubic_4x4_simd(&vg, tx, tz);
+            dhdz[out] = bicubic_4x4_simd(&zg, tx, tz);
         }
+    }
+}
+
+#[inline(always)]
+fn bicubic_4x4_simd(g: &[f32; 16], t_x: f32, t_z: f32) -> f32 {
+    unsafe {
+        let c0 = _mm_loadu_ps(g.as_ptr());
+        let c1 = _mm_loadu_ps(g.as_ptr().add(4));
+        let c2 = _mm_loadu_ps(g.as_ptr().add(8));
+        let c3 = _mm_loadu_ps(g.as_ptr().add(12));
+        let three = _mm_set1_ps(3.0);
+        let two = _mm_set1_ps(2.0);
+        let four = _mm_set1_ps(4.0);
+        let five = _mm_set1_ps(5.0);
+        let half = _mm_set1_ps(0.5);
+        let txv = _mm_set1_ps(t_x);
+        let a = _mm_add_ps(
+            _mm_sub_ps(_mm_mul_ps(three, c1), _mm_mul_ps(three, c2)),
+            _mm_sub_ps(c3, c0),
+        );
+        let b = _mm_sub_ps(
+            _mm_add_ps(_mm_mul_ps(two, c0), _mm_mul_ps(four, c2)),
+            _mm_add_ps(_mm_mul_ps(five, c1), c3),
+        );
+        let c = _mm_sub_ps(c2, c0);
+        let d = _mm_mul_ps(two, c1);
+        let y = _mm_fmadd_ps(txv, a, b);
+        let y = _mm_fmadd_ps(txv, y, c);
+        let y = _mm_fmadd_ps(txv, y, d);
+        let cols = _mm_mul_ps(half, y);
+        let t2 = t_z * t_z;
+        let t3 = t2 * t_z;
+        let w0 = 0.5 * (-t3 + 2.0 * t2 - t_z);
+        let w1 = 0.5 * (3.0 * t3 - 5.0 * t2 + 2.0);
+        let w2 = 0.5 * (-3.0 * t3 + 4.0 * t2 + t_z);
+        let w3 = 0.5 * (t3 - t2);
+        let wz = _mm_set_ps(w3, w2, w1, w0);
+        let sum = _mm_dp_ps(cols, wz, 0xF1);
+        _mm_cvtss_f32(sum)
     }
 }

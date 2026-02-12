@@ -42,6 +42,9 @@ use marching_cubes::ui::menu::{SettingsState, menu_toggle, menu_update};
 use marching_cubes::ui::minimap::spawn_minimap;
 
 fn main() {
+    println!("fma: {}", std::is_x86_feature_detected!("fma"));
+    println!("avx2: {}", std::is_x86_feature_detected!("avx2"));
+    println!("sse2: {}", std::is_x86_feature_detected!("sse2"));
     let settings = load_settings(); //automatically saved state
     let configurable_settings = load_configurable_settings(); //user saved state
     let window_centered_position = settings.window_centered_position;
