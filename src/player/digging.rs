@@ -84,9 +84,8 @@ pub fn handle_digging_input(
                 );
                 for (chunk_coord, densities, materials, uniformity) in modified_chunks {
                     let entity = terrain_io.chunk_entity_map.0.get(&chunk_coord);
-                    let (vertices, normals, material_ids, indices) = mc_mesh_generation(
+                    let (vertices, normals, indices) = mc_mesh_generation(
                         &densities,
-                        &materials,
                         SAMPLES_PER_CHUNK_DIM,
                         HALF_CHUNK,
                     );
@@ -123,7 +122,7 @@ pub fn handle_digging_input(
                                 .unwrap();
                         }
                     }
-                    let new_mesh = generate_bevy_mesh(vertices, normals, material_ids, indices);
+                    let new_mesh = generate_bevy_mesh(vertices, normals, indices);
                     if new_mesh.count_vertices() > 0 {
                         let collider = Collider::from_bevy_mesh(
                             &new_mesh,

@@ -2,9 +2,8 @@ use std::collections::hash_map::Entry;
 
 use rustc_hash::{FxBuildHasher, FxHashMap as HashMap};
 
-use crate::{
-    marching_cubes::tables::{CORNER_OFFSETS, EDGE_ID_OFFSETS, EDGE_VERTICES, TRIANGLE_TABLE},
-    terrain::chunk_generator::MaterialCode,
+use crate::marching_cubes::tables::{
+    CORNER_OFFSETS, EDGE_ID_OFFSETS, EDGE_VERTICES, TRIANGLE_TABLE,
 };
 
 type EdgeKey = u64;
@@ -16,16 +15,14 @@ fn make_edge_key(x: u16, y: u16, z: u16, dir: u8) -> u64 {
 
 pub fn mc_mesh_generation(
     densities: &[i16],
-    materials: &[MaterialCode],
     samples_per_chunk_dim: usize,
     half_extent: f32,
-) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>, Vec<u32>) {
+) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
     let mut edge_to_vertex: HashMap<EdgeKey, u32> = HashMap::with_hasher(FxBuildHasher::default());
     let cubes_per_chunk_dim = samples_per_chunk_dim - 1;
     let voxel_size = (half_extent * 2.0) / (samples_per_chunk_dim - 1) as f32;
     let mut vertices = Vec::new();
     let mut normals = Vec::new();
-    let mut material_ids = Vec::new();
     let mut indices = Vec::new();
     let stride = samples_per_chunk_dim * samples_per_chunk_dim;
     for z in 0..cubes_per_chunk_dim {
@@ -47,10 +44,8 @@ pub fn mc_mesh_generation(
                     base,
                     &mut vertices,
                     &mut normals,
-                    &mut material_ids,
                     &mut indices,
                     densities,
-                    materials,
                     samples_per_chunk_dim,
                     voxel_size,
                     stride,
@@ -67,7 +62,7 @@ pub fn mc_mesh_generation(
             normal[2] /= len;
         }
     }
-    (vertices, normals, material_ids, indices)
+    (vertices, normals, indices)
 }
 
 #[inline(always)]
@@ -89,10 +84,8 @@ fn process_cube_with_cache(
     base: usize,
     vertices: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
-    material_ids: &mut Vec<u32>,
     indices: &mut Vec<u32>,
     densities: &[i16],
-    materials: &[MaterialCode],
     samples_per_chunk_dim: usize,
     voxel_size: f32,
     stride: usize,
@@ -115,12 +108,7 @@ fn process_cube_with_cache(
         voxel_size,
         vertices,
         normals,
-        material_ids,
-        materials,
-        samples_per_chunk_dim,
         indices,
-        stride,
-        base,
         edge_to_vertex,
     );
 }
@@ -137,12 +125,7 @@ fn triangulate_cube_with_cache(
     voxel_size: f32,
     vertices: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
-    material_ids: &mut Vec<u32>,
-    materials: &[MaterialCode],
-    samples_per_chunk_dim: usize,
     indices: &mut Vec<u32>,
-    stride: usize,
-    base: usize,
     edge_to_vertex: &mut HashMap<EdgeKey, u32>,
 ) {
     let edge_table = &TRIANGLE_TABLE[cube_index as usize];
@@ -160,11 +143,6 @@ fn triangulate_cube_with_cache(
             cube_z,
             vertices,
             normals,
-            material_ids,
-            materials,
-            samples_per_chunk_dim,
-            stride,
-            base,
             edge_to_vertex,
         );
         let v2 = get_or_create_edge_vertex(
@@ -179,11 +157,6 @@ fn triangulate_cube_with_cache(
             cube_z,
             vertices,
             normals,
-            material_ids,
-            materials,
-            samples_per_chunk_dim,
-            stride,
-            base,
             edge_to_vertex,
         );
         let v3 = get_or_create_edge_vertex(
@@ -198,11 +171,6 @@ fn triangulate_cube_with_cache(
             cube_z,
             vertices,
             normals,
-            material_ids,
-            materials,
-            samples_per_chunk_dim,
-            stride,
-            base,
             edge_to_vertex,
         );
         let p1 = vertices[v1 as usize];
@@ -252,11 +220,6 @@ fn get_or_create_edge_vertex(
     cube_z: usize,
     vertices: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
-    material_ids: &mut Vec<u32>,
-    materials: &[MaterialCode],
-    samples_per_chunk_dim: usize,
-    stride: usize,
-    base: usize,
     edge_to_vertex: &mut HashMap<EdgeKey, u32>,
 ) -> u32 {
     let (dx, dy, dz, dir) = EDGE_ID_OFFSETS[edge_index];
@@ -273,20 +236,8 @@ fn get_or_create_edge_vertex(
             let position = interpolate_edge_from_base(
                 v1_idx, v2_idx, base_x, base_y, base_z, voxel_size, values,
             );
-            let (dx1, dy1, dz1) = CORNER_OFFSETS[v1_idx];
-            let (dx2, dy2, dz2) = CORNER_OFFSETS[v2_idx];
-            let material1 = materials[base + dz1 * stride + dy1 * samples_per_chunk_dim + dx1];
-            let material2 = materials[base + dz2 * stride + dy2 * samples_per_chunk_dim + dx2];
-            let material = if material1 == MaterialCode::Grass || material2 == MaterialCode::Grass {
-                MaterialCode::Grass
-            } else if material1 != MaterialCode::Air {
-                material1
-            } else {
-                material2
-            };
             let idx = vertices.len() as u32;
             vertices.push(position);
-            material_ids.push(material as u32);
             normals.push([0.0, 0.0, 0.0]);
             e.insert(idx);
             idx

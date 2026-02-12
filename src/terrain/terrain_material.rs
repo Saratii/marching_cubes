@@ -9,8 +9,6 @@ use bevy::{
     shader::ShaderRef,
 };
 
-use crate::terrain::ATTRIBUTE_MATERIAL_ID;
-
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
 pub struct TerrainMaterialExtension {
     #[texture(103, dimension = "2d_array")]
@@ -18,6 +16,8 @@ pub struct TerrainMaterialExtension {
     pub base_texture: Handle<Image>,
     #[uniform(105)]
     pub scale: f32,
+    #[texture(106, dimension = "3d", sample_type = "u_int")]
+    pub material_field: Handle<Image>,
 }
 
 impl MaterialExtension for TerrainMaterialExtension {
@@ -38,7 +38,6 @@ impl MaterialExtension for TerrainMaterialExtension {
         let vertex_layout = layout.0.get_layout(&[
             Mesh::ATTRIBUTE_POSITION.at_shader_location(0),
             Mesh::ATTRIBUTE_NORMAL.at_shader_location(1),
-            ATTRIBUTE_MATERIAL_ID.at_shader_location(2),
         ])?;
         descriptor.vertex.buffers = vec![vertex_layout];
         Ok(())

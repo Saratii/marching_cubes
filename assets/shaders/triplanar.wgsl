@@ -6,9 +6,13 @@
     mesh_functions::{get_world_from_local, mesh_position_local_to_clip},
 }
 
+const VOXEL_WORLD_SIZE: f32 = 0.1904;              // <-- set this
+const WORLD_TO_VOXEL: f32 = 1.0 / VOXEL_WORLD_SIZE;
+
 @group(3) @binding(103) var base_texture: texture_2d_array<f32>;
 @group(3) @binding(104) var base_sampler: sampler;
 @group(3) @binding(105) var<uniform> scale: f32;
+@group(3) @binding(106) var material_field: texture_3d<u32>; // R8Uint
 
 struct Vertex {
     @builtin(instance_index) instance_index: u32,
@@ -54,13 +58,9 @@ fn fragment(
     var blend = abs(world_normal);
     blend = pow(blend, vec3(4.0));
     blend = blend / (blend.x + blend.y + blend.z);
-    let id = i32(in.material_id);
-    var layer = 0;
-    if (id == 2) {
-        layer = 1;
-    } else if (id == 3) {
-        layer = 2;
-    }
+    let voxel = vec3<i32>(floor(world_pos * WORLD_TO_VOXEL));
+    let mat_u32: u32 = textureLoad(material_field, voxel, 0).x;
+    let layer: i32 = i32(mat_u32);
     let scale_vec = vec2(scale);
     let uv_x_raw = world_pos.yz * scale_vec;
     let uv_y_raw = world_pos.xz * scale_vec;

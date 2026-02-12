@@ -16,10 +16,13 @@ use crate::{
         chunk_generator::{
             MaterialCode, calculate_chunk_start, downscale, generate_chunk_into_buffers, get_fbm,
         },
-        terrain::NonUniformTerrainChunk,
+        terrain::{NonUniformTerrainChunk, TextureArrayHandle},
+        terrain_material::TerrainMaterialExtension,
     },
 };
-use bevy::{camera::primitives::MeshAabb, prelude::*};
+use bevy::{
+    asset::RenderAssetUsages, camera::primitives::MeshAabb, pbr::ExtendedMaterial, prelude::*,
+};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use fastnoise2::{SafeNode, generator::GeneratorWrapper};
@@ -30,6 +33,7 @@ use std::io::Write;
 use std::{
     collections::{BinaryHeap, VecDeque},
     fs::{File, OpenOptions},
+    mem::transmute,
     sync::{
         Arc, Condvar, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -37,6 +41,7 @@ use std::{
     thread,
     time::Instant,
 };
+use wgpu::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::{
     conversions::{chunk_coord_to_world_pos, world_pos_to_chunk_coord},
@@ -107,7 +112,7 @@ pub enum LoadState {
 }
 
 pub enum ChunkSpawnResult {
-    ToSpawn(((i16, i16, i16), Mesh)), //when a chunk is spawned without a collider
+    ToSpawn(((i16, i16, i16), Mesh, Image)), //when a chunk is spawned without a collider
     ToSpawnWithCollider(((i16, i16, i16), Collider, Mesh)), //when a chunk is spawned with a collider
     ToDespawn((i16, i16, i16)),
     ToGiveCollider(((i16, i16, i16), Collider)), //same lod but now needs a collider
@@ -569,18 +574,32 @@ fn chunk_loader_thread(
                                         );
                                         let has_surface =
                                             if chunk_contains_surface(&density_buffer_r5) {
-                                                let (vertices, normals, material_ids, indices) =
+                                                let (vertices, normals, indices) =
                                                     mc_mesh_generation(
                                                         &density_buffer_r5,
-                                                        &material_buffer_r5,
                                                         RF5_SAMPLES_PER_CHUNK_DIM,
                                                         HALF_CHUNK,
                                                     );
-                                                let mesh = generate_bevy_mesh(
-                                                    vertices,
-                                                    normals,
-                                                    material_ids,
-                                                    indices,
+                                                let mesh =
+                                                    generate_bevy_mesh(vertices, normals, indices);
+                                                let material_field = Image::new_fill(
+                                                    Extent3d {
+                                                        width: RF5_SAMPLES_PER_CHUNK_DIM as u32,
+                                                        height: RF5_SAMPLES_PER_CHUNK_DIM as u32,
+                                                        depth_or_array_layers:
+                                                            RF5_SAMPLES_PER_CHUNK_DIM as u32,
+                                                    },
+                                                    TextureDimension::D3,
+                                                    &unsafe {
+                                                        transmute::<
+                                                            [MaterialCode; RF5_SAMPLES_PER_CHUNK],
+                                                            [u8; RF5_SAMPLES_PER_CHUNK],
+                                                        >(
+                                                            material_buffer_r5
+                                                        )
+                                                    },
+                                                    TextureFormat::R8Uint,
+                                                    RenderAssetUsages::RENDER_WORLD,
                                                 );
                                                 let had_entity_before = request
                                                     .prev_has_entity
@@ -599,6 +618,7 @@ fn chunk_loader_thread(
                                                         .send(ChunkSpawnResult::ToSpawn((
                                                             chunk_coord,
                                                             mesh,
+                                                            material_field,
                                                         )))
                                                         .unwrap();
                                                 }
@@ -619,18 +639,32 @@ fn chunk_loader_thread(
                                         );
                                         let has_surface =
                                             if chunk_contains_surface(&density_buffer_r4) {
-                                                let (vertices, normals, material_ids, indices) =
+                                                let (vertices, normals, indices) =
                                                     mc_mesh_generation(
                                                         &density_buffer_r4,
-                                                        &material_buffer_r4,
                                                         RF4_SAMPLES_PER_CHUNK_DIM,
                                                         HALF_CHUNK,
                                                     );
-                                                let mesh = generate_bevy_mesh(
-                                                    vertices,
-                                                    normals,
-                                                    material_ids,
-                                                    indices,
+                                                let mesh =
+                                                    generate_bevy_mesh(vertices, normals, indices);
+                                                let material_field = Image::new_fill(
+                                                    Extent3d {
+                                                        width: RF4_SAMPLES_PER_CHUNK_DIM as u32,
+                                                        height: RF4_SAMPLES_PER_CHUNK_DIM as u32,
+                                                        depth_or_array_layers:
+                                                            RF4_SAMPLES_PER_CHUNK_DIM as u32,
+                                                    },
+                                                    TextureDimension::D3,
+                                                    &unsafe {
+                                                        transmute::<
+                                                            [MaterialCode; RF4_SAMPLES_PER_CHUNK],
+                                                            [u8; RF4_SAMPLES_PER_CHUNK],
+                                                        >(
+                                                            material_buffer_r4
+                                                        )
+                                                    },
+                                                    TextureFormat::R8Uint,
+                                                    RenderAssetUsages::RENDER_WORLD,
                                                 );
                                                 let had_entity_before = request
                                                     .prev_has_entity
@@ -649,6 +683,7 @@ fn chunk_loader_thread(
                                                         .send(ChunkSpawnResult::ToSpawn((
                                                             chunk_coord,
                                                             mesh,
+                                                            material_field,
                                                         )))
                                                         .unwrap();
                                                 }
@@ -669,19 +704,33 @@ fn chunk_loader_thread(
                                         );
                                         let has_surface =
                                             if chunk_contains_surface(&density_buffer_r3) {
-                                                let (vertices, normals, material_ids, indices) =
+                                                let (vertices, normals, indices) =
                                                     mc_mesh_generation(
                                                         &density_buffer_r3,
-                                                        &material_buffer_r3,
                                                         RF3_SAMPLES_PER_CHUNK_DIM,
                                                         HALF_CHUNK,
                                                     );
-                                                let mesh = generate_bevy_mesh(
-                                                    vertices,
-                                                    normals,
-                                                    material_ids,
-                                                    indices,
+                                                let material_field = Image::new_fill(
+                                                    Extent3d {
+                                                        width: RF3_SAMPLES_PER_CHUNK_DIM as u32,
+                                                        height: RF3_SAMPLES_PER_CHUNK_DIM as u32,
+                                                        depth_or_array_layers:
+                                                            RF3_SAMPLES_PER_CHUNK_DIM as u32,
+                                                    },
+                                                    TextureDimension::D3,
+                                                    &unsafe {
+                                                        transmute::<
+                                                            [MaterialCode; RF3_SAMPLES_PER_CHUNK],
+                                                            [u8; RF3_SAMPLES_PER_CHUNK],
+                                                        >(
+                                                            material_buffer_r3
+                                                        )
+                                                    },
+                                                    TextureFormat::R8Uint,
+                                                    RenderAssetUsages::RENDER_WORLD,
                                                 );
+                                                let mesh =
+                                                    generate_bevy_mesh(vertices, normals, indices);
                                                 let had_entity_before = request
                                                     .prev_has_entity
                                                     .as_ref()
@@ -699,6 +748,7 @@ fn chunk_loader_thread(
                                                         .send(ChunkSpawnResult::ToSpawn((
                                                             chunk_coord,
                                                             mesh,
+                                                            material_field,
                                                         )))
                                                         .unwrap();
                                                 }
@@ -719,18 +769,32 @@ fn chunk_loader_thread(
                                         );
                                         let has_surface =
                                             if chunk_contains_surface(&density_buffer_r2) {
-                                                let (vertices, normals, material_ids, indices) =
+                                                let (vertices, normals, indices) =
                                                     mc_mesh_generation(
                                                         &density_buffer_r2,
-                                                        &material_buffer_r2,
                                                         RF2_SAMPLES_PER_CHUNK_DIM,
                                                         HALF_CHUNK,
                                                     );
-                                                let mesh = generate_bevy_mesh(
-                                                    vertices,
-                                                    normals,
-                                                    material_ids,
-                                                    indices,
+                                                let mesh =
+                                                    generate_bevy_mesh(vertices, normals, indices);
+                                                let material_field = Image::new_fill(
+                                                    Extent3d {
+                                                        width: RF2_SAMPLES_PER_CHUNK_DIM as u32,
+                                                        height: RF2_SAMPLES_PER_CHUNK_DIM as u32,
+                                                        depth_or_array_layers:
+                                                            RF2_SAMPLES_PER_CHUNK_DIM as u32,
+                                                    },
+                                                    TextureDimension::D3,
+                                                    &unsafe {
+                                                        transmute::<
+                                                            [MaterialCode; RF2_SAMPLES_PER_CHUNK],
+                                                            [u8; RF2_SAMPLES_PER_CHUNK],
+                                                        >(
+                                                            material_buffer_r2
+                                                        )
+                                                    },
+                                                    TextureFormat::R8Uint,
+                                                    RenderAssetUsages::RENDER_WORLD,
                                                 );
                                                 let had_entity_before = request
                                                     .prev_has_entity
@@ -749,6 +813,7 @@ fn chunk_loader_thread(
                                                         .send(ChunkSpawnResult::ToSpawn((
                                                             chunk_coord,
                                                             mesh,
+                                                            material_field,
                                                         )))
                                                         .unwrap();
                                                 }
@@ -769,18 +834,32 @@ fn chunk_loader_thread(
                                         );
                                         let has_surface =
                                             if chunk_contains_surface(&density_buffer_r1) {
-                                                let (vertices, normals, material_ids, indices) =
+                                                let (vertices, normals, indices) =
                                                     mc_mesh_generation(
                                                         &density_buffer_r1,
-                                                        &material_buffer_r1,
                                                         RF1_SAMPLES_PER_CHUNK_DIM,
                                                         HALF_CHUNK,
                                                     );
-                                                let mesh = generate_bevy_mesh(
-                                                    vertices,
-                                                    normals,
-                                                    material_ids,
-                                                    indices,
+                                                let mesh =
+                                                    generate_bevy_mesh(vertices, normals, indices);
+                                                let material_field = Image::new_fill(
+                                                    Extent3d {
+                                                        width: RF1_SAMPLES_PER_CHUNK_DIM as u32,
+                                                        height: RF1_SAMPLES_PER_CHUNK_DIM as u32,
+                                                        depth_or_array_layers:
+                                                            RF1_SAMPLES_PER_CHUNK_DIM as u32,
+                                                    },
+                                                    TextureDimension::D3,
+                                                    &unsafe {
+                                                        transmute::<
+                                                            [MaterialCode; RF1_SAMPLES_PER_CHUNK],
+                                                            [u8; RF1_SAMPLES_PER_CHUNK],
+                                                        >(
+                                                            material_buffer_r1
+                                                        )
+                                                    },
+                                                    TextureFormat::R8Uint,
+                                                    RenderAssetUsages::RENDER_WORLD,
                                                 );
                                                 let had_entity_before = request
                                                     .prev_has_entity
@@ -799,6 +878,7 @@ fn chunk_loader_thread(
                                                         .send(ChunkSpawnResult::ToSpawn((
                                                             chunk_coord,
                                                             mesh,
+                                                            material_field,
                                                         )))
                                                         .unwrap();
                                                 }
@@ -811,18 +891,31 @@ fn chunk_loader_thread(
                                     LoadStateTransition::ToFull => {
                                         let has_surface = if chunk_contains_surface(&density_buffer)
                                         {
-                                            let (vertices, normals, material_ids, indices) =
-                                                mc_mesh_generation(
-                                                    &density_buffer,
-                                                    &material_buffer,
-                                                    SAMPLES_PER_CHUNK_DIM,
-                                                    HALF_CHUNK,
-                                                );
-                                            let mesh = generate_bevy_mesh(
-                                                vertices,
-                                                normals,
-                                                material_ids,
-                                                indices,
+                                            let (vertices, normals, indices) = mc_mesh_generation(
+                                                &density_buffer,
+                                                SAMPLES_PER_CHUNK_DIM,
+                                                HALF_CHUNK,
+                                            );
+                                            let mesh =
+                                                generate_bevy_mesh(vertices, normals, indices);
+                                            let material_field = Image::new_fill(
+                                                Extent3d {
+                                                    width: SAMPLES_PER_CHUNK_DIM as u32,
+                                                    height: SAMPLES_PER_CHUNK_DIM as u32,
+                                                    depth_or_array_layers: SAMPLES_PER_CHUNK_DIM
+                                                        as u32,
+                                                },
+                                                TextureDimension::D3,
+                                                &unsafe {
+                                                    transmute::<
+                                                        [MaterialCode; SAMPLES_PER_CHUNK],
+                                                        [u8; SAMPLES_PER_CHUNK],
+                                                    >(
+                                                        material_buffer
+                                                    )
+                                                },
+                                                TextureFormat::R8Uint,
+                                                RenderAssetUsages::RENDER_WORLD,
                                             );
                                             let had_entity_before = request
                                                 .prev_has_entity
@@ -841,6 +934,7 @@ fn chunk_loader_thread(
                                                     .send(ChunkSpawnResult::ToSpawn((
                                                         chunk_coord,
                                                         mesh,
+                                                        material_field,
                                                     )))
                                                     .unwrap();
                                             }
@@ -853,19 +947,13 @@ fn chunk_loader_thread(
                                     LoadStateTransition::ToFullWithCollider => {
                                         let has_surface = if chunk_contains_surface(&density_buffer)
                                         {
-                                            let (vertices, normals, material_ids, indices) =
-                                                mc_mesh_generation(
-                                                    &density_buffer,
-                                                    &material_buffer,
-                                                    SAMPLES_PER_CHUNK_DIM,
-                                                    HALF_CHUNK,
-                                                );
-                                            let mesh = generate_bevy_mesh(
-                                                vertices,
-                                                normals,
-                                                material_ids,
-                                                indices,
+                                            let (vertices, normals, indices) = mc_mesh_generation(
+                                                &density_buffer,
+                                                SAMPLES_PER_CHUNK_DIM,
+                                                HALF_CHUNK,
                                             );
+                                            let mesh =
+                                                generate_bevy_mesh(vertices, normals, indices);
                                             let collider = Collider::from_bevy_mesh(
                                                 &mesh,
                                                 &ComputedColliderShape::TriMesh(
@@ -902,19 +990,13 @@ fn chunk_loader_thread(
                                     LoadStateTransition::NoChangeAddCollider => {
                                         let has_surface = if chunk_contains_surface(&density_buffer)
                                         {
-                                            let (vertices, normals, material_ids, indices) =
-                                                mc_mesh_generation(
-                                                    &density_buffer,
-                                                    &material_buffer,
-                                                    SAMPLES_PER_CHUNK_DIM,
-                                                    HALF_CHUNK,
-                                                );
-                                            let mesh = generate_bevy_mesh(
-                                                vertices,
-                                                normals,
-                                                material_ids,
-                                                indices,
+                                            let (vertices, normals, indices) = mc_mesh_generation(
+                                                &density_buffer,
+                                                SAMPLES_PER_CHUNK_DIM,
+                                                HALF_CHUNK,
                                             );
+                                            let mesh =
+                                                generate_bevy_mesh(vertices, normals, indices);
                                             let collider = Collider::from_bevy_mesh(
                                                 &mesh,
                                                 &ComputedColliderShape::TriMesh(
@@ -1144,10 +1226,13 @@ fn svo_manager_thread(
 pub fn chunk_spawn_reciever(
     mut commands: Commands,
     standard_material: Res<TerrainMaterialHandle>,
+    mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>>>,
     mut mesh_handles: ResMut<Assets<Mesh>>,
     req_rx: Res<ChunkSpawnReciever>,
     mut chunk_entity_map: ResMut<ChunkEntityMap>,
     mut rendered_chunks_query: Query<&mut Mesh3d, With<ChunkTag>>,
+    mut images: ResMut<Assets<Image>>,
+    texture_array_handle: Res<TextureArrayHandle>,
 ) {
     let mut count = 0;
     while let Ok(req) = req_rx.0.try_recv() {
@@ -1155,13 +1240,25 @@ pub fn chunk_spawn_reciever(
         let t0 = Instant::now();
         count += 1;
         match req {
-            ChunkSpawnResult::ToSpawn((chunk_coord, mesh)) => {
+            ChunkSpawnResult::ToSpawn((chunk_coord, mesh, material_field_image)) => {
+                let material_field_image_handle = images.add(material_field_image);
+                let terrain_material_handle = materials.add(ExtendedMaterial {
+                    base: StandardMaterial {
+                        perceptual_roughness: 0.8,
+                        ..Default::default()
+                    },
+                    extension: TerrainMaterialExtension {
+                        base_texture: texture_array_handle.0.clone(),
+                        scale: 0.5,
+                        material_field: material_field_image_handle,
+                    },
+                });
                 let entity = commands
                     .spawn((
                         Mesh3d(mesh_handles.add(mesh)),
                         ChunkTag,
                         Transform::from_translation(chunk_coord_to_world_pos(&chunk_coord)),
-                        MeshMaterial3d(standard_material.0.clone()),
+                        MeshMaterial3d(terrain_material_handle),
                     ))
                     .id();
                 chunk_entity_map.0.insert(chunk_coord, entity);
