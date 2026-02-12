@@ -1,9 +1,8 @@
 use crate::{
     constants::{
         CHUNK_WORLD_SIZE, CHUNKS_PER_CLUSTER, CHUNKS_PER_CLUSTER_DIM, HALF_CHUNK,
-        MAX_RENDER_RADIUS_SQUARED, NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED,
-        PLAYER_CUBOID_SIZE, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_2D, SAMPLES_PER_CHUNK_DIM,
-        SIMULATION_RADIUS_SQUARED, VOXEL_WORLD_SIZE,
+        MAX_RENDER_RADIUS_SQUARED, NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED, SAMPLES_PER_CHUNK,
+        SAMPLES_PER_CHUNK_2D, SAMPLES_PER_CHUNK_DIM, SIMULATION_RADIUS_SQUARED,
     },
     conversions::cluster_coord_to_min_chunk_coord,
     data_loader::{
@@ -1222,14 +1221,13 @@ pub fn chunk_spawn_reciever(
     }
 }
 
-//wait for player's chunk to be spawned
-pub fn project_downward(
+//wait for a chunk to exist with a collider at or below the player
+pub fn validate_player_spawn(
     chunk_entity_map: Res<ChunkEntityMap>,
-    mut player_position_query: Query<&mut Transform, (With<PlayerTag>, Without<ChunkTag>)>,
+    player_position_query: Query<&Transform, (With<PlayerTag>, Without<ChunkTag>)>,
     spawned_chunks_query: Query<(), (With<ChunkTag>, With<Collider>)>,
-    terrain_chunk_map: Res<TerrainChunkMap>,
 ) {
-    let mut player_position = player_position_query.iter_mut().next().unwrap();
+    let player_position = player_position_query.iter().next().unwrap();
     let player_chunk = world_pos_to_chunk_coord(&player_position.translation);
     for chunk_y in (player_chunk.1 - 10..=player_chunk.1).rev() {
         if let Some(entity) = chunk_entity_map
@@ -1238,59 +1236,8 @@ pub fn project_downward(
         {
             if spawned_chunks_query.get(*entity).is_ok() {
                 INITIAL_CHUNKS_LOADED.store(true, Ordering::Relaxed);
-                validate_player_spawn(
-                    &(player_chunk.0, chunk_y, player_chunk.2),
-                    &terrain_chunk_map,
-                    &mut player_position,
-                );
                 break;
             }
-        }
-    }
-}
-
-//move player up gradually until not stuck in floor
-fn validate_player_spawn(
-    chunk_coord: &(i16, i16, i16),
-    terrain_chunk_map: &TerrainChunkMap,
-    player_transform: &mut Transform,
-) {
-    let terrain_map = terrain_chunk_map.0.lock().unwrap();
-    let chunk = terrain_map.get(chunk_coord).unwrap();
-    let TerrainChunk::NonUniformTerrainChunk(non_uniform) = chunk else {
-        return;
-    };
-    let chunk_start = calculate_chunk_start(chunk_coord);
-    let local_x = SAMPLES_PER_CHUNK_DIM / 2;
-    let local_z = SAMPLES_PER_CHUNK_DIM / 2;
-    let original_y = player_transform.translation.y;
-    let player_local_y = ((original_y - chunk_start.y) / VOXEL_WORLD_SIZE).floor() as usize;
-    let start_y = player_local_y.min(SAMPLES_PER_CHUNK_DIM - 1);
-    for y in start_y..SAMPLES_PER_CHUNK_DIM {
-        let mut all_air = true;
-        for dx in 0..=(PLAYER_CUBOID_SIZE.x / VOXEL_WORLD_SIZE).ceil() as usize {
-            for dz in 0..=(PLAYER_CUBOID_SIZE.z / VOXEL_WORLD_SIZE).ceil() as usize {
-                let check_x = (local_x + dx).min(SAMPLES_PER_CHUNK_DIM - 1);
-                let check_z = (local_z + dz).min(SAMPLES_PER_CHUNK_DIM - 1);
-                let idx = y * SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM
-                    + check_z * SAMPLES_PER_CHUNK_DIM
-                    + check_x;
-                if non_uniform.densities[idx] > 0 {
-                    all_air = false;
-                    break;
-                }
-            }
-            if !all_air {
-                break;
-            }
-        }
-        if all_air {
-            let new_y = chunk_start.y + (y as f32 * VOXEL_WORLD_SIZE);
-            if new_y != original_y {
-                player_transform.translation.y = new_y;
-                println!("Moved player up from {} to {}", original_y, new_y);
-            }
-            return;
         }
     }
 }

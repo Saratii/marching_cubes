@@ -18,7 +18,7 @@ use iyes_perf_ui::PerfUiPlugin;
 use iyes_perf_ui::prelude::PerfUiDefaultEntries;
 
 use marching_cubes::data_loader::driver::{
-    INITIAL_CHUNKS_LOADED, chunk_spawn_reciever, project_downward, setup_chunk_driver,
+    INITIAL_CHUNKS_LOADED, chunk_spawn_reciever, setup_chunk_driver, validate_player_spawn,
 };
 use marching_cubes::data_loader::file_loader::setup_chunk_loading;
 use marching_cubes::lighting::lighting_main::{setup_camera, setup_lighting};
@@ -128,7 +128,7 @@ fn main() {
                 player_movement,
                 sync_player_mutex.after(player_movement),
                 chunk_spawn_reciever,
-                project_downward
+                validate_player_spawn
                     .after(PhysicsSet::SyncBackend)
                     .run_if(|| !INITIAL_CHUNKS_LOADED.load(Ordering::Relaxed)),
                 save_monitor_on_move,
