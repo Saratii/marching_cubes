@@ -4,7 +4,6 @@ use bevy::{
     asset::RenderAssetUsages,
     image::{ImageLoaderSettings, ImageSampler},
     mesh::{Indices, PrimitiveTopology},
-    pbr::ExtendedMaterial,
     prelude::*,
     render::render_resource::{AddressMode, SamplerDescriptor},
 };
@@ -12,10 +11,8 @@ use fastnoise2::{SafeNode, generator::GeneratorWrapper};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    constants::SAMPLES_PER_CHUNK_DIM,
-    conversions::flatten_index,
-    data_loader::file_loader::get_project_root,
-    terrain::{chunk_generator::MaterialCode, terrain_material::TerrainMaterialExtension},
+    constants::SAMPLES_PER_CHUNK_DIM, conversions::flatten_index,
+    data_loader::file_loader::get_project_root, terrain::chunk_generator::MaterialCode,
 };
 
 #[derive(Component)]
@@ -23,11 +20,6 @@ pub struct ChunkTag;
 
 #[derive(Resource)]
 pub struct NoiseFunction(pub GeneratorWrapper<SafeNode>);
-
-#[derive(Resource)]
-pub struct TerrainMaterialHandle(
-    pub Handle<ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>>,
-);
 
 #[derive(Resource)]
 pub struct TextureArrayHandle(pub Handle<Image>);
@@ -86,10 +78,7 @@ impl NonUniformTerrainChunk {
     }
 }
 
-pub fn setup_map(
-    mut commands: Commands,
-    asset_server: Res<AssetServer>,
-) {
+pub fn setup_map(mut commands: Commands, asset_server: Res<AssetServer>) {
     let root = get_project_root();
     let texture_array_handle: Handle<Image> = asset_server
         .load_with_settings::<Image, ImageLoaderSettings>(
@@ -107,7 +96,7 @@ pub fn setup_map(
                     .into(),
                 );
             },
-        );    
+        );
     commands.insert_resource(TextureArrayHandle(texture_array_handle));
 }
 

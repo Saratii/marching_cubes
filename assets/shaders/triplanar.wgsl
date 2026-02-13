@@ -1,31 +1,29 @@
 #import bevy_pbr::{
     pbr_fragment::pbr_input_from_standard_material,
-    pbr_functions::alpha_discard,
     forward_io::{VertexOutput, FragmentOutput},
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
     mesh_functions::{get_world_from_local, mesh_position_local_to_clip},
 }
 
-const VOXEL_WORLD_SIZE: f32 = 0.1904;              // <-- set this
-const WORLD_TO_VOXEL: f32 = 1.0 / VOXEL_WORLD_SIZE;
+const CHUNK_WORLD_SIZE: f32 = 12.0;
+const HALF_CHUNK: f32 = CHUNK_WORLD_SIZE * 0.5;
+const VOXEL_WORLD_SIZE: f32 = CHUNK_WORLD_SIZE / 63.0;
 
 @group(3) @binding(103) var base_texture: texture_2d_array<f32>;
 @group(3) @binding(104) var base_sampler: sampler;
 @group(3) @binding(105) var<uniform> scale: f32;
-@group(3) @binding(106) var material_field: texture_3d<u32>; // R8Uint
+@group(3) @binding(106) var material_field: texture_3d<u32>;
 
 struct Vertex {
     @builtin(instance_index) instance_index: u32,
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
-    @location(2) material_id: u32,
 }
 
 struct CustomVertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) world_position: vec4<f32>,
     @location(1) world_normal: vec3<f32>,
-    @location(2) @interpolate(flat) material_id: u32,
 }
 
 @vertex
@@ -39,7 +37,6 @@ fn vertex(vertex: Vertex) -> CustomVertexOutput {
         world_from_local[1].xyz,
         world_from_local[2].xyz
     ) * vertex.normal;
-    out.material_id = vertex.material_id;
     return out;
 }
 
@@ -53,35 +50,44 @@ fn fragment(
     standard_in.world_position = in.world_position;
     standard_in.world_normal = in.world_normal;
     var pbr_input = pbr_input_from_standard_material(standard_in, is_front);
-    let world_pos = in.world_position.xyz;
-    let world_normal = normalize(in.world_normal);
-    var blend = abs(world_normal);
-    blend = pow(blend, vec3(4.0));
-    blend = blend / (blend.x + blend.y + blend.z);
-    let voxel = vec3<i32>(floor(world_pos * WORLD_TO_VOXEL));
-    let mat_u32: u32 = textureLoad(material_field, voxel, 0).x;
-    let layer: i32 = i32(mat_u32);
-    let scale_vec = vec2(scale);
-    let uv_x_raw = world_pos.yz * scale_vec;
-    let uv_y_raw = world_pos.xz * scale_vec;
-    let uv_z_raw = world_pos.xy * scale_vec;
-    let uv_x = fract(uv_x_raw);
-    let uv_y = fract(uv_y_raw);
-    let uv_z = fract(uv_z_raw);
-    let duvdx_x = dpdx(uv_x_raw);
-    let duvdy_x = dpdy(uv_x_raw);
-    let duvdx_y = dpdx(uv_y_raw);
-    let duvdy_y = dpdy(uv_y_raw);
-    let duvdx_z = dpdx(uv_z_raw);
-    let duvdy_z = dpdy(uv_z_raw);
-    let color_x = textureSampleGrad(base_texture, base_sampler, uv_x, layer, duvdx_x, duvdy_x).rgb;
-    let color_y = textureSampleGrad(base_texture, base_sampler, uv_y, layer, duvdx_y, duvdy_y).rgb;
-    let color_z = textureSampleGrad(base_texture, base_sampler, uv_z, layer, duvdx_z, duvdy_z).rgb;
-    let final_color = color_x * blend.x + color_y * blend.y + color_z * blend.z;
-    pbr_input.material.base_color = vec4<f32>(final_color, 1.0);
-    pbr_input.material.base_color = alpha_discard(pbr_input.material, pbr_input.material.base_color);
     var out: FragmentOutput;
-    out.color = apply_pbr_lighting(pbr_input);
-    out.color = main_pass_post_lighting_processing(pbr_input, out.color);
-    return out;
+
+    let wp = in.world_position.xyz;
+    let n = normalize(in.world_normal);
+    let axis_sum = abs(n.x) + abs(n.y) + abs(n.z);          // 1..~1.732
+    let bias = VOXEL_WORLD_SIZE * 0.45 * axis_sum;          // bigger on steep/diagonal
+    let wp_biased = wp - n * bias;
+    let chunk_coord = world_pos_to_chunk_coord(wp_biased);
+    let local_index = world_pos_to_voxel_index(wp_biased, chunk_coord);
+    let voxel_i = vec3<i32>(local_index);
+    let value: u32 = textureLoad(material_field, voxel_i, 0).x;
+
+    if (value == 0) {
+        out.color = vec4<f32>(1.0, 0.0, 0.0, 1.0);
+    } else if (value == 2) {
+        out.color = vec4<f32>(0.0, 1.0, 0.0, 1.0);
+    } else if (value == 3) {
+        out.color = vec4<f32>(0.0, 1.0, 1.0, 1.0);
+    } else {
+        out.color = vec4<f32>(0.0, 0.0, 1.0, 1.0);
+    }
+        return out;
+    }
+
+fn world_pos_to_chunk_coord(world_pos: vec3<f32>) -> vec3<i32> {
+    let offset_pos = world_pos + vec3<f32>(HALF_CHUNK);
+    let chunk = floor(offset_pos / CHUNK_WORLD_SIZE);
+    return vec3<i32>(chunk);
+}
+
+fn world_pos_to_voxel_index(
+    world_pos: vec3<f32>,
+    chunk_coord: vec3<i32>,
+) -> vec3<u32> {
+    let chunk_world_center = vec3<f32>(chunk_coord) * CHUNK_WORLD_SIZE;
+    let chunk_world_min = chunk_world_center - vec3<f32>(HALF_CHUNK);
+    let relative_pos =
+        world_pos - chunk_world_min;
+    let voxel = floor(relative_pos / VOXEL_WORLD_SIZE);
+    return vec3<u32>(voxel);
 }

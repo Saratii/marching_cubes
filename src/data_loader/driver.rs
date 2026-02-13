@@ -51,7 +51,7 @@ use crate::{
     sparse_voxel_octree::ChunkSvo,
     terrain::{
         chunk_generator::chunk_contains_surface,
-        terrain::{ChunkTag, TerrainChunk, TerrainMaterialHandle, Uniformity, generate_bevy_mesh},
+        terrain::{ChunkTag, TerrainChunk, Uniformity, generate_bevy_mesh},
     },
 };
 
@@ -113,7 +113,7 @@ pub enum LoadState {
 
 pub enum ChunkSpawnResult {
     ToSpawn(((i16, i16, i16), Mesh, Image)), //when a chunk is spawned without a collider
-    ToSpawnWithCollider(((i16, i16, i16), Collider, Mesh)), //when a chunk is spawned with a collider
+    ToSpawnWithCollider(((i16, i16, i16), Collider, Mesh, Image)), //when a chunk is spawned with a collider
     ToDespawn((i16, i16, i16)),
     ToGiveCollider(((i16, i16, i16), Collider)), //same lod but now needs a collider
     ToChangeLod(((i16, i16, i16), Mesh)), //change mesh, assume it has no collider and doesnt need one
@@ -590,12 +590,12 @@ fn chunk_loader_thread(
                                                             RF5_SAMPLES_PER_CHUNK_DIM as u32,
                                                     },
                                                     TextureDimension::D3,
-                                                    &unsafe {
+                                                    unsafe {
                                                         transmute::<
-                                                            [MaterialCode; RF5_SAMPLES_PER_CHUNK],
-                                                            [u8; RF5_SAMPLES_PER_CHUNK],
+                                                            &[MaterialCode; RF5_SAMPLES_PER_CHUNK],
+                                                            &[u8; RF5_SAMPLES_PER_CHUNK],
                                                         >(
-                                                            material_buffer_r5
+                                                            &material_buffer_r5
                                                         )
                                                     },
                                                     TextureFormat::R8Uint,
@@ -655,12 +655,12 @@ fn chunk_loader_thread(
                                                             RF4_SAMPLES_PER_CHUNK_DIM as u32,
                                                     },
                                                     TextureDimension::D3,
-                                                    &unsafe {
+                                                    unsafe {
                                                         transmute::<
-                                                            [MaterialCode; RF4_SAMPLES_PER_CHUNK],
-                                                            [u8; RF4_SAMPLES_PER_CHUNK],
+                                                            &[MaterialCode; RF4_SAMPLES_PER_CHUNK],
+                                                            &[u8; RF4_SAMPLES_PER_CHUNK],
                                                         >(
-                                                            material_buffer_r4
+                                                            &material_buffer_r4
                                                         )
                                                     },
                                                     TextureFormat::R8Uint,
@@ -718,12 +718,12 @@ fn chunk_loader_thread(
                                                             RF3_SAMPLES_PER_CHUNK_DIM as u32,
                                                     },
                                                     TextureDimension::D3,
-                                                    &unsafe {
+                                                    unsafe {
                                                         transmute::<
-                                                            [MaterialCode; RF3_SAMPLES_PER_CHUNK],
-                                                            [u8; RF3_SAMPLES_PER_CHUNK],
+                                                            &[MaterialCode; RF3_SAMPLES_PER_CHUNK],
+                                                            &[u8; RF3_SAMPLES_PER_CHUNK],
                                                         >(
-                                                            material_buffer_r3
+                                                            &material_buffer_r3
                                                         )
                                                     },
                                                     TextureFormat::R8Uint,
@@ -785,12 +785,12 @@ fn chunk_loader_thread(
                                                             RF2_SAMPLES_PER_CHUNK_DIM as u32,
                                                     },
                                                     TextureDimension::D3,
-                                                    &unsafe {
+                                                    unsafe {
                                                         transmute::<
-                                                            [MaterialCode; RF2_SAMPLES_PER_CHUNK],
-                                                            [u8; RF2_SAMPLES_PER_CHUNK],
+                                                            &[MaterialCode; RF2_SAMPLES_PER_CHUNK],
+                                                            &[u8; RF2_SAMPLES_PER_CHUNK],
                                                         >(
-                                                            material_buffer_r2
+                                                            &material_buffer_r2
                                                         )
                                                     },
                                                     TextureFormat::R8Uint,
@@ -850,12 +850,12 @@ fn chunk_loader_thread(
                                                             RF1_SAMPLES_PER_CHUNK_DIM as u32,
                                                     },
                                                     TextureDimension::D3,
-                                                    &unsafe {
+                                                    unsafe {
                                                         transmute::<
-                                                            [MaterialCode; RF1_SAMPLES_PER_CHUNK],
-                                                            [u8; RF1_SAMPLES_PER_CHUNK],
+                                                            &[MaterialCode; RF1_SAMPLES_PER_CHUNK],
+                                                            &[u8; RF1_SAMPLES_PER_CHUNK],
                                                         >(
-                                                            material_buffer_r1
+                                                            &material_buffer_r1
                                                         )
                                                     },
                                                     TextureFormat::R8Uint,
@@ -906,12 +906,12 @@ fn chunk_loader_thread(
                                                         as u32,
                                                 },
                                                 TextureDimension::D3,
-                                                &unsafe {
+                                                unsafe {
                                                     transmute::<
-                                                        [MaterialCode; SAMPLES_PER_CHUNK],
-                                                        [u8; SAMPLES_PER_CHUNK],
+                                                        &[MaterialCode; SAMPLES_PER_CHUNK],
+                                                        &[u8; SAMPLES_PER_CHUNK],
                                                     >(
-                                                        material_buffer
+                                                        &material_buffer
                                                     )
                                                 },
                                                 TextureFormat::R8Uint,
@@ -954,6 +954,25 @@ fn chunk_loader_thread(
                                             );
                                             let mesh =
                                                 generate_bevy_mesh(vertices, normals, indices);
+                                            let material_field = Image::new_fill(
+                                                Extent3d {
+                                                    width: SAMPLES_PER_CHUNK_DIM as u32,
+                                                    height: SAMPLES_PER_CHUNK_DIM as u32,
+                                                    depth_or_array_layers: SAMPLES_PER_CHUNK_DIM
+                                                        as u32,
+                                                },
+                                                TextureDimension::D3,
+                                                unsafe {
+                                                    transmute::<
+                                                        &[MaterialCode; SAMPLES_PER_CHUNK],
+                                                        &[u8; SAMPLES_PER_CHUNK],
+                                                    >(
+                                                        &material_buffer
+                                                    )
+                                                },
+                                                TextureFormat::R8Uint,
+                                                RenderAssetUsages::RENDER_WORLD,
+                                            );
                                             let collider = Collider::from_bevy_mesh(
                                                 &mesh,
                                                 &ComputedColliderShape::TriMesh(
@@ -978,6 +997,7 @@ fn chunk_loader_thread(
                                                         chunk_coord,
                                                         collider,
                                                         mesh,
+                                                        material_field,
                                                     )))
                                                     .unwrap();
                                             }
@@ -997,6 +1017,25 @@ fn chunk_loader_thread(
                                             );
                                             let mesh =
                                                 generate_bevy_mesh(vertices, normals, indices);
+                                            let material_field = Image::new_fill(
+                                                Extent3d {
+                                                    width: SAMPLES_PER_CHUNK_DIM as u32,
+                                                    height: SAMPLES_PER_CHUNK_DIM as u32,
+                                                    depth_or_array_layers: SAMPLES_PER_CHUNK_DIM
+                                                        as u32,
+                                                },
+                                                TextureDimension::D3,
+                                                unsafe {
+                                                    transmute::<
+                                                        &[MaterialCode; SAMPLES_PER_CHUNK],
+                                                        &[u8; SAMPLES_PER_CHUNK],
+                                                    >(
+                                                        &material_buffer
+                                                    )
+                                                },
+                                                TextureFormat::R8Uint,
+                                                RenderAssetUsages::RENDER_WORLD,
+                                            );
                                             let collider = Collider::from_bevy_mesh(
                                                 &mesh,
                                                 &ComputedColliderShape::TriMesh(
@@ -1022,6 +1061,7 @@ fn chunk_loader_thread(
                                                         chunk_coord,
                                                         collider,
                                                         mesh,
+                                                        material_field,
                                                     )))
                                                     .unwrap();
                                             }
@@ -1225,7 +1265,6 @@ fn svo_manager_thread(
 //recieves chunks that were loaded and need spawning from the manager
 pub fn chunk_spawn_reciever(
     mut commands: Commands,
-    standard_material: Res<TerrainMaterialHandle>,
     mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>>>,
     mut mesh_handles: ResMut<Assets<Mesh>>,
     req_rx: Res<ChunkSpawnReciever>,
@@ -1291,14 +1330,63 @@ pub fn chunk_spawn_reciever(
                 }
                 *mesh_handle = Mesh3d(mesh_handles.add(new_mesh));
             }
-            ChunkSpawnResult::ToSpawnWithCollider((chunk_coord, collider, mesh)) => {
+            ChunkSpawnResult::ToSpawnWithCollider((
+                chunk_coord,
+                collider,
+                mesh,
+                material_field_image,
+            )) => {
+                if chunk_coord == (0, 1, 0) {
+                    let data = &material_field_image.clone().data.unwrap();
+                    println!("\n=== XY Slice at Z=32 for Chunk (0,0,0) ===");
+                    let z = 32;
+                    for y in (0..SAMPLES_PER_CHUNK_DIM).rev() {
+                        print!("y={:2} | ", y);
+                        for x in 0..SAMPLES_PER_CHUNK_DIM {
+                            let index = x
+                                + y * SAMPLES_PER_CHUNK_DIM
+                                + z * SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM;
+                            let material_code = data[index];
+                            let char = match material_code {
+                                0 => '·', // Air
+                                1 => '█', // Dirt/solid
+                                2 => '?', // Unknown,
+                                _ => 'X', // Invalid code
+                            };
+                            print!("{} ", char);
+                        }
+                        println!();
+                    }
+
+                    print!("     | ");
+                    for x in 0..SAMPLES_PER_CHUNK_DIM {
+                        print!("{:2} ", x);
+                    }
+                    println!("\n       x-axis");
+                    println!("=======================================\n");
+                } else {
+                    // println!("chunk coord: {:?}", chunk_coord);
+                }
+
+                let material_field_image_handle = images.add(material_field_image);
+                let terrain_material_handle = materials.add(ExtendedMaterial {
+                    base: StandardMaterial {
+                        perceptual_roughness: 0.8,
+                        ..Default::default()
+                    },
+                    extension: TerrainMaterialExtension {
+                        base_texture: texture_array_handle.0.clone(),
+                        scale: 0.5,
+                        material_field: material_field_image_handle,
+                    },
+                });
                 let entity = commands
                     .spawn((
                         Mesh3d(mesh_handles.add(mesh)),
                         collider,
                         ChunkTag,
                         Transform::from_translation(chunk_coord_to_world_pos(&chunk_coord)),
-                        MeshMaterial3d(standard_material.0.clone()),
+                        MeshMaterial3d(terrain_material_handle),
                     ))
                     .id();
                 chunk_entity_map.0.insert(chunk_coord, entity);

@@ -1,7 +1,11 @@
-use std::sync::Arc;
+use std::{mem::transmute, sync::Arc};
 
-use bevy::{camera::primitives::MeshAabb, ecs::system::SystemParam, prelude::*};
+use bevy::{
+    asset::RenderAssetUsages, camera::primitives::MeshAabb, ecs::system::SystemParam,
+    pbr::ExtendedMaterial, prelude::*,
+};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
+use wgpu::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::{
     constants::{
@@ -20,9 +24,10 @@ use crate::{
     terrain::{
         chunk_generator::{MaterialCode, dequantize_i16_to_f32, quantize_f32_to_i16},
         terrain::{
-            ChunkTag, NonUniformTerrainChunk, TerrainChunk, TerrainMaterialHandle, Uniformity,
+            ChunkTag, NonUniformTerrainChunk, TerrainChunk, TextureArrayHandle, Uniformity,
             generate_bevy_mesh,
         },
+        terrain_material::TerrainMaterialExtension,
     },
     ui::menu::MenuRoot,
 };
@@ -44,12 +49,16 @@ pub fn handle_digging_input(
     mut commands: Commands,
     mut dig_timer: Local<f32>,
     time: Res<Time>,
-    material_handle: Res<TerrainMaterialHandle>,
     mut solid_chunk_query: Query<(&mut Collider, &mut Mesh3d), With<ChunkTag>>,
     mut mesh_handles: ResMut<Assets<Mesh>>,
     mut terrain_io: TerrainIo,
     write_cmd_sender: Res<WriteCmdSender>,
     menu_root_query: Query<&MenuRoot>,
+    texture_array_handle: Res<TextureArrayHandle>,
+    mut terrain_materials: ResMut<
+        Assets<ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>>,
+    >,
+    mut images: ResMut<Assets<Image>>,
 ) {
     if !menu_root_query.is_empty() {
         return;
@@ -84,11 +93,8 @@ pub fn handle_digging_input(
                 );
                 for (chunk_coord, densities, materials, uniformity) in modified_chunks {
                     let entity = terrain_io.chunk_entity_map.0.get(&chunk_coord);
-                    let (vertices, normals, indices) = mc_mesh_generation(
-                        &densities,
-                        SAMPLES_PER_CHUNK_DIM,
-                        HALF_CHUNK,
-                    );
+                    let (vertices, normals, indices) =
+                        mc_mesh_generation(&densities, SAMPLES_PER_CHUNK_DIM, HALF_CHUNK);
                     match uniformity {
                         Uniformity::Air | Uniformity::Dirt => {
                             write_cmd_sender
@@ -143,11 +149,45 @@ pub fn handle_digging_input(
                             }
                             //entity did not already exist
                             None => {
+                                let materials_array: &[MaterialCode; SAMPLES_PER_CHUNK] = unsafe {
+                                    &*(materials.as_ptr()
+                                        as *const [MaterialCode; SAMPLES_PER_CHUNK])
+                                };
+                                let material_code_bytes: &[u8; SAMPLES_PER_CHUNK] = unsafe {
+                                    transmute::<
+                                        &[MaterialCode; SAMPLES_PER_CHUNK],
+                                        &[u8; SAMPLES_PER_CHUNK],
+                                    >(materials_array)
+                                };
+                                let material_field = Image::new_fill(
+                                    Extent3d {
+                                        width: SAMPLES_PER_CHUNK_DIM as u32,
+                                        height: SAMPLES_PER_CHUNK_DIM as u32,
+                                        depth_or_array_layers: SAMPLES_PER_CHUNK_DIM as u32,
+                                    },
+                                    TextureDimension::D3,
+                                    material_code_bytes,
+                                    TextureFormat::R8Uint,
+                                    RenderAssetUsages::RENDER_WORLD,
+                                );
+                                let material_field_image_handle = images.add(material_field);
+                                let terrain_material_handle =
+                                    terrain_materials.add(ExtendedMaterial {
+                                        base: StandardMaterial {
+                                            perceptual_roughness: 0.8,
+                                            ..Default::default()
+                                        },
+                                        extension: TerrainMaterialExtension {
+                                            base_texture: texture_array_handle.0.clone(),
+                                            scale: 0.5,
+                                            material_field: material_field_image_handle,
+                                        },
+                                    });
                                 let new_entity = commands
                                     .spawn((
                                         collider,
                                         Mesh3d(mesh_handles.add(new_mesh)),
-                                        MeshMaterial3d(material_handle.0.clone()),
+                                        MeshMaterial3d(terrain_material_handle),
                                         ChunkTag,
                                         Transform::from_translation(chunk_coord_to_world_pos(
                                             &chunk_coord,
