@@ -163,6 +163,19 @@ pub fn spawn_player(
     commands
         .entity(player)
         .add_child(main_camera.iter().next().unwrap());
+    //add a huge baseplate to hide the atmosphere edge. Idk if this is intended but it kinda works
+    let baseplate = commands
+        .spawn((
+            Mesh3d(meshes.add(Cuboid::new(1000000.0, 0.01, 1000000.0))),
+            Transform::from_translation(Vec3::new(0.0, -1000.0, 0.0)),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::BLACK,
+                ..default()
+            })),
+            Visibility::Visible, //to prevent inheriting the player's hidden visibility
+        ))
+        .id();
+    commands.entity(player).add_child(baseplate);
 }
 
 pub fn toggle_camera(
