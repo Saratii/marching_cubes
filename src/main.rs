@@ -1,5 +1,5 @@
 use std::sync::atomic::Ordering;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use bevy::asset::UnapprovedPathMode;
 use bevy::diagnostic::{
@@ -18,7 +18,8 @@ use iyes_perf_ui::PerfUiPlugin;
 use iyes_perf_ui::prelude::PerfUiDefaultEntries;
 
 use marching_cubes::data_loader::driver::{
-    INITIAL_CHUNKS_LOADED, chunk_spawn_reciever, setup_chunk_driver, validate_player_spawn,
+    FrameStart, INITIAL_CHUNKS_LOADED, chunk_spawn_reciever, setup_chunk_driver,
+    validate_player_spawn,
 };
 use marching_cubes::data_loader::file_loader::setup_chunk_loading;
 use marching_cubes::lighting::lighting_main::{setup_camera, setup_lighting};
@@ -59,6 +60,7 @@ fn main() {
             current_tab: MenuTab::General,
             current_focus: MenuFocus::Tabs,
         })
+        .insert_resource(FrameStart(Instant::now()))
         .insert_resource(configurable_settings)
         .insert_resource(KeyBindings::default())
         .insert_resource(CameraController::default())
@@ -118,6 +120,7 @@ fn main() {
                 setup_camera,
             ),
         )
+        .add_systems(First, record_frame_start)
         .add_systems(
             Update,
             (
@@ -153,6 +156,11 @@ fn main() {
 
 fn setup(mut commands: Commands) {
     commands.spawn(PerfUiDefaultEntries::default());
+}
+
+fn record_frame_start(mut frame_start: ResMut<FrameStart>) {
+    //record frame start time so a thread can yield if its taking too long
+    frame_start.0 = Instant::now();
 }
 
 fn count_vertices_on_key(

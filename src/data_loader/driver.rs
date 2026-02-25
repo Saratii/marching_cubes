@@ -35,7 +35,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use crate::{
@@ -52,6 +52,9 @@ use crate::{
 
 //I dont like this but, block player movement until first chunk load happens
 pub static INITIAL_CHUNKS_LOADED: AtomicBool = AtomicBool::new(false);
+
+#[derive(Resource)]
+pub struct FrameStart(pub Instant);
 
 #[derive(Resource)]
 pub struct LogicalProcesors(pub usize);
@@ -1147,13 +1150,13 @@ pub fn chunk_spawn_reciever(
     mut mesh_handles: ResMut<Assets<Mesh>>,
     req_rx: Res<ChunkSpawnReciever>,
     mut chunk_entity_map: ResMut<ChunkEntityMap>,
-    mut rendered_chunks_query: Query<&mut Mesh3d, With<ChunkTag>>,
+    mesh_handles_query: Query<&Mesh3d, With<ChunkTag>>,
+    frame_start: Res<FrameStart>,
 ) {
-    let mut count = 0;
+    const TARGET_FRAME_TIME: Duration = Duration::from_nanos(1_000_000_000 / 90);
     while let Ok(req) = req_rx.0.try_recv() {
         #[cfg(feature = "timers")]
         let t0 = Instant::now();
-        count += 1;
         match req {
             ChunkSpawnResult::ToSpawn((chunk_coord, mesh)) => {
                 let entity = commands
@@ -1171,28 +1174,28 @@ pub fn chunk_spawn_reciever(
                 commands.entity(*entity).insert(collider);
             }
             ChunkSpawnResult::ToDespawn(chunk_coord) => {
-                commands
-                    .entity(chunk_entity_map.0.remove(&chunk_coord).unwrap())
-                    .despawn();
+                let entity = chunk_entity_map.0.remove(&chunk_coord).unwrap();
+                if let Ok(mesh_ref) = mesh_handles_query.get(entity) {
+                    mesh_handles.remove(&mesh_ref.0);
+                }
+                commands.entity(entity).despawn();
             }
             ChunkSpawnResult::ToChangeLodAddCollider((chunk_coord, new_mesh, new_collider)) => {
                 let entity = chunk_entity_map.0.get(&chunk_coord).unwrap();
-                let mut mesh_handle = rendered_chunks_query.get_mut(*entity).unwrap();
-                mesh_handles.remove(&mesh_handle.0);
+                let mesh_ref = mesh_handles_query.get(*entity).unwrap();
                 if let Some(aabb) = new_mesh.compute_aabb() {
                     commands.entity(*entity).insert(aabb);
                 }
-                *mesh_handle = Mesh3d(mesh_handles.add(new_mesh));
+                mesh_handles.insert(&mesh_ref.0, new_mesh).unwrap();
                 commands.entity(*entity).insert(new_collider);
             }
             ChunkSpawnResult::ToChangeLod((chunk_coord, new_mesh)) => {
                 let entity = chunk_entity_map.0.get(&chunk_coord).unwrap();
-                let mut mesh_handle = rendered_chunks_query.get_mut(*entity).unwrap();
-                mesh_handles.remove(&mesh_handle.0);
+                let mesh_ref = mesh_handles_query.get(*entity).unwrap();
                 if let Some(aabb) = new_mesh.compute_aabb() {
                     commands.entity(*entity).insert(aabb);
                 }
-                *mesh_handle = Mesh3d(mesh_handles.add(new_mesh));
+                mesh_handles.insert(&mesh_ref.0, new_mesh).unwrap();
             }
             ChunkSpawnResult::ToSpawnWithCollider((chunk_coord, collider, mesh)) => {
                 let entity = commands
@@ -1207,8 +1210,8 @@ pub fn chunk_spawn_reciever(
                 chunk_entity_map.0.insert(chunk_coord, entity);
             }
         }
-        if count >= 40 {
-            //this is stupid but bevy is slow
+        if frame_start.0.elapsed() >= TARGET_FRAME_TIME {
+            //if this fn would cause fps to drop below a certain threshold, wait until next frame to continue processing requests
             return;
         }
         #[cfg(feature = "timers")]
