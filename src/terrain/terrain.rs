@@ -119,7 +119,7 @@ pub fn setup_map(
         },
         extension: TerrainMaterialExtension {
             base_texture: texture_array_handle.clone(),
-            scale: 0.5,
+            scale: 1.5,
         },
     });
     commands.insert_resource(TerrainMaterialHandle(standard_terrain_material_handle));
