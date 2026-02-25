@@ -10,6 +10,7 @@ use bevy::mesh::VertexAttributeValues;
 use bevy::pbr::{ExtendedMaterial, PbrPlugin};
 use bevy::prelude::*;
 use bevy::render::diagnostic::RenderDiagnosticsPlugin;
+use bevy::render::settings::WgpuSettings;
 use bevy::window::{PresentMode, WindowMode};
 use bevy::winit::{UpdateMode, WinitSettings};
 use bevy_rapier3d::plugin::{NoUserData, PhysicsSet, RapierPhysicsPlugin};
@@ -40,8 +41,11 @@ use marching_cubes::ui::crosshair::spawn_crosshair;
 use marching_cubes::ui::debug_lines::{draw_cluster_debug, draw_collider_debug, draw_lod_debug};
 use marching_cubes::ui::menu::{SettingsState, menu_toggle, menu_update};
 use marching_cubes::ui::minimap::spawn_minimap;
+use wgpu::Features;
 
 fn main() {
+    let mut wgpu_settings = WgpuSettings::default();
+    wgpu_settings.features |= Features::SHADER_PRIMITIVE_INDEX;
     println!("fma: {}", std::is_x86_feature_detected!("fma"));
     println!("avx2: {}", std::is_x86_feature_detected!("avx2"));
     println!("sse2: {}", std::is_x86_feature_detected!("sse2"));

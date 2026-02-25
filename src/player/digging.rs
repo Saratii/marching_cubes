@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use bevy::{camera::primitives::MeshAabb, ecs::system::SystemParam, prelude::*};
+use bevy::{
+    asset::RenderAssetUsages, camera::primitives::MeshAabb, ecs::system::SystemParam,
+    pbr::ExtendedMaterial, prelude::*, render::storage::ShaderStorageBuffer,
+};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
 
 use crate::{
@@ -20,9 +23,10 @@ use crate::{
     terrain::{
         chunk_generator::{MaterialCode, dequantize_i16_to_f32, quantize_f32_to_i16},
         terrain::{
-            ChunkTag, NonUniformTerrainChunk, TerrainChunk, TerrainMaterialHandle, Uniformity,
+            ChunkTag, NonUniformTerrainChunk, TerrainChunk, TextureArrayHandle, Uniformity,
             generate_bevy_mesh,
         },
+        terrain_material::TerrainMaterialExtension,
     },
     ui::menu::MenuRoot,
 };
@@ -44,12 +48,23 @@ pub fn handle_digging_input(
     mut commands: Commands,
     mut dig_timer: Local<f32>,
     time: Res<Time>,
-    material_handle: Res<TerrainMaterialHandle>,
-    mut solid_chunk_query: Query<(&mut Collider, &mut Mesh3d), With<ChunkTag>>,
+    mut solid_chunk_query: Query<
+        (
+            &mut Collider,
+            &mut Mesh3d,
+            &mut MeshMaterial3d<ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>>,
+        ),
+        With<ChunkTag>,
+    >,
     mut mesh_handles: ResMut<Assets<Mesh>>,
     mut terrain_io: TerrainIo,
     write_cmd_sender: Res<WriteCmdSender>,
     menu_root_query: Query<&MenuRoot>,
+    mut tri_buffers: ResMut<Assets<ShaderStorageBuffer>>,
+    texture_array_handle: Res<TextureArrayHandle>,
+    mut material_assets: ResMut<
+        Assets<ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>>,
+    >,
 ) {
     if !menu_root_query.is_empty() {
         return;
@@ -84,7 +99,7 @@ pub fn handle_digging_input(
                 );
                 for (chunk_coord, densities, materials, uniformity) in modified_chunks {
                     let entity = terrain_io.chunk_entity_map.0.get(&chunk_coord);
-                    let (vertices, normals, material_ids, indices) = mc_mesh_generation(
+                    let (vertices, normals, tri_data, indices, tri_ids) = mc_mesh_generation(
                         &densities,
                         &materials,
                         SAMPLES_PER_CHUNK_DIM,
@@ -123,7 +138,7 @@ pub fn handle_digging_input(
                                 .unwrap();
                         }
                     }
-                    let new_mesh = generate_bevy_mesh(vertices, normals, material_ids, indices);
+                    let new_mesh = generate_bevy_mesh(vertices, normals, indices, tri_ids);
                     if new_mesh.count_vertices() > 0 {
                         let collider = Collider::from_bevy_mesh(
                             &new_mesh,
@@ -133,7 +148,7 @@ pub fn handle_digging_input(
                         match entity {
                             //entity already existed, update it
                             Some(entity) => {
-                                let (mut collider_component, mut mesh_handle) =
+                                let (mut collider_component, mut mesh_handle, mat_handle) =
                                     solid_chunk_query.get_mut(*entity).unwrap();
                                 *collider_component = collider;
                                 mesh_handles.remove(&mesh_handle.0);
@@ -141,14 +156,38 @@ pub fn handle_digging_input(
                                     commands.entity(*entity).insert(aabb);
                                 }
                                 *mesh_handle = Mesh3d(mesh_handles.add(new_mesh));
+                                let tri_data_bytes = bytemuck::cast_slice(&tri_data);
+                                material_assets
+                                    .get_mut(&mat_handle.0)
+                                    .unwrap()
+                                    .extension
+                                    .tri_buffer = tri_buffers.add(ShaderStorageBuffer::new(
+                                    &tri_data_bytes,
+                                    RenderAssetUsages::default(),
+                                ));
                             }
                             //entity did not already exist
                             None => {
+                                let tri_data_bytes = bytemuck::cast_slice(&tri_data);
+                                let material_handle = material_assets.add(ExtendedMaterial {
+                                    base: StandardMaterial {
+                                        perceptual_roughness: 0.8,
+                                        ..Default::default()
+                                    },
+                                    extension: TerrainMaterialExtension {
+                                        base_texture: texture_array_handle.0.clone(),
+                                        scale: 0.5,
+                                        tri_buffer: tri_buffers.add(ShaderStorageBuffer::new(
+                                            &tri_data_bytes,
+                                            RenderAssetUsages::default(),
+                                        )),
+                                    },
+                                });
                                 let new_entity = commands
                                     .spawn((
                                         collider,
                                         Mesh3d(mesh_handles.add(new_mesh)),
-                                        MeshMaterial3d(material_handle.0.clone()),
+                                        MeshMaterial3d(material_handle),
                                         ChunkTag,
                                         Transform::from_translation(chunk_coord_to_world_pos(
                                             &chunk_coord,

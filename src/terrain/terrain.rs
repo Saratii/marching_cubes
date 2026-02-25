@@ -4,7 +4,6 @@ use bevy::{
     asset::RenderAssetUsages,
     image::{ImageLoaderSettings, ImageSampler},
     mesh::{Indices, PrimitiveTopology},
-    pbr::ExtendedMaterial,
     prelude::*,
     render::render_resource::{AddressMode, SamplerDescriptor},
 };
@@ -15,10 +14,7 @@ use crate::{
     constants::SAMPLES_PER_CHUNK_DIM,
     conversions::flatten_index,
     data_loader::file_loader::get_project_root,
-    terrain::{
-        ATTRIBUTE_MATERIAL_ID, chunk_generator::MaterialCode,
-        terrain_material::TerrainMaterialExtension,
-    },
+    terrain::{ATTRIBUTE_TRIANGLE_INDEX, chunk_generator::MaterialCode},
 };
 
 #[derive(Component)]
@@ -26,11 +22,6 @@ pub struct ChunkTag;
 
 #[derive(Resource)]
 pub struct NoiseFunction(pub GeneratorWrapper<SafeNode>);
-
-#[derive(Resource)]
-pub struct TerrainMaterialHandle(
-    pub Handle<ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>>,
-);
 
 #[derive(Resource)]
 pub struct TextureArrayHandle(pub Handle<Image>);
@@ -89,11 +80,7 @@ impl NonUniformTerrainChunk {
     }
 }
 
-pub fn setup_map(
-    mut commands: Commands,
-    mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>>>,
-    asset_server: Res<AssetServer>,
-) {
+pub fn setup_map(mut commands: Commands, asset_server: Res<AssetServer>) {
     let root = get_project_root();
     let texture_array_handle: Handle<Image> = asset_server
         .load_with_settings::<Image, ImageLoaderSettings>(
@@ -112,25 +99,14 @@ pub fn setup_map(
                 );
             },
         );
-    let standard_terrain_material_handle = materials.add(ExtendedMaterial {
-        base: StandardMaterial {
-            perceptual_roughness: 0.8,
-            ..Default::default()
-        },
-        extension: TerrainMaterialExtension {
-            base_texture: texture_array_handle.clone(),
-            scale: 0.5,
-        },
-    });
-    commands.insert_resource(TerrainMaterialHandle(standard_terrain_material_handle));
     commands.insert_resource(TextureArrayHandle(texture_array_handle));
 }
 
 pub fn generate_bevy_mesh(
     vertices: Vec<[f32; 3]>,
     normals: Vec<[f32; 3]>,
-    material_ids: Vec<u32>,
     indices: Vec<u32>,
+    tri_ids: Vec<u32>,
 ) -> Mesh {
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
@@ -138,7 +114,7 @@ pub fn generate_bevy_mesh(
     );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(ATTRIBUTE_TRIANGLE_INDEX, tri_ids);
     mesh.insert_indices(Indices::U32(indices));
-    mesh.insert_attribute(ATTRIBUTE_MATERIAL_ID, material_ids);
     mesh
 }
