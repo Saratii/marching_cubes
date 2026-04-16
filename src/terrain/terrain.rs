@@ -127,8 +127,8 @@ pub fn setup_map(
 }
 
 pub fn generate_bevy_mesh(
-    vertices: Vec<[f32; 3]>,
-    normals: Vec<[f32; 3]>,
+    vertices: Vec<Vec3>,
+    normals: Vec<Vec3>,
     material_ids: Vec<u32>,
     indices: Vec<u32>,
 ) -> Mesh {

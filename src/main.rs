@@ -9,7 +9,7 @@ use bevy::image::ImageSamplerDescriptor;
 use bevy::mesh::VertexAttributeValues;
 use bevy::pbr::{ExtendedMaterial, PbrPlugin};
 use bevy::prelude::*;
-use bevy::render::diagnostic::RenderDiagnosticsPlugin;
+// use bevy::render::diagnostic::RenderDiagnosticsPlugin;
 use bevy::window::{PresentMode, WindowMode};
 use bevy::winit::{UpdateMode, WinitSettings};
 use bevy_rapier3d::plugin::{NoUserData, PhysicsSet, RapierPhysicsPlugin};
@@ -103,7 +103,7 @@ fn main() {
             // LogDiagnosticsPlugin::default(),
             // RapierDebugRenderPlugin::default(),
         ))
-        .add_plugins(RenderDiagnosticsPlugin::default())
+        // .add_plugins(RenderDiagnosticsPlugin::default())
         .add_systems(
             Startup,
             (
