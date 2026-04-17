@@ -3,13 +3,19 @@ use std::f32::consts::FRAC_PI_4;
 use bevy::{
     camera::Exposure,
     core_pipeline::tonemapping::Tonemapping,
-    light::{AtmosphereEnvironmentMapLight, FogVolume, VolumetricFog, VolumetricLight},
+    light::{AtmosphereEnvironmentMapLight, /*FogVolume, VolumetricFog,*/ VolumetricLight},
     pbr::{Atmosphere, AtmosphereSettings, ScatteringMedium, ScreenSpaceReflections},
     post_process::bloom::Bloom,
     prelude::*,
 };
 
-use crate::{constants::CAMERA_FIRST_PERSON_OFFSET, player::player::MainCameraTag};
+use crate::{
+    constants::CAMERA_FIRST_PERSON_OFFSET, player::player::MainCameraTag,
+    ui::configurable_settings::ConfigurableSettings,
+};
+
+#[derive(Component)]
+pub struct SunLightTag;
 
 pub fn setup_lighting(mut commands: Commands) {
     commands.spawn((
@@ -20,42 +26,53 @@ pub fn setup_lighting(mut commands: Commands) {
         },
         Transform::from_rotation(Quat::from_euler(EulerRot::ZYX, 0.0, 1.0, -FRAC_PI_4)),
         VolumetricLight,
+        SunLightTag,
     ));
+}
+
+pub fn apply_shadow_setting(
+    settings: Res<ConfigurableSettings>,
+    mut light_query: Query<&mut DirectionalLight, With<SunLightTag>>,
+) {
+    if settings.is_changed() {
+        if let Ok(mut light) = light_query.single_mut() {
+            light.shadows_enabled = settings.shadows;
+        }
+    }
 }
 
 pub fn setup_camera(
     mut commands: Commands,
     mut scattering_mediums: ResMut<Assets<ScatteringMedium>>,
 ) {
-    commands
-        .spawn((
-            Camera3d::default(),
-            Transform {
-                translation: CAMERA_FIRST_PERSON_OFFSET,
-                rotation: Quat::IDENTITY,
-                scale: Vec3::ONE,
-            },
-            Camera::default(),
-            IsDefaultUiCamera,
-            MainCameraTag,
-            Atmosphere::earthlike(scattering_mediums.add(ScatteringMedium::default())),
-            AtmosphereSettings::default(),
-            Exposure { ev100: 13.0 },
-            Tonemapping::AcesFitted,
-            Bloom::NATURAL,
-            AtmosphereEnvironmentMapLight::default(),
-            VolumetricFog {
-                ambient_intensity: 0.0,
-                ..default()
-            },
-            Msaa::Off,
-            ScreenSpaceReflections::default(),
-        ))
-        .with_child((
-            FogVolume {
-                density_factor: 0.1,
-                ..default()
-            },
-            Transform::from_scale(Vec3::new(30.0, 30.0, 30.0)).with_translation(Vec3::ZERO),
-        ));
+    commands.spawn((
+        Camera3d::default(),
+        Transform {
+            translation: CAMERA_FIRST_PERSON_OFFSET,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
+        },
+        Camera::default(),
+        IsDefaultUiCamera,
+        MainCameraTag,
+        Atmosphere::earthlike(scattering_mediums.add(ScatteringMedium::default())),
+        AtmosphereSettings::default(),
+        Exposure { ev100: 13.0 },
+        Tonemapping::AcesFitted,
+        Bloom::NATURAL,
+        AtmosphereEnvironmentMapLight::default(),
+        // VolumetricFog {
+        //     ambient_intensity: 0.0,
+        //     ..default()
+        // },
+        Msaa::Off,
+        ScreenSpaceReflections::default(),
+    ));
+    // .with_child((
+    //     FogVolume {
+    //         density_factor: 0.1,
+    //         ..default()
+    //     },
+    //     Transform::from_scale(Vec3::new(30.0, 30.0, 30.0)).with_translation(Vec3::ZERO),
+    // ));
 }

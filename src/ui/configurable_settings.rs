@@ -67,6 +67,7 @@ pub enum SettingsType {
     Lod5Toggle,
     ShowChunksToggle,
     FpsChange,
+    ShadowsToggle,
 }
 
 impl SettingsType {
@@ -82,6 +83,7 @@ impl SettingsType {
             SettingsType::Lod5Toggle => format!("LOD 5: {}", on_off(s.debug_lod_5)),
             SettingsType::ShowChunksToggle => format!("Show Chunks: {}", on_off(s.show_chunks)),
             SettingsType::FpsChange => format!("FPS Limit: {}", s.fps_limit.to_display_string()),
+            SettingsType::ShadowsToggle => format!("Shadows: {}", on_off(s.shadows)),
         }
     }
 
@@ -100,6 +102,7 @@ impl SettingsType {
             SettingsType::Lod4Toggle => settings.debug_lod_4 = !settings.debug_lod_4,
             SettingsType::Lod5Toggle => settings.debug_lod_5 = !settings.debug_lod_5,
             SettingsType::ShowChunksToggle => settings.show_chunks = !settings.show_chunks,
+            SettingsType::ShadowsToggle => settings.shadows = !settings.shadows,
         }
     }
 }
@@ -113,6 +116,7 @@ pub struct ConfigurableSettings {
     pub debug_lod_3: bool,
     pub debug_lod_4: bool,
     pub debug_lod_5: bool,
+    pub shadows: bool,
 }
 
 pub fn load_configurable_settings() -> ConfigurableSettings {
@@ -132,6 +136,7 @@ impl Default for ConfigurableSettings {
             debug_lod_3: false,
             debug_lod_4: false,
             debug_lod_5: false,
+            shadows: true,
         }
     }
 }

@@ -22,7 +22,7 @@ use marching_cubes::data_loader::driver::{
     validate_player_spawn,
 };
 use marching_cubes::data_loader::file_loader::setup_chunk_loading;
-use marching_cubes::lighting::lighting_main::{setup_camera, setup_lighting};
+use marching_cubes::lighting::lighting_main::{apply_shadow_setting, setup_camera, setup_lighting};
 use marching_cubes::player::digging::handle_digging_input;
 use marching_cubes::player::player::{
     CameraController, KeyBindings, camera_look, camera_zoom, grab_on_click, handle_focus_change,
@@ -149,6 +149,7 @@ fn main() {
                 grab_on_click,
                 count_vertices_on_key,
                 toggle_fly_mode,
+                apply_shadow_setting,
             ),
         )
         .run();

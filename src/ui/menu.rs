@@ -17,7 +17,7 @@ const INACTIVE_BORDER_COLOR: Color = Color::srgba(0.5, 0.5, 0.7, 1.0);
 const FONT_SIZE: f32 = 24.0;
 const SETTINGS_ROW_HEIGHT: f32 = 40.0;
 const SETTINGS_ROW_BORDER_SIZE: f32 = 3.0;
-const GENERAL_SETTINGS: [SettingsType; 1] = [SettingsType::FpsChange];
+const GENERAL_SETTINGS: [SettingsType; 2] = [SettingsType::FpsChange, SettingsType::ShadowsToggle];
 #[cfg(feature = "debug")]
 const DEBUG_SETTINGS: [SettingsType; 6] = [
     SettingsType::Lod1Toggle,
@@ -313,6 +313,32 @@ fn spawn_menu(commands: &mut Commands, settings: &ConfigurableSettings) {
                                             parent.spawn((
                                                 SettingLabel(SettingsType::FpsChange),
                                                 Text(SettingsType::FpsChange.text(settings)),
+                                                TextFont {
+                                                    font_size: FONT_SIZE,
+                                                    ..default()
+                                                },
+                                                TextColor(Color::WHITE),
+                                            ));
+                                        });
+                                    parent
+                                        .spawn((
+                                            Node {
+                                                width: Val::Percent(100.0),
+                                                height: Val::Px(SETTINGS_ROW_HEIGHT),
+                                                justify_content: JustifyContent::Center,
+                                                align_items: AlignItems::Center,
+                                                border: UiRect::all(Val::Px(
+                                                    SETTINGS_ROW_BORDER_SIZE,
+                                                )),
+                                                ..default()
+                                            },
+                                            BorderColor::all(INACTIVE_BORDER_COLOR),
+                                            SettingRow(SettingsType::ShadowsToggle),
+                                        ))
+                                        .with_children(|parent| {
+                                            parent.spawn((
+                                                SettingLabel(SettingsType::ShadowsToggle),
+                                                Text(SettingsType::ShadowsToggle.text(settings)),
                                                 TextFont {
                                                     font_size: FONT_SIZE,
                                                     ..default()
