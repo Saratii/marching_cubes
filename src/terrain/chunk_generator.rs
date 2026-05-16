@@ -6,7 +6,10 @@ use fastnoise2::{
 };
 
 use crate::{
-    constants::{CHUNK_WORLD_SIZE, HALF_CHUNK, NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED},
+    constants::{
+        CHUNK_WORLD_SIZE, HALF_CHUNK, NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED,
+        SAMPLES_PER_CHUNK_2D, SAMPLES_PER_CHUNK_DIM, VOXEL_WORLD_SIZE,
+    },
     terrain::terrain::Uniformity,
 };
 
@@ -32,7 +35,7 @@ pub fn generate_chunk_into_buffers(
     chunk_start: Vec3,
     density_buffer: &mut [i16],
     material_buffer: &mut [MaterialCode],
-    heightmap_buffer: &mut [f32],
+    heightmap_buffer: &mut [f32], //SAMPLES_PER_CHUNK_DIM x SAMPLES_PER_CHUNK_DIM
     dhdx_buffer: &mut [f32],
     dhdz_buffer: &mut [f32],
     samples_per_chunk_dim: usize,
@@ -50,7 +53,6 @@ pub fn generate_chunk_into_buffers(
         material_buffer,
         &chunk_start,
         heightmap_buffer,
-        samples_per_chunk_dim,
         dhdx_buffer,
         dhdz_buffer,
     );
@@ -175,35 +177,33 @@ pub fn generate_terrain_heights(
 //optimized by first iterating over the boundary voxels to quickly determine uniformity
 //assumes that the surface passes through one of the chunk sides
 //will break if a "cave" is fully enclosed within the chunk
+//only called on full res chunk buffers
 pub fn fill_voxel_densities(
     densities: &mut [i16],
     materials: &mut [MaterialCode],
     chunk_start: &Vec3,
-    terrain_heights: &[f32],
-    samples_per_chunk_dim: usize,
+    heightmap_buffer: &[f32], // SAMPLES_PER_CHUNK_DIM x SAMPLES_PER_CHUNK_DIM
     dhdx: &[f32],
     dhdz: &[f32],
 ) -> bool {
-    let voxel_size = CHUNK_WORLD_SIZE / (samples_per_chunk_dim - 1) as f32;
-    let heightmap_grid_size: usize = samples_per_chunk_dim * samples_per_chunk_dim;
     let solid_threshold = quantize_f32_to_i16(-1.0);
     let mut is_uniform = true;
     let mut init_distance = 0;
     let mut init_material = MaterialCode::Air;
     let mut has_init = false;
-    for z in [0, samples_per_chunk_dim - 1] {
-        let height_base = z * samples_per_chunk_dim;
-        let z_base = z * heightmap_grid_size;
-        for y in 0..samples_per_chunk_dim {
-            let world_y = chunk_start.y + y as f32 * voxel_size;
+    for z in [0, SAMPLES_PER_CHUNK_DIM - 1] {
+        let height_base = z * SAMPLES_PER_CHUNK_DIM;
+        let z_base = z * SAMPLES_PER_CHUNK_2D;
+        for y in 0..SAMPLES_PER_CHUNK_DIM {
+            let world_y = chunk_start.y + y as f32 * VOXEL_WORLD_SIZE;
             let below_sea = world_y < 0.0;
-            let base_rolling_voxel_index = z_base + y * samples_per_chunk_dim;
-            for x in 0..samples_per_chunk_dim {
+            let base_rolling_voxel_index = z_base + y * SAMPLES_PER_CHUNK_DIM;
+            for x in 0..SAMPLES_PER_CHUNK_DIM {
                 let rolling_voxel_index = base_rolling_voxel_index + x;
-                let terrain_height = terrain_heights[height_base + x];
+                let terrain_height = heightmap_buffer[height_base + x];
                 let distance_to_surface = {
                     let vertical_dist = world_y - terrain_height;
-                    let gidx = z * samples_per_chunk_dim + x;
+                    let gidx = z * SAMPLES_PER_CHUNK_DIM + x;
                     let dhdx = dhdx[gidx];
                     let dhdz = dhdz[gidx];
                     (vertical_dist / (1.0 + dhdx * dhdx + dhdz * dhdz).sqrt()).clamp(-10.0, 10.0)
@@ -233,19 +233,19 @@ pub fn fill_voxel_densities(
             }
         }
     }
-    for z in 1..samples_per_chunk_dim - 1 {
-        let height_base = z * samples_per_chunk_dim;
-        let z_base = z * heightmap_grid_size;
-        for y in [0, samples_per_chunk_dim - 1] {
-            let world_y = chunk_start.y + y as f32 * voxel_size;
+    for z in 1..SAMPLES_PER_CHUNK_DIM - 1 {
+        let height_base = z * SAMPLES_PER_CHUNK_DIM;
+        let z_base = z * SAMPLES_PER_CHUNK_2D;
+        for y in [0, SAMPLES_PER_CHUNK_DIM - 1] {
+            let world_y = chunk_start.y + y as f32 * VOXEL_WORLD_SIZE;
             let below_sea = world_y < 0.0;
-            let base_rolling_voxel_index = z_base + y * samples_per_chunk_dim;
-            for x in 0..samples_per_chunk_dim {
+            let base_rolling_voxel_index = z_base + y * SAMPLES_PER_CHUNK_DIM;
+            for x in 0..SAMPLES_PER_CHUNK_DIM {
                 let rolling_voxel_index = base_rolling_voxel_index + x;
-                let terrain_height = terrain_heights[height_base + x];
+                let terrain_height = heightmap_buffer[height_base + x];
                 let distance_to_surface = {
                     let vertical_dist = world_y - terrain_height;
-                    let gidx = z * samples_per_chunk_dim + x;
+                    let gidx = z * SAMPLES_PER_CHUNK_DIM + x;
                     let dhdx = dhdx[gidx];
                     let dhdz = dhdz[gidx];
                     (vertical_dist / (1.0 + dhdx * dhdx + dhdz * dhdz).sqrt()).clamp(-10.0, 10.0)
@@ -275,19 +275,19 @@ pub fn fill_voxel_densities(
             }
         }
     }
-    for z in 1..samples_per_chunk_dim - 1 {
-        let height_base = z * samples_per_chunk_dim;
-        let z_base = z * heightmap_grid_size;
-        for y in 1..samples_per_chunk_dim - 1 {
-            let world_y = chunk_start.y + y as f32 * voxel_size;
+    for z in 1..SAMPLES_PER_CHUNK_DIM - 1 {
+        let height_base = z * SAMPLES_PER_CHUNK_DIM;
+        let z_base = z * SAMPLES_PER_CHUNK_2D;
+        for y in 1..SAMPLES_PER_CHUNK_DIM - 1 {
+            let world_y = chunk_start.y + y as f32 * VOXEL_WORLD_SIZE;
             let below_sea = world_y < 0.0;
-            let base_rolling_voxel_index = z_base + y * samples_per_chunk_dim;
-            for x in [0, samples_per_chunk_dim - 1] {
+            let base_rolling_voxel_index = z_base + y * SAMPLES_PER_CHUNK_DIM;
+            for x in [0, SAMPLES_PER_CHUNK_DIM - 1] {
                 let rolling_voxel_index = base_rolling_voxel_index + x;
-                let terrain_height = terrain_heights[height_base + x];
+                let terrain_height = heightmap_buffer[height_base + x];
                 let distance_to_surface = {
                     let vertical_dist = world_y - terrain_height;
-                    let gidx = z * samples_per_chunk_dim + x;
+                    let gidx = z * SAMPLES_PER_CHUNK_DIM + x;
                     let dhdx = dhdx[gidx];
                     let dhdz = dhdz[gidx];
                     (vertical_dist / (1.0 + dhdx * dhdx + dhdz * dhdz).sqrt()).clamp(-10.0, 10.0)
@@ -320,19 +320,19 @@ pub fn fill_voxel_densities(
     if is_uniform {
         return is_uniform;
     } else {
-        for z in 1..samples_per_chunk_dim - 1 {
-            let height_base = z * samples_per_chunk_dim;
-            let z_base = z * heightmap_grid_size;
-            for y in 1..samples_per_chunk_dim - 1 {
-                let world_y = chunk_start.y + y as f32 * voxel_size;
+        for z in 1..SAMPLES_PER_CHUNK_DIM - 1 {
+            let height_base = z * SAMPLES_PER_CHUNK_DIM;
+            let z_base = z * SAMPLES_PER_CHUNK_2D;
+            for y in 1..SAMPLES_PER_CHUNK_DIM - 1 {
+                let world_y = chunk_start.y + y as f32 * VOXEL_WORLD_SIZE;
                 let below_sea = world_y < 0.0;
-                let base_rolling_voxel_index = z_base + y * samples_per_chunk_dim;
-                for x in 1..samples_per_chunk_dim - 1 {
+                let base_rolling_voxel_index = z_base + y * SAMPLES_PER_CHUNK_DIM;
+                for x in 1..SAMPLES_PER_CHUNK_DIM - 1 {
                     let rolling_voxel_index = base_rolling_voxel_index + x;
-                    let terrain_height = terrain_heights[height_base + x];
+                    let terrain_height = heightmap_buffer[height_base + x];
                     let distance_to_surface = {
                         let vertical_dist = world_y - terrain_height;
-                        let gidx = z * samples_per_chunk_dim + x;
+                        let gidx = z * SAMPLES_PER_CHUNK_DIM + x;
                         let dhdx = dhdx[gidx];
                         let dhdz = dhdz[gidx];
                         (vertical_dist / (1.0 + dhdx * dhdx + dhdz * dhdz).sqrt())
