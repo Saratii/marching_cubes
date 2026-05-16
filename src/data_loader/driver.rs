@@ -1,8 +1,8 @@
 use crate::{
     constants::{
-        CHUNK_WORLD_SIZE, CHUNKS_PER_CLUSTER, CHUNKS_PER_CLUSTER_DIM, HALF_CHUNK,
-        MAX_RENDER_RADIUS_SQUARED, NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED, SAMPLES_PER_CHUNK,
-        SAMPLES_PER_CHUNK_2D, SAMPLES_PER_CHUNK_DIM, SIMULATION_RADIUS_SQUARED,
+        CHUNK_WORLD_SIZE, CHUNKS_PER_CLUSTER, CHUNKS_PER_CLUSTER_DIM, HALF_CHUNK, NOISE_AMPLITUDE,
+        NOISE_FREQUENCY, NOISE_SEED, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_2D,
+        SAMPLES_PER_CHUNK_DIM, SIMULATION_RADIUS_SQUARED,
     },
     conversions::cluster_coord_to_min_chunk_coord,
     data_loader::{
@@ -18,6 +18,7 @@ use crate::{
         },
         terrain::NonUniformTerrainChunk,
     },
+    ui::configurable_settings::RENDER_RADIUS_SQUARED,
 };
 use bevy::{camera::primitives::MeshAabb, prelude::*};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
@@ -1120,7 +1121,7 @@ fn svo_manager_thread(
         drop(terrain_map_lock);
         svo.root.fill_missing_chunks_in_radius(
             &player_translation,
-            MAX_RENDER_RADIUS_SQUARED,
+            f32::from_bits(RENDER_RADIUS_SQUARED.load(Ordering::Relaxed)),
             &mut chunks_being_loaded,
             &mut request_buffer,
         );

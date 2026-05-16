@@ -1,15 +1,17 @@
+use std::sync::atomic::Ordering;
+
 use bevy::prelude::*;
 use rustc_hash::FxHashSet;
 
 use crate::{
     constants::{
         CHUNK_WORLD_SIZE, CHUNKS_PER_CLUSTER, CHUNKS_PER_CLUSTER_DIM, CLUSTER_WORLD_LENGTH,
-        MAX_RENDER_RADIUS_SQUARED, REDUCED_LOD_1_RADIUS_SQUARED, REDUCED_LOD_2_RADIUS_SQUARED,
-        REDUCED_LOD_3_RADIUS_SQUARED, REDUCED_LOD_4_RADIUS_SQUARED, REDUCED_LOD_5_RADIUS_SQUARED,
-        SIMULATION_RADIUS_SQUARED,
+        REDUCED_LOD_1_RADIUS_SQUARED, REDUCED_LOD_2_RADIUS_SQUARED, REDUCED_LOD_3_RADIUS_SQUARED,
+        REDUCED_LOD_4_RADIUS_SQUARED, REDUCED_LOD_5_RADIUS_SQUARED, SIMULATION_RADIUS_SQUARED,
     },
     conversions::{cluster_coord_to_world_center, cluster_coord_to_world_pos},
     data_loader::driver::{ClusterRequest, LoadState, LoadStateTransition},
+    ui::configurable_settings::RENDER_RADIUS_SQUARED,
 };
 
 const MAX_WORLD_SIZE: i16 = 512; //in chunks
@@ -210,7 +212,9 @@ impl SvoNode {
                     //chunk did not already exist
                     let distance_squared = center
                         .distance_squared(cluster_coord_to_world_center(&self.lower_cluster_coord));
-                    if distance_squared > MAX_RENDER_RADIUS_SQUARED {
+                    if distance_squared
+                        > f32::from_bits(RENDER_RADIUS_SQUARED.load(Ordering::Relaxed))
+                    {
                         return; //skip chunks where the sphere intersects but chunk center is outside max radius
                     }
                     chunks_being_loaded.insert(self.lower_cluster_coord);
@@ -309,7 +313,7 @@ impl SvoNode {
             sq_dist
         };
         //if this entire node is beyond MAX_RENDER_RADIUS, collect all chunks inside it
-        if node_center_to_sphere > MAX_RENDER_RADIUS_SQUARED {
+        if node_center_to_sphere > f32::from_bits(RENDER_RADIUS_SQUARED.load(Ordering::Relaxed)) {
             self.collect_all_chunks(results);
             return;
         }
@@ -317,7 +321,7 @@ impl SvoNode {
             if let Some((has_entity, _)) = &self.chunk {
                 let chunk_center = cluster_coord_to_world_center(&self.lower_cluster_coord);
                 let dist_sq = center.distance_squared(chunk_center);
-                if dist_sq > MAX_RENDER_RADIUS_SQUARED {
+                if dist_sq > f32::from_bits(RENDER_RADIUS_SQUARED.load(Ordering::Relaxed)) {
                     results.push((self.lower_cluster_coord, *has_entity));
                 }
             }

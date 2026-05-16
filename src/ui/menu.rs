@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::atomic::Ordering, time::Duration};
 
 use bevy::{
     prelude::*,
@@ -6,7 +6,8 @@ use bevy::{
 };
 
 use crate::ui::configurable_settings::{
-    ConfigurableSettings, FpsLimit, MenuFocus, MenuTab, SettingsType, save_configurable_settings,
+    ConfigurableSettings, FpsLimit, MenuFocus, MenuTab, RENDER_RADIUS_SQUARED, SettingsType,
+    save_configurable_settings,
 };
 
 const BACKGROUND_COLOR: Color = Color::srgba(0.2, 0.2, 0.3, 0.8);
@@ -17,7 +18,11 @@ const INACTIVE_BORDER_COLOR: Color = Color::srgba(0.5, 0.5, 0.7, 1.0);
 const FONT_SIZE: f32 = 24.0;
 const SETTINGS_ROW_HEIGHT: f32 = 40.0;
 const SETTINGS_ROW_BORDER_SIZE: f32 = 3.0;
-const GENERAL_SETTINGS: [SettingsType; 2] = [SettingsType::FpsChange, SettingsType::ShadowsToggle];
+const GENERAL_SETTINGS: [SettingsType; 3] = [
+    SettingsType::FpsChange,
+    SettingsType::ShadowsToggle,
+    SettingsType::RenderRadiusChange,
+];
 #[cfg(feature = "debug")]
 const DEBUG_SETTINGS: [SettingsType; 6] = [
     SettingsType::Lod1Toggle,
@@ -151,6 +156,12 @@ pub fn menu_update(
                 save_configurable_settings(&settings);
                 if setting == SettingsType::FpsChange {
                     apply_fps_limit(&settings.fps_limit, &mut winit_settings);
+                }
+                if setting == SettingsType::RenderRadiusChange {
+                    RENDER_RADIUS_SQUARED.store(
+                        settings.render_radius_squared.0.to_bits(),
+                        Ordering::Relaxed,
+                    );
                 }
                 for (SettingLabel(setting_type), mut text) in text_query.iter_mut() {
                     if *setting_type == setting {
@@ -339,6 +350,34 @@ fn spawn_menu(commands: &mut Commands, settings: &ConfigurableSettings) {
                                             parent.spawn((
                                                 SettingLabel(SettingsType::ShadowsToggle),
                                                 Text(SettingsType::ShadowsToggle.text(settings)),
+                                                TextFont {
+                                                    font_size: FONT_SIZE,
+                                                    ..default()
+                                                },
+                                                TextColor(Color::WHITE),
+                                            ));
+                                        });
+                                    parent
+                                        .spawn((
+                                            Node {
+                                                width: Val::Percent(100.0),
+                                                height: Val::Px(SETTINGS_ROW_HEIGHT),
+                                                justify_content: JustifyContent::Center,
+                                                align_items: AlignItems::Center,
+                                                border: UiRect::all(Val::Px(
+                                                    SETTINGS_ROW_BORDER_SIZE,
+                                                )),
+                                                ..default()
+                                            },
+                                            BorderColor::all(INACTIVE_BORDER_COLOR),
+                                            SettingRow(SettingsType::RenderRadiusChange),
+                                        ))
+                                        .with_children(|parent| {
+                                            parent.spawn((
+                                                SettingLabel(SettingsType::RenderRadiusChange),
+                                                Text(
+                                                    SettingsType::RenderRadiusChange.text(settings),
+                                                ),
                                                 TextFont {
                                                     font_size: FONT_SIZE,
                                                     ..default()

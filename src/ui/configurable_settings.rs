@@ -3,8 +3,58 @@ use serde::{Deserialize, Serialize};
 use serde_json::{from_str, to_string_pretty};
 use std::fs::{create_dir_all, read_to_string, write};
 use std::path::PathBuf;
+use std::sync::atomic::AtomicU32;
+
+use crate::constants::SIMULATION_RADIUS;
 
 const CONFIG_PATH: &str = "data/configurable_settings.json";
+const RENDER_RADIUS_STEPS: &[f32] = &[
+    200.0 * 200.0,
+    400.0 * 400.0,
+    600.0 * 600.0,
+    800.0 * 800.0,
+    1000.0 * 1000.0,
+    1200.0 * 1200.0,
+    1400.0 * 1400.0,
+    1600.0 * 1600.0,
+    1800.0 * 1800.0,
+    2000.0 * 2000.0,
+];
+const _: () = assert!(RENDER_RADIUS_STEPS[0] as u64 >= SIMULATION_RADIUS as u64);
+const DEFAULT_RENDER_RADIUS_SQUARED: f32 = 1000.0 * 1000.0;
+
+pub static RENDER_RADIUS_SQUARED: AtomicU32 = AtomicU32::new(DEFAULT_RENDER_RADIUS_SQUARED as u32);
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct RenderRadiusSquared(pub f32);
+
+impl RenderRadiusSquared {
+    pub fn next_step(&self) -> Self {
+        let pos = RENDER_RADIUS_STEPS
+            .iter()
+            .position(|&v| v == self.0)
+            .unwrap_or(0);
+        RenderRadiusSquared(RENDER_RADIUS_STEPS[(pos + 1).min(RENDER_RADIUS_STEPS.len() - 1)])
+    }
+
+    pub fn prev_step(&self) -> Self {
+        let pos = RENDER_RADIUS_STEPS
+            .iter()
+            .position(|&v| v == self.0)
+            .unwrap_or(0);
+        RenderRadiusSquared(RENDER_RADIUS_STEPS[pos.saturating_sub(1)])
+    }
+
+    pub fn to_display_string(&self) -> String {
+        format!("{}", (self.0 as u32).isqrt())
+    }
+}
+
+impl Default for RenderRadiusSquared {
+    fn default() -> Self {
+        RenderRadiusSquared(DEFAULT_RENDER_RADIUS_SQUARED)
+    }
+}
 
 #[derive(Serialize, Deserialize, Resource, Debug, Clone, Copy, PartialEq)]
 pub enum FpsLimit {
@@ -68,6 +118,7 @@ pub enum SettingsType {
     ShowChunksToggle,
     FpsChange,
     ShadowsToggle,
+    RenderRadiusChange,
 }
 
 impl SettingsType {
@@ -84,6 +135,10 @@ impl SettingsType {
             SettingsType::ShowChunksToggle => format!("Show Chunks: {}", on_off(s.show_chunks)),
             SettingsType::FpsChange => format!("FPS Limit: {}", s.fps_limit.to_display_string()),
             SettingsType::ShadowsToggle => format!("Shadows: {}", on_off(s.shadows)),
+            SettingsType::RenderRadiusChange => format!(
+                "Render Radius: {}",
+                s.render_radius_squared.to_display_string()
+            ),
         }
     }
 
@@ -103,6 +158,13 @@ impl SettingsType {
             SettingsType::Lod5Toggle => settings.debug_lod_5 = !settings.debug_lod_5,
             SettingsType::ShowChunksToggle => settings.show_chunks = !settings.show_chunks,
             SettingsType::ShadowsToggle => settings.shadows = !settings.shadows,
+            SettingsType::RenderRadiusChange => {
+                settings.render_radius_squared = if dir_next {
+                    settings.render_radius_squared.next_step()
+                } else {
+                    settings.render_radius_squared.prev_step()
+                };
+            }
         }
     }
 }
@@ -117,6 +179,7 @@ pub struct ConfigurableSettings {
     pub debug_lod_4: bool,
     pub debug_lod_5: bool,
     pub shadows: bool,
+    pub render_radius_squared: RenderRadiusSquared,
 }
 
 pub fn load_configurable_settings() -> ConfigurableSettings {
@@ -137,6 +200,7 @@ impl Default for ConfigurableSettings {
             debug_lod_4: false,
             debug_lod_5: false,
             shadows: true,
+            render_radius_squared: RenderRadiusSquared::default(),
         }
     }
 }

@@ -34,7 +34,7 @@ use marching_cubes::terrain::chunk_generator::get_fbm;
 use marching_cubes::terrain::terrain::{NoiseFunction, setup_map};
 use marching_cubes::terrain::terrain_material::TerrainMaterialExtension;
 use marching_cubes::ui::configurable_settings::{
-    FpsLimit, MenuFocus, MenuTab, load_configurable_settings,
+    FpsLimit, MenuFocus, MenuTab, RENDER_RADIUS_SQUARED, load_configurable_settings,
 };
 use marching_cubes::ui::crosshair::spawn_crosshair;
 #[cfg(feature = "debug")]
@@ -48,6 +48,10 @@ fn main() {
     println!("sse2: {}", std::is_x86_feature_detected!("sse2"));
     let settings = load_settings(); //automatically saved state
     let configurable_settings = load_configurable_settings(); //user saved state
+    RENDER_RADIUS_SQUARED.store(
+        configurable_settings.render_radius_squared.0.to_bits(),
+        Ordering::Relaxed,
+    );
     let window_centered_position = settings.window_centered_position;
     let update_mode = match configurable_settings.fps_limit {
         FpsLimit::Fps60 => UpdateMode::reactive_low_power(Duration::from_secs_f64(1.0 / 60.0)),

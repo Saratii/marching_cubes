@@ -61,7 +61,6 @@ pub fn mc_mesh_generation(
                     &mut normals,
                     &mut material_ids,
                     &mut indices,
-                    densities,
                     materials,
                     samples_per_chunk_dim,
                     voxel_size,
@@ -101,7 +100,6 @@ fn triangulate_cube_with_cache(
     normals: &mut Vec<Vec3>,
     material_ids: &mut Vec<u32>,
     indices: &mut Vec<u32>,
-    densities: &[i16],
     materials: &[MaterialCode],
     samples_per_chunk_dim: usize,
     voxel_size: f32,
@@ -195,8 +193,6 @@ fn triangulate_cube_with_cache(
                 normals,
                 material_ids,
                 indices,
-                materials,
-                densities,
             );
         }
         i += 3;
@@ -331,8 +327,6 @@ fn split_mixed_triangle(
     normals: &mut Vec<Vec3>,
     material_ids: &mut Vec<u32>,
     indices: &mut Vec<u32>,
-    materials: &[MaterialCode],
-    densities: &[i16],
 ) {
     if m1 == m2 && m1 != m3 {
         let (p13, n13) = interp(vertices, normals, v1 as usize, v3 as usize);
