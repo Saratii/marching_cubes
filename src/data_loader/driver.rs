@@ -577,8 +577,15 @@ fn chunk_loader_thread(
                             Uniformity::NonUniform => {
                                 let has_surface = match request.load_state_transition {
                                     LoadStateTransition::ToLod5 => {
-                                        downscale(
+                                        let testing_densities = pad3d(
                                             &density_buffer,
+                                            SAMPLES_PER_CHUNK_DIM,
+                                            SAMPLES_PER_CHUNK_DIM,
+                                            SAMPLES_PER_CHUNK_DIM,
+                                            -100,
+                                        );
+                                        downscale(
+                                            &testing_densities,
                                             &material_buffer,
                                             &mut density_buffer_r5,
                                             &mut material_buffer_r5,
@@ -626,8 +633,15 @@ fn chunk_loader_thread(
                                         has_surface
                                     }
                                     LoadStateTransition::ToLod4 => {
-                                        downscale(
+                                        let testing_densities = pad3d(
                                             &density_buffer,
+                                            SAMPLES_PER_CHUNK_DIM,
+                                            SAMPLES_PER_CHUNK_DIM,
+                                            SAMPLES_PER_CHUNK_DIM,
+                                            -100,
+                                        );
+                                        downscale(
+                                            &testing_densities,
                                             &material_buffer,
                                             &mut density_buffer_r4,
                                             &mut material_buffer_r4,
@@ -675,8 +689,15 @@ fn chunk_loader_thread(
                                         has_surface
                                     }
                                     LoadStateTransition::ToLod3 => {
-                                        downscale(
+                                        let testing_densities = pad3d(
                                             &density_buffer,
+                                            SAMPLES_PER_CHUNK_DIM,
+                                            SAMPLES_PER_CHUNK_DIM,
+                                            SAMPLES_PER_CHUNK_DIM,
+                                            -100,
+                                        );
+                                        downscale(
+                                            &testing_densities,
                                             &material_buffer,
                                             &mut density_buffer_r3,
                                             &mut material_buffer_r3,
@@ -724,8 +745,15 @@ fn chunk_loader_thread(
                                         has_surface
                                     }
                                     LoadStateTransition::ToLod2 => {
-                                        downscale(
+                                        let testing_densities = pad3d(
                                             &density_buffer,
+                                            SAMPLES_PER_CHUNK_DIM,
+                                            SAMPLES_PER_CHUNK_DIM,
+                                            SAMPLES_PER_CHUNK_DIM,
+                                            -100,
+                                        );
+                                        downscale(
+                                            &testing_densities,
                                             &material_buffer,
                                             &mut density_buffer_r2,
                                             &mut material_buffer_r2,
@@ -773,8 +801,15 @@ fn chunk_loader_thread(
                                         has_surface
                                     }
                                     LoadStateTransition::ToLod1 => {
-                                        downscale(
+                                        let testing_densities = pad3d(
                                             &density_buffer,
+                                            SAMPLES_PER_CHUNK_DIM,
+                                            SAMPLES_PER_CHUNK_DIM,
+                                            SAMPLES_PER_CHUNK_DIM,
+                                            -100,
+                                        );
+                                        downscale(
+                                            &testing_densities,
                                             &material_buffer,
                                             &mut density_buffer_r1,
                                             &mut material_buffer_r1,

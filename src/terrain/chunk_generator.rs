@@ -467,7 +467,7 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 // otherwise pick the closest-to-surface solid.
 //always called with full res chunk
 pub fn downscale(
-    densities_in: &[i16],
+    densities_in: &[i16], // (SAMPLES_PER_CHUNK_DIM + 2) **3
     materials_in: &[MaterialCode],
     densities_out: &mut [i16],
     materials_out: &mut [MaterialCode],
@@ -477,37 +477,36 @@ pub fn downscale(
     let out_max = out_dim - 1;
     let stride = in_max / out_max;
     for target_z in 0..out_dim {
-        let high_sample_z = (target_z as f32 / out_max as f32) * in_max as f32;
-        let full_res_target_z = target_z * stride;
-        let full_res_end_z = (full_res_target_z + stride).min(SAMPLES_PER_CHUNK_DIM - 1);
+        let high_sample_z = 1.0 + (target_z as f32 / out_max as f32) * in_max as f32;
+        let mat_target_z = target_z * stride;
+        let mat_end_z = (mat_target_z + stride).min(SAMPLES_PER_CHUNK_DIM - 1);
         let z_base = target_z * out_dim;
         for target_y in 0..out_dim {
-            let high_sample_y = (target_y as f32 / out_max as f32) * in_max as f32;
-            let full_res_target_y = target_y * stride;
-            let full_res_end_y = (full_res_target_y + stride).min(SAMPLES_PER_CHUNK_DIM - 1);
+            let high_sample_y = 1.0 + (target_y as f32 / out_max as f32) * in_max as f32;
+            let mat_target_y = target_y * stride;
+            let mat_end_y = (mat_target_y + stride).min(SAMPLES_PER_CHUNK_DIM - 1);
             let zy_base = (z_base + target_y) * out_dim;
             for target_x in 0..out_dim {
-                let full_res_target_x = target_x * stride;
-                let high_sample_x = (target_x as f32 / out_max as f32) * in_max as f32;
+                let high_sample_x = 1.0 + (target_x as f32 / out_max as f32) * in_max as f32;
+                let mat_target_x = target_x * stride;
+                let mat_end_x = (mat_target_x + stride).min(SAMPLES_PER_CHUNK_DIM - 1);
                 let new_density = sample_trilinear_density(
                     densities_in,
-                    SAMPLES_PER_CHUNK_DIM,
+                    SAMPLES_PER_CHUNK_DIM_PADDED,
                     high_sample_x,
                     high_sample_y,
                     high_sample_z,
                 );
                 let out_i = zy_base + target_x;
                 densities_out[out_i] = quantize_f32_to_i16(new_density);
-                let full_res_end_x = (full_res_target_x + stride).min(SAMPLES_PER_CHUNK_DIM - 1);
                 let new_material = pick_surface_material_block_prefer_biomes(
-                    densities_in,
                     materials_in,
-                    full_res_target_x,
-                    full_res_target_y,
-                    full_res_target_z,
-                    full_res_end_x,
-                    full_res_end_y,
-                    full_res_end_z,
+                    mat_target_x,
+                    mat_target_y,
+                    mat_target_z,
+                    mat_end_x,
+                    mat_end_y,
+                    mat_end_z,
                 );
                 materials_out[out_i] = new_material;
             }
@@ -516,8 +515,7 @@ pub fn downscale(
 }
 
 fn pick_surface_material_block_prefer_biomes(
-    densities: &[i16],
-    materials: &[MaterialCode],
+    materials: &[MaterialCode], // unpadded, SAMPLES_PER_CHUNK_DIM^3
     full_res_start_x: usize,
     full_res_start_y: usize,
     full_res_start_z: usize,
@@ -525,53 +523,22 @@ fn pick_surface_material_block_prefer_biomes(
     full_res_end_y: usize,
     full_res_end_z: usize,
 ) -> MaterialCode {
-    let mut best_m = MaterialCode::Air;
-    let mut best_abs = i16::MAX;
+    let mut best_biome = MaterialCode::Air;
     for full_res_z in full_res_start_z..=full_res_end_z {
         for full_res_y in full_res_start_y..=full_res_end_y {
             let base = (full_res_z * SAMPLES_PER_CHUNK_DIM + full_res_y) * SAMPLES_PER_CHUNK_DIM;
             for full_res_x in full_res_start_x..=full_res_end_x {
-                let index = base + full_res_x;
-                let density = densities[index];
-                let material = materials[index];
-                if material == MaterialCode::Air || density >= 0 {
-                    continue;
+                let material = materials[base + full_res_x];
+                if material == MaterialCode::Grass || material == MaterialCode::Sand {
+                    return material;
                 }
-                let abs = density.abs();
-                if abs < best_abs {
-                    best_abs = abs;
-                    best_m = material;
+                if material == MaterialCode::Dirt {
+                    best_biome = material;
                 }
             }
         }
     }
-    if best_m != MaterialCode::Air {
-        return best_m;
-    }
-    let mut best_any_m = MaterialCode::Air;
-    let mut best_any_abs = i16::MAX;
-    let mut best_any_solid = false;
-    for full_res_z in full_res_start_z..=full_res_end_z {
-        for full_res_y in full_res_start_y..=full_res_end_y {
-            let base = (full_res_z * SAMPLES_PER_CHUNK_DIM + full_res_y) * SAMPLES_PER_CHUNK_DIM;
-            for full_res_x in full_res_start_x..=full_res_end_x {
-                let index = base + full_res_x;
-                let density = densities[index];
-                let material = materials[index];
-                if material == MaterialCode::Air {
-                    continue;
-                }
-                let abs = density.abs();
-                let solid = density < 0;
-                if abs < best_any_abs || (abs == best_any_abs && solid && !best_any_solid) {
-                    best_any_abs = abs;
-                    best_any_solid = solid;
-                    best_any_m = material;
-                }
-            }
-        }
-    }
-    best_any_m
+    best_biome
 }
 
 fn sample_trilinear_density(
