@@ -31,23 +31,19 @@ pub fn get_fbm() -> GeneratorWrapper<SafeNode> {
     (mountains).build()
 }
 
+//assumed to only be called on full res buffers
 pub fn generate_chunk_into_buffers(
     fbm: &GeneratorWrapper<SafeNode>,
     chunk_start: Vec3,
     density_buffer: &mut [i16],
     material_buffer: &mut [MaterialCode],
-    heightmap_buffer: &mut [f32], //SAMPLES_PER_CHUNK_DIM x SAMPLES_PER_CHUNK_DIM
+    heightmap_buffer: &mut [f32], //(SAMPLES_PER_CHUNK_DIM + 2) * (SAMPLES_PER_CHUNK_DIM + 2)
     dhdx_buffer: &mut [f32],      //(SAMPLES_PER_CHUNK_DIM + 2) * (SAMPLES_PER_CHUNK_DIM + 2)
     dhdz_buffer: &mut [f32],      //(SAMPLES_PER_CHUNK_DIM + 2) * (SAMPLES_PER_CHUNK_DIM + 2)
 ) -> Uniformity {
     let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, fbm);
     generate_terrain_heights(heightmap_buffer, &noise_samples);
     compute_heightmap_gradients(dhdx_buffer, dhdz_buffer, &noise_samples);
-    let padded_heightmap = pad2d(
-        heightmap_buffer,
-        SAMPLES_PER_CHUNK_DIM,
-        SAMPLES_PER_CHUNK_DIM,
-    );
     let mut testing_densities = pad3d(
         density_buffer,
         SAMPLES_PER_CHUNK_DIM,
@@ -59,9 +55,9 @@ pub fn generate_chunk_into_buffers(
         &mut testing_densities,
         material_buffer,
         &chunk_start,
-        &padded_heightmap,
-        &dhdx_buffer,
-        &dhdz_buffer,
+        heightmap_buffer,
+        dhdx_buffer,
+        dhdz_buffer,
     );
     let test_densities_unpadded = unpad3d(
         &testing_densities,
@@ -134,11 +130,14 @@ pub fn chunk_contains_surface(density_buffer: &[i16]) -> bool {
 }
 
 //Sample the fbm noise at a higher resolution and then bilinearly interpolate to get smooth terrain heights
-pub fn generate_terrain_heights(heightmap_buffer: &mut [f32], noise_samples: &[f32]) {
+pub fn generate_terrain_heights(
+    heightmap_buffer: &mut [f32], // (SAMPLES_PER_CHUNK_DIM + 2) * (SAMPLES_PER_CHUNK_DIM + 2)
+    noise_samples: &[f32],
+) {
     let inv_samples = 1.0 / (SAMPLES_PER_CHUNK_DIM - 1) as f32;
     let mut roller = 0;
-    for z in 0..SAMPLES_PER_CHUNK_DIM {
-        let t_z = z as f32 * inv_samples;
+    for z in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
+        let t_z = (z as f32 - 1.0) * inv_samples;
         let grid_z = 1.0 + t_z * 2.0;
         let grid_z_idx = grid_z as usize;
         let gz0 = grid_z_idx.saturating_sub(1).min(4);
@@ -150,8 +149,8 @@ pub fn generate_terrain_heights(heightmap_buffer: &mut [f32], noise_samples: &[f
         let b1 = gz1 * 5;
         let b2 = gz2 * 5;
         let b3 = gz3 * 5;
-        for x in 0..SAMPLES_PER_CHUNK_DIM {
-            let t_x = x as f32 * inv_samples;
+        for x in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
+            let t_x = (x as f32 - 1.0) * inv_samples;
             let grid_x = 1.0 + t_x * 2.0;
             let grid_x_idx = grid_x as usize;
             let gx0 = grid_x_idx.saturating_sub(1).min(4);

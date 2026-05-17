@@ -437,7 +437,7 @@ fn chunk_loader_thread(
     const RF5_SAMPLES_PER_CHUNK: usize = SAMPLES_PER_CHUNK / RF5.pow(3);
     const PROCESS_BATCH_SIZE: usize = 64;
     let mut internal_queue = Vec::with_capacity(32);
-    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
+    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D_PADDED];
     let mut dhdx_buffer = [0.0; SAMPLES_PER_CHUNK_2D_PADDED];
     let mut dhdz_buffer = [0.0; SAMPLES_PER_CHUNK_2D_PADDED];
     let mut density_buffer = [0; SAMPLES_PER_CHUNK];
