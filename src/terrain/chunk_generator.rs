@@ -387,44 +387,43 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 // Material = scan the corresponding input block;
 // prefer grass/sand if any exist near the surface,
 // otherwise pick the closest-to-surface solid.
+//always called with full res chunk
 pub fn downscale(
     densities_in: &[i16],
     materials_in: &[MaterialCode],
-    in_dim: usize,
     densities_out: &mut [i16],
     materials_out: &mut [MaterialCode],
     out_dim: usize,
 ) {
-    let in_max = in_dim - 1;
+    let in_max = SAMPLES_PER_CHUNK_DIM - 1;
     let out_max = out_dim - 1;
     let stride = in_max / out_max;
     for target_z in 0..out_dim {
         let high_sample_z = (target_z as f32 / out_max as f32) * in_max as f32;
         let full_res_target_z = target_z * stride;
-        let full_res_end_z = (full_res_target_z + stride).min(in_dim - 1);
+        let full_res_end_z = (full_res_target_z + stride).min(SAMPLES_PER_CHUNK_DIM - 1);
         let z_base = target_z * out_dim;
         for target_y in 0..out_dim {
             let high_sample_y = (target_y as f32 / out_max as f32) * in_max as f32;
             let full_res_target_y = target_y * stride;
-            let full_res_end_y = (full_res_target_y + stride).min(in_dim - 1);
+            let full_res_end_y = (full_res_target_y + stride).min(SAMPLES_PER_CHUNK_DIM - 1);
             let zy_base = (z_base + target_y) * out_dim;
             for target_x in 0..out_dim {
                 let full_res_target_x = target_x * stride;
                 let high_sample_x = (target_x as f32 / out_max as f32) * in_max as f32;
                 let new_density = sample_trilinear_density(
                     densities_in,
-                    in_dim,
+                    SAMPLES_PER_CHUNK_DIM,
                     high_sample_x,
                     high_sample_y,
                     high_sample_z,
                 );
                 let out_i = zy_base + target_x;
                 densities_out[out_i] = quantize_f32_to_i16(new_density);
-                let full_res_end_x = (full_res_target_x + stride).min(in_dim - 1);
+                let full_res_end_x = (full_res_target_x + stride).min(SAMPLES_PER_CHUNK_DIM - 1);
                 let new_material = pick_surface_material_block_prefer_biomes(
                     densities_in,
                     materials_in,
-                    in_dim,
                     full_res_target_x,
                     full_res_target_y,
                     full_res_target_z,
@@ -441,7 +440,6 @@ pub fn downscale(
 fn pick_surface_material_block_prefer_biomes(
     densities: &[i16],
     materials: &[MaterialCode],
-    in_dim: usize,
     full_res_start_x: usize,
     full_res_start_y: usize,
     full_res_start_z: usize,
@@ -453,7 +451,7 @@ fn pick_surface_material_block_prefer_biomes(
     let mut best_abs = i16::MAX;
     for full_res_z in full_res_start_z..=full_res_end_z {
         for full_res_y in full_res_start_y..=full_res_end_y {
-            let base = (full_res_z * in_dim + full_res_y) * in_dim;
+            let base = (full_res_z * SAMPLES_PER_CHUNK_DIM + full_res_y) * SAMPLES_PER_CHUNK_DIM;
             for full_res_x in full_res_start_x..=full_res_end_x {
                 let index = base + full_res_x;
                 let density = densities[index];
@@ -477,7 +475,7 @@ fn pick_surface_material_block_prefer_biomes(
     let mut best_any_solid = false;
     for full_res_z in full_res_start_z..=full_res_end_z {
         for full_res_y in full_res_start_y..=full_res_end_y {
-            let base = (full_res_z * in_dim + full_res_y) * in_dim;
+            let base = (full_res_z * SAMPLES_PER_CHUNK_DIM + full_res_y) * SAMPLES_PER_CHUNK_DIM;
             for full_res_x in full_res_start_x..=full_res_end_x {
                 let index = base + full_res_x;
                 let density = densities[index];

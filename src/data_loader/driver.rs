@@ -566,7 +566,6 @@ fn chunk_loader_thread(
                                         downscale(
                                             &density_buffer,
                                             &material_buffer,
-                                            SAMPLES_PER_CHUNK_DIM,
                                             &mut density_buffer_r5,
                                             &mut material_buffer_r5,
                                             RF5_SAMPLES_PER_CHUNK_DIM,
@@ -616,7 +615,6 @@ fn chunk_loader_thread(
                                         downscale(
                                             &density_buffer,
                                             &material_buffer,
-                                            SAMPLES_PER_CHUNK_DIM,
                                             &mut density_buffer_r4,
                                             &mut material_buffer_r4,
                                             RF4_SAMPLES_PER_CHUNK_DIM,
@@ -666,7 +664,6 @@ fn chunk_loader_thread(
                                         downscale(
                                             &density_buffer,
                                             &material_buffer,
-                                            SAMPLES_PER_CHUNK_DIM,
                                             &mut density_buffer_r3,
                                             &mut material_buffer_r3,
                                             RF3_SAMPLES_PER_CHUNK_DIM,
@@ -716,7 +713,6 @@ fn chunk_loader_thread(
                                         downscale(
                                             &density_buffer,
                                             &material_buffer,
-                                            SAMPLES_PER_CHUNK_DIM,
                                             &mut density_buffer_r2,
                                             &mut material_buffer_r2,
                                             RF2_SAMPLES_PER_CHUNK_DIM,
@@ -766,7 +762,6 @@ fn chunk_loader_thread(
                                         downscale(
                                             &density_buffer,
                                             &material_buffer,
-                                            SAMPLES_PER_CHUNK_DIM,
                                             &mut density_buffer_r1,
                                             &mut material_buffer_r1,
                                             RF1_SAMPLES_PER_CHUNK_DIM,
