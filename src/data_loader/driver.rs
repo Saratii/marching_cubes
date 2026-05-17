@@ -1,9 +1,10 @@
-use crate::terrain::chunk_generator::{pad3d, padded_chunk_contains_surface, unpad3d};
+use crate::constants::SAMPLES_PER_CHUNK_PADDED;
+use crate::terrain::chunk_generator::padded_chunk_contains_surface;
 use crate::{
     constants::{
         CHUNK_WORLD_SIZE, CHUNKS_PER_CLUSTER, CHUNKS_PER_CLUSTER_DIM, HALF_CHUNK, NOISE_AMPLITUDE,
         NOISE_FREQUENCY, NOISE_SEED, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_2D_PADDED,
-        SAMPLES_PER_CHUNK_DIM, SAMPLES_PER_CHUNK_DIM_PADDED, SIMULATION_RADIUS_SQUARED,
+        SAMPLES_PER_CHUNK_DIM, SIMULATION_RADIUS_SQUARED,
     },
     conversions::cluster_coord_to_min_chunk_coord,
     data_loader::{
@@ -441,7 +442,7 @@ fn chunk_loader_thread(
     let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D_PADDED];
     let mut dhdx_buffer = [0.0; SAMPLES_PER_CHUNK_2D_PADDED];
     let mut dhdz_buffer = [0.0; SAMPLES_PER_CHUNK_2D_PADDED];
-    let mut density_buffer = [0; SAMPLES_PER_CHUNK];
+    let mut density_buffer = [0; SAMPLES_PER_CHUNK_PADDED];
     let mut material_buffer = [MaterialCode::Air; SAMPLES_PER_CHUNK];
     let mut density_buffer_r1 = [0; RF1_SAMPLES_PER_CHUNK];
     let mut material_buffer_r1 = [MaterialCode::Air; RF1_SAMPLES_PER_CHUNK];
@@ -525,29 +526,15 @@ fn chunk_loader_thread(
                                 {
                                     Uniformity::Air
                                 } else {
-                                    let mut testing_densities = pad3d(
-                                        &density_buffer,
-                                        SAMPLES_PER_CHUNK_DIM,
-                                        SAMPLES_PER_CHUNK_DIM,
-                                        SAMPLES_PER_CHUNK_DIM,
-                                        -100,
-                                    );
                                     let uniformity = generate_chunk_into_buffers(
                                         &fbm,
                                         chunk_start,
-                                        &mut testing_densities,
+                                        &mut density_buffer,
                                         &mut material_buffer,
                                         &mut heightmap_buffer,
                                         &mut dhdx_buffer,
                                         &mut dhdz_buffer,
                                     );
-                                    let test_densities_unpadded = unpad3d(
-                                        &testing_densities,
-                                        SAMPLES_PER_CHUNK_DIM_PADDED,
-                                        SAMPLES_PER_CHUNK_DIM_PADDED,
-                                        SAMPLES_PER_CHUNK_DIM_PADDED,
-                                    );
-                                    density_buffer.copy_from_slice(&test_densities_unpadded);
                                     uniformity
                                 };
                                 //if we find a uniform chunk we send a write command
@@ -577,15 +564,8 @@ fn chunk_loader_thread(
                             Uniformity::NonUniform => {
                                 let has_surface = match request.load_state_transition {
                                     LoadStateTransition::ToLod5 => {
-                                        let testing_densities = pad3d(
-                                            &density_buffer,
-                                            SAMPLES_PER_CHUNK_DIM,
-                                            SAMPLES_PER_CHUNK_DIM,
-                                            SAMPLES_PER_CHUNK_DIM,
-                                            -100,
-                                        );
                                         downscale(
-                                            &testing_densities,
+                                            &density_buffer,
                                             &material_buffer,
                                             &mut density_buffer_r5,
                                             &mut material_buffer_r5,
@@ -634,15 +614,8 @@ fn chunk_loader_thread(
                                         has_surface
                                     }
                                     LoadStateTransition::ToLod4 => {
-                                        let testing_densities = pad3d(
-                                            &density_buffer,
-                                            SAMPLES_PER_CHUNK_DIM,
-                                            SAMPLES_PER_CHUNK_DIM,
-                                            SAMPLES_PER_CHUNK_DIM,
-                                            -100,
-                                        );
                                         downscale(
-                                            &testing_densities,
+                                            &density_buffer,
                                             &material_buffer,
                                             &mut density_buffer_r4,
                                             &mut material_buffer_r4,
@@ -691,15 +664,8 @@ fn chunk_loader_thread(
                                         has_surface
                                     }
                                     LoadStateTransition::ToLod3 => {
-                                        let testing_densities = pad3d(
-                                            &density_buffer,
-                                            SAMPLES_PER_CHUNK_DIM,
-                                            SAMPLES_PER_CHUNK_DIM,
-                                            SAMPLES_PER_CHUNK_DIM,
-                                            -100,
-                                        );
                                         downscale(
-                                            &testing_densities,
+                                            &density_buffer,
                                             &material_buffer,
                                             &mut density_buffer_r3,
                                             &mut material_buffer_r3,
@@ -748,15 +714,8 @@ fn chunk_loader_thread(
                                         has_surface
                                     }
                                     LoadStateTransition::ToLod2 => {
-                                        let testing_densities = pad3d(
-                                            &density_buffer,
-                                            SAMPLES_PER_CHUNK_DIM,
-                                            SAMPLES_PER_CHUNK_DIM,
-                                            SAMPLES_PER_CHUNK_DIM,
-                                            -100,
-                                        );
                                         downscale(
-                                            &testing_densities,
+                                            &density_buffer,
                                             &material_buffer,
                                             &mut density_buffer_r2,
                                             &mut material_buffer_r2,
@@ -805,15 +764,8 @@ fn chunk_loader_thread(
                                         has_surface
                                     }
                                     LoadStateTransition::ToLod1 => {
-                                        let testing_densities = pad3d(
-                                            &density_buffer,
-                                            SAMPLES_PER_CHUNK_DIM,
-                                            SAMPLES_PER_CHUNK_DIM,
-                                            SAMPLES_PER_CHUNK_DIM,
-                                            -100,
-                                        );
                                         downscale(
-                                            &testing_densities,
+                                            &density_buffer,
                                             &material_buffer,
                                             &mut density_buffer_r1,
                                             &mut material_buffer_r1,
@@ -862,18 +814,11 @@ fn chunk_loader_thread(
                                         has_surface
                                     }
                                     LoadStateTransition::ToFull => {
-                                        let testing_densities = pad3d(
-                                            &density_buffer,
-                                            SAMPLES_PER_CHUNK_DIM,
-                                            SAMPLES_PER_CHUNK_DIM,
-                                            SAMPLES_PER_CHUNK_DIM,
-                                            -100,
-                                        );
                                         let has_surface =
-                                            if padded_chunk_contains_surface(&testing_densities) {
+                                            if padded_chunk_contains_surface(&density_buffer) {
                                                 let (vertices, normals, material_ids, indices) =
                                                     mc_mesh_generation(
-                                                        &testing_densities,
+                                                        &density_buffer,
                                                         &material_buffer,
                                                         SAMPLES_PER_CHUNK_DIM,
                                                         HALF_CHUNK,
@@ -912,18 +857,11 @@ fn chunk_loader_thread(
                                         has_surface
                                     }
                                     LoadStateTransition::ToFullWithCollider => {
-                                        let testing_densities = pad3d(
-                                            &density_buffer,
-                                            SAMPLES_PER_CHUNK_DIM,
-                                            SAMPLES_PER_CHUNK_DIM,
-                                            SAMPLES_PER_CHUNK_DIM,
-                                            -100,
-                                        );
                                         let has_surface =
-                                            if padded_chunk_contains_surface(&testing_densities) {
+                                            if padded_chunk_contains_surface(&density_buffer) {
                                                 let (vertices, normals, material_ids, indices) =
                                                     mc_mesh_generation(
-                                                        &testing_densities,
+                                                        &density_buffer,
                                                         &material_buffer,
                                                         SAMPLES_PER_CHUNK_DIM,
                                                         HALF_CHUNK,
@@ -969,18 +907,11 @@ fn chunk_loader_thread(
                                         has_surface
                                     }
                                     LoadStateTransition::NoChangeAddCollider => {
-                                        let testing_densities = pad3d(
-                                            &density_buffer,
-                                            SAMPLES_PER_CHUNK_DIM,
-                                            SAMPLES_PER_CHUNK_DIM,
-                                            SAMPLES_PER_CHUNK_DIM,
-                                            -100,
-                                        );
                                         let has_surface =
-                                            if padded_chunk_contains_surface(&testing_densities) {
+                                            if padded_chunk_contains_surface(&density_buffer) {
                                                 let (vertices, normals, material_ids, indices) =
                                                     mc_mesh_generation(
-                                                        &testing_densities,
+                                                        &density_buffer,
                                                         &material_buffer,
                                                         SAMPLES_PER_CHUNK_DIM,
                                                         HALF_CHUNK,
