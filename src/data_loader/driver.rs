@@ -2,7 +2,7 @@ use crate::{
     constants::{
         CHUNK_WORLD_SIZE, CHUNKS_PER_CLUSTER, CHUNKS_PER_CLUSTER_DIM, HALF_CHUNK, NOISE_AMPLITUDE,
         NOISE_FREQUENCY, NOISE_SEED, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_2D,
-        SAMPLES_PER_CHUNK_DIM, SIMULATION_RADIUS_SQUARED,
+        SAMPLES_PER_CHUNK_2D_PADDED, SAMPLES_PER_CHUNK_DIM, SIMULATION_RADIUS_SQUARED,
     },
     conversions::cluster_coord_to_min_chunk_coord,
     data_loader::{
@@ -438,8 +438,8 @@ fn chunk_loader_thread(
     const PROCESS_BATCH_SIZE: usize = 64;
     let mut internal_queue = Vec::with_capacity(32);
     let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
-    let mut dhdx_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
-    let mut dhdz_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
+    let mut dhdx_buffer = [0.0; SAMPLES_PER_CHUNK_2D_PADDED];
+    let mut dhdz_buffer = [0.0; SAMPLES_PER_CHUNK_2D_PADDED];
     let mut density_buffer = [0; SAMPLES_PER_CHUNK];
     let mut material_buffer = [MaterialCode::Air; SAMPLES_PER_CHUNK];
     let mut density_buffer_r1 = [0; RF1_SAMPLES_PER_CHUNK];
