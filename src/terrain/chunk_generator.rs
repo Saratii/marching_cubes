@@ -39,10 +39,9 @@ pub fn generate_chunk_into_buffers(
     heightmap_buffer: &mut [f32], //SAMPLES_PER_CHUNK_DIM x SAMPLES_PER_CHUNK_DIM
     dhdx_buffer: &mut [f32],      //(SAMPLES_PER_CHUNK_DIM + 2) * (SAMPLES_PER_CHUNK_DIM + 2)
     dhdz_buffer: &mut [f32],      //(SAMPLES_PER_CHUNK_DIM + 2) * (SAMPLES_PER_CHUNK_DIM + 2)
-    samples_per_chunk_dim: usize,
 ) -> Uniformity {
     let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, fbm);
-    generate_terrain_heights(heightmap_buffer, samples_per_chunk_dim, &noise_samples);
+    generate_terrain_heights(heightmap_buffer, &noise_samples);
     compute_heightmap_gradients(dhdx_buffer, dhdz_buffer, &noise_samples);
     let padded_heightmap = pad2d(
         heightmap_buffer,
@@ -135,14 +134,10 @@ pub fn chunk_contains_surface(density_buffer: &[i16]) -> bool {
 }
 
 //Sample the fbm noise at a higher resolution and then bilinearly interpolate to get smooth terrain heights
-pub fn generate_terrain_heights(
-    heightmap_buffer: &mut [f32],
-    samples_per_chunk_dim: usize,
-    noise_samples: &[f32],
-) {
-    let inv_samples = 1.0 / (samples_per_chunk_dim - 1) as f32;
+pub fn generate_terrain_heights(heightmap_buffer: &mut [f32], noise_samples: &[f32]) {
+    let inv_samples = 1.0 / (SAMPLES_PER_CHUNK_DIM - 1) as f32;
     let mut roller = 0;
-    for z in 0..samples_per_chunk_dim {
+    for z in 0..SAMPLES_PER_CHUNK_DIM {
         let t_z = z as f32 * inv_samples;
         let grid_z = 1.0 + t_z * 2.0;
         let grid_z_idx = grid_z as usize;
@@ -155,7 +150,7 @@ pub fn generate_terrain_heights(
         let b1 = gz1 * 5;
         let b2 = gz2 * 5;
         let b3 = gz3 * 5;
-        for x in 0..samples_per_chunk_dim {
+        for x in 0..SAMPLES_PER_CHUNK_DIM {
             let t_x = x as f32 * inv_samples;
             let grid_x = 1.0 + t_x * 2.0;
             let grid_x_idx = grid_x as usize;

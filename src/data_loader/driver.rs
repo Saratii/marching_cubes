@@ -532,7 +532,6 @@ fn chunk_loader_thread(
                                         &mut heightmap_buffer,
                                         &mut dhdx_buffer,
                                         &mut dhdz_buffer,
-                                        SAMPLES_PER_CHUNK_DIM,
                                     );
                                     uniformity
                                 };
