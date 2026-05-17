@@ -1,8 +1,9 @@
+use crate::terrain::chunk_generator::{pad3d, unpad3d};
 use crate::{
     constants::{
         CHUNK_WORLD_SIZE, CHUNKS_PER_CLUSTER, CHUNKS_PER_CLUSTER_DIM, HALF_CHUNK, NOISE_AMPLITUDE,
-        NOISE_FREQUENCY, NOISE_SEED, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_2D,
-        SAMPLES_PER_CHUNK_2D_PADDED, SAMPLES_PER_CHUNK_DIM, SIMULATION_RADIUS_SQUARED,
+        NOISE_FREQUENCY, NOISE_SEED, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_2D_PADDED,
+        SAMPLES_PER_CHUNK_DIM, SAMPLES_PER_CHUNK_DIM_PADDED, SIMULATION_RADIUS_SQUARED,
     },
     conversions::cluster_coord_to_min_chunk_coord,
     data_loader::{
@@ -524,15 +525,29 @@ fn chunk_loader_thread(
                                 {
                                     Uniformity::Air
                                 } else {
+                                    let mut testing_densities = pad3d(
+                                        &density_buffer,
+                                        SAMPLES_PER_CHUNK_DIM,
+                                        SAMPLES_PER_CHUNK_DIM,
+                                        SAMPLES_PER_CHUNK_DIM,
+                                        -100,
+                                    );
                                     let uniformity = generate_chunk_into_buffers(
                                         &fbm,
                                         chunk_start,
-                                        &mut density_buffer,
+                                        &mut testing_densities,
                                         &mut material_buffer,
                                         &mut heightmap_buffer,
                                         &mut dhdx_buffer,
                                         &mut dhdz_buffer,
                                     );
+                                    let test_densities_unpadded = unpad3d(
+                                        &testing_densities,
+                                        SAMPLES_PER_CHUNK_DIM_PADDED,
+                                        SAMPLES_PER_CHUNK_DIM_PADDED,
+                                        SAMPLES_PER_CHUNK_DIM_PADDED,
+                                    );
+                                    density_buffer.copy_from_slice(&test_densities_unpadded);
                                     uniformity
                                 };
                                 //if we find a uniform chunk we send a write command

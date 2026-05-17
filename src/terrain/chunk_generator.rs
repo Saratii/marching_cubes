@@ -35,7 +35,7 @@ pub fn get_fbm() -> GeneratorWrapper<SafeNode> {
 pub fn generate_chunk_into_buffers(
     fbm: &GeneratorWrapper<SafeNode>,
     chunk_start: Vec3,
-    density_buffer: &mut [i16],
+    density_buffer: &mut [i16], //(SAMPLES_PER_CHUNK_DIM + 2) **3
     material_buffer: &mut [MaterialCode],
     heightmap_buffer: &mut [f32], //(SAMPLES_PER_CHUNK_DIM + 2) * (SAMPLES_PER_CHUNK_DIM + 2)
     dhdx_buffer: &mut [f32],      //(SAMPLES_PER_CHUNK_DIM + 2) * (SAMPLES_PER_CHUNK_DIM + 2)
@@ -44,28 +44,14 @@ pub fn generate_chunk_into_buffers(
     let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, fbm);
     generate_terrain_heights(heightmap_buffer, &noise_samples);
     compute_heightmap_gradients(dhdx_buffer, dhdz_buffer, &noise_samples);
-    let mut testing_densities = pad3d(
-        density_buffer,
-        SAMPLES_PER_CHUNK_DIM,
-        SAMPLES_PER_CHUNK_DIM,
-        SAMPLES_PER_CHUNK_DIM,
-        -100,
-    );
     let is_uniform = fill_voxel_densities(
-        &mut testing_densities,
+        density_buffer,
         material_buffer,
         &chunk_start,
         heightmap_buffer,
         dhdx_buffer,
         dhdz_buffer,
     );
-    let test_densities_unpadded = unpad3d(
-        &testing_densities,
-        SAMPLES_PER_CHUNK_DIM_PADDED,
-        SAMPLES_PER_CHUNK_DIM_PADDED,
-        SAMPLES_PER_CHUNK_DIM_PADDED,
-    );
-    density_buffer.copy_from_slice(&test_densities_unpadded);
     let uniformity = if !is_uniform {
         Uniformity::NonUniform
     } else {
