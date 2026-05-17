@@ -15,12 +15,109 @@ fn make_edge_key(x: u16, y: u16, z: u16, dir: u8) -> u64 {
     (x as u64) | ((y as u64) << 16) | ((z as u64) << 32) | ((dir as u64) << 48)
 }
 
+#[inline(always)]
+fn sample_full_res(
+    densities_full_res: &[i16],
+    x: usize,
+    y: usize,
+    z: usize,
+    padded_dim: usize,
+) -> f32 {
+    let stride = padded_dim * padded_dim;
+    densities_full_res[z * stride + y * padded_dim + x] as f32
+}
+
+fn sample_full_res_trilinear(
+    densities_full_res: &[i16],
+    local_pos: Vec3,
+    half_extent: f32,
+    full_dim: usize,
+) -> f32 {
+    let padded_dim = full_dim + 2;
+    let inv_voxel = (full_dim - 1) as f32 / (half_extent * 2.0);
+    let fx = (local_pos.x + half_extent) * inv_voxel + 1.0;
+    let fy = (local_pos.y + half_extent) * inv_voxel + 1.0;
+    let fz = (local_pos.z + half_extent) * inv_voxel + 1.0;
+    let fx = fx.clamp(0.0, (padded_dim - 1) as f32);
+    let fy = fy.clamp(0.0, (padded_dim - 1) as f32);
+    let fz = fz.clamp(0.0, (padded_dim - 1) as f32);
+    let ix = fx as usize;
+    let iy = fy as usize;
+    let iz = fz as usize;
+    let tx = fx - ix as f32;
+    let ty = fy - iy as f32;
+    let tz = fz - iz as f32;
+    let ix1 = (ix + 1).min(padded_dim - 1);
+    let iy1 = (iy + 1).min(padded_dim - 1);
+    let iz1 = (iz + 1).min(padded_dim - 1);
+    let d000 = sample_full_res(densities_full_res, ix, iy, iz, padded_dim);
+    let d100 = sample_full_res(densities_full_res, ix1, iy, iz, padded_dim);
+    let d010 = sample_full_res(densities_full_res, ix, iy1, iz, padded_dim);
+    let d110 = sample_full_res(densities_full_res, ix1, iy1, iz, padded_dim);
+    let d001 = sample_full_res(densities_full_res, ix, iy, iz1, padded_dim);
+    let d101 = sample_full_res(densities_full_res, ix1, iy, iz1, padded_dim);
+    let d011 = sample_full_res(densities_full_res, ix, iy1, iz1, padded_dim);
+    let d111 = sample_full_res(densities_full_res, ix1, iy1, iz1, padded_dim);
+    let c00 = d000 + tx * (d100 - d000);
+    let c10 = d010 + tx * (d110 - d010);
+    let c01 = d001 + tx * (d101 - d001);
+    let c11 = d011 + tx * (d111 - d011);
+    let c0 = c00 + ty * (c10 - c00);
+    let c1 = c01 + ty * (c11 - c01);
+    c0 + tz * (c1 - c0)
+}
+
+#[inline(always)]
+fn compute_full_res_gradient(
+    densities_full_res: &[i16],
+    local_pos: Vec3,
+    half_extent: f32,
+    full_dim: usize,
+) -> Vec3 {
+    let h = (half_extent * 2.0) / (full_dim - 1) as f32 * 0.5;
+    let dx = sample_full_res_trilinear(
+        densities_full_res,
+        local_pos + Vec3::new(h, 0.0, 0.0),
+        half_extent,
+        full_dim,
+    ) - sample_full_res_trilinear(
+        densities_full_res,
+        local_pos - Vec3::new(h, 0.0, 0.0),
+        half_extent,
+        full_dim,
+    );
+    let dy = sample_full_res_trilinear(
+        densities_full_res,
+        local_pos + Vec3::new(0.0, h, 0.0),
+        half_extent,
+        full_dim,
+    ) - sample_full_res_trilinear(
+        densities_full_res,
+        local_pos - Vec3::new(0.0, h, 0.0),
+        half_extent,
+        full_dim,
+    );
+    let dz = sample_full_res_trilinear(
+        densities_full_res,
+        local_pos + Vec3::new(0.0, 0.0, h),
+        half_extent,
+        full_dim,
+    ) - sample_full_res_trilinear(
+        densities_full_res,
+        local_pos - Vec3::new(0.0, 0.0, h),
+        half_extent,
+        full_dim,
+    );
+    Vec3::new(dx, dy, dz)
+}
+
 pub fn mc_mesh_generation(
     densities: &[i16],
     materials: &[MaterialCode],
     samples_per_chunk_dim: usize,
     half_extent: f32,
     densities_padded: bool,
+    densities_full_res: &[i16],
 ) -> (Vec<Vec3>, Vec<Vec3>, Vec<u32>, Vec<u32>) {
     let mut edge_to_vertex: HashMap<EdgeKey, u32> = HashMap::with_hasher(FxBuildHasher::default());
     let cubes_per_chunk_dim = samples_per_chunk_dim - 1;
@@ -41,6 +138,7 @@ pub fn mc_mesh_generation(
         0
     };
     let mat_stride = samples_per_chunk_dim * samples_per_chunk_dim;
+    let full_dim = (densities_full_res.len() as f32).cbrt().round() as usize - 2;
     for z_idx in 0..cubes_per_chunk_dim {
         let cube_z_world_pos = -half_extent + z_idx as f32 * voxel_size;
         let z_base = z_idx * stride;
@@ -79,14 +177,11 @@ pub fn mc_mesh_generation(
                     &mut edge_to_vertex,
                     &cube_corner_densities,
                     edge_table,
+                    densities_full_res,
+                    half_extent,
+                    full_dim,
                 );
             }
-        }
-    }
-    for normal in normals.iter_mut() {
-        let len = normal.length();
-        if len > 0.0001 {
-            *normal /= len;
         }
     }
     (vertices, normals, material_ids, indices)
@@ -118,6 +213,9 @@ fn triangulate_cube_with_cache(
     edge_to_vertex: &mut HashMap<EdgeKey, u32>,
     cube_corner_densities: &[f32; 8],
     edge_table: &[i32; 16],
+    densities_full_res: &[i16],
+    half_extent: f32,
+    full_dim: usize,
 ) {
     let mut i = 0;
     while edge_table[i] != -1 {
@@ -138,6 +236,9 @@ fn triangulate_cube_with_cache(
             mat_voxel_idx,
             edge_to_vertex,
             edge_id,
+            densities_full_res,
+            half_extent,
+            full_dim,
         );
         let edge_index = edge_table[i + 1] as usize;
         let (dx, dy, dz, dir) = EDGE_ID_OFFSETS[edge_index];
@@ -156,6 +257,9 @@ fn triangulate_cube_with_cache(
             mat_voxel_idx,
             edge_to_vertex,
             edge_id,
+            densities_full_res,
+            half_extent,
+            full_dim,
         );
         let edge_index = edge_table[i + 2] as usize;
         let (dx, dy, dz, dir) = EDGE_ID_OFFSETS[edge_index];
@@ -174,20 +278,13 @@ fn triangulate_cube_with_cache(
             mat_voxel_idx,
             edge_to_vertex,
             edge_id,
+            densities_full_res,
+            half_extent,
+            full_dim,
         );
-        let i1 = v1 as usize;
-        let i2 = v2 as usize;
-        let i3 = v3 as usize;
-        let p1 = vertices[i1];
-        let p2 = vertices[i2];
-        let p3 = vertices[i3];
-        let n = (p2 - p1).cross(p3 - p1);
-        normals[i1] += n;
-        normals[i2] += n;
-        normals[i3] += n;
-        let m1 = material_ids[i1];
-        let m2 = material_ids[i2];
-        let m3 = material_ids[i3];
+        let m1 = material_ids[v1 as usize];
+        let m2 = material_ids[v2 as usize];
+        let m3 = material_ids[v3 as usize];
         if m1 == m2 && m2 == m3 {
             indices.push(v1);
             indices.push(v2);
@@ -225,6 +322,9 @@ fn get_or_create_edge_vertex(
     mat_voxel_idx: usize,
     edge_to_vertex: &mut HashMap<EdgeKey, u32>,
     edge_id: u64,
+    densities_full_res: &[i16],
+    half_extent: f32,
+    full_dim: usize,
 ) -> u32 {
     match edge_to_vertex.entry(edge_id) {
         Entry::Occupied(e) => *e.get(),
@@ -251,10 +351,17 @@ fn get_or_create_edge_vertex(
             } else {
                 material2
             };
+            let gradient =
+                compute_full_res_gradient(densities_full_res, position, half_extent, full_dim);
+            let normal = if gradient.length_squared() > 0.0001 {
+                gradient.normalize()
+            } else {
+                Vec3::Y
+            };
             let idx = vertices.len() as u32;
             vertices.push(position);
+            normals.push(normal);
             material_ids.push(material as u32);
-            normals.push(Vec3::ZERO);
             e.insert(idx);
             idx
         }

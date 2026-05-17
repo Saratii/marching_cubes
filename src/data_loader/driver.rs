@@ -580,6 +580,7 @@ fn chunk_loader_thread(
                                                         RF5_SAMPLES_PER_CHUNK_DIM,
                                                         HALF_CHUNK,
                                                         false,
+                                                        &density_buffer,
                                                     );
                                                 let mesh = generate_bevy_mesh(
                                                     vertices,
@@ -630,6 +631,7 @@ fn chunk_loader_thread(
                                                         RF4_SAMPLES_PER_CHUNK_DIM,
                                                         HALF_CHUNK,
                                                         false,
+                                                        &density_buffer,
                                                     );
                                                 let mesh = generate_bevy_mesh(
                                                     vertices,
@@ -680,6 +682,7 @@ fn chunk_loader_thread(
                                                         RF3_SAMPLES_PER_CHUNK_DIM,
                                                         HALF_CHUNK,
                                                         false,
+                                                        &density_buffer,
                                                     );
                                                 let mesh = generate_bevy_mesh(
                                                     vertices,
@@ -730,6 +733,7 @@ fn chunk_loader_thread(
                                                         RF2_SAMPLES_PER_CHUNK_DIM,
                                                         HALF_CHUNK,
                                                         false,
+                                                        &density_buffer,
                                                     );
                                                 let mesh = generate_bevy_mesh(
                                                     vertices,
@@ -780,6 +784,7 @@ fn chunk_loader_thread(
                                                         RF1_SAMPLES_PER_CHUNK_DIM,
                                                         HALF_CHUNK,
                                                         false,
+                                                        &density_buffer,
                                                     );
                                                 let mesh = generate_bevy_mesh(
                                                     vertices,
@@ -823,6 +828,7 @@ fn chunk_loader_thread(
                                                         SAMPLES_PER_CHUNK_DIM,
                                                         HALF_CHUNK,
                                                         true,
+                                                        &density_buffer,
                                                     );
                                                 let mesh = generate_bevy_mesh(
                                                     vertices,
@@ -866,6 +872,7 @@ fn chunk_loader_thread(
                                                         SAMPLES_PER_CHUNK_DIM,
                                                         HALF_CHUNK,
                                                         true,
+                                                        &density_buffer,
                                                     );
                                                 let mesh = generate_bevy_mesh(
                                                     vertices,
@@ -916,6 +923,7 @@ fn chunk_loader_thread(
                                                         SAMPLES_PER_CHUNK_DIM,
                                                         HALF_CHUNK,
                                                         true,
+                                                        &density_buffer,
                                                     );
                                                 let mesh = generate_bevy_mesh(
                                                     vertices,

@@ -90,6 +90,7 @@ pub fn handle_digging_input(
                         SAMPLES_PER_CHUNK_DIM,
                         HALF_CHUNK,
                         true,
+                        &densities,
                     );
                     match uniformity {
                         Uniformity::Air | Uniformity::Dirt => {
