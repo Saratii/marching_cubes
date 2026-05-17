@@ -99,6 +99,32 @@ pub fn calculate_chunk_start(chunk_coord: &(i16, i16, i16)) -> Vec3 {
 }
 
 //it may be better to store a byte signifying if a chunk contains a surface when saving to disk
+//ignore padding
+pub fn padded_chunk_contains_surface(
+    density_buffer: &[i16], // (SAMPLES_PER_CHUNK_DIM+2) **3
+) -> bool {
+    let mut has_positive = false;
+    let mut has_negative = false;
+    for z in 1..=SAMPLES_PER_CHUNK_DIM {
+        for y in 1..=SAMPLES_PER_CHUNK_DIM {
+            let base = (z * SAMPLES_PER_CHUNK_DIM_PADDED + y) * SAMPLES_PER_CHUNK_DIM_PADDED;
+            for x in 1..=SAMPLES_PER_CHUNK_DIM {
+                let density = density_buffer[base + x];
+                if density > 0 {
+                    has_positive = true;
+                } else if density < 0 {
+                    has_negative = true;
+                }
+                if has_positive && has_negative {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+//ignore padding
 pub fn chunk_contains_surface(density_buffer: &[i16]) -> bool {
     let mut has_positive = false;
     let mut has_negative = false;

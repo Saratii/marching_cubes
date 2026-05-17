@@ -1,4 +1,4 @@
-use crate::terrain::chunk_generator::{pad3d, unpad3d};
+use crate::terrain::chunk_generator::{pad3d, padded_chunk_contains_surface, unpad3d};
 use crate::{
     constants::{
         CHUNK_WORLD_SIZE, CHUNKS_PER_CLUSTER, CHUNKS_PER_CLUSTER_DIM, HALF_CHUNK, NOISE_AMPLITUDE,
@@ -857,144 +857,165 @@ fn chunk_loader_thread(
                                         has_surface
                                     }
                                     LoadStateTransition::ToFull => {
-                                        let has_surface = if chunk_contains_surface(&density_buffer)
-                                        {
-                                            let (vertices, normals, material_ids, indices) =
-                                                mc_mesh_generation(
-                                                    &density_buffer,
-                                                    &material_buffer,
-                                                    SAMPLES_PER_CHUNK_DIM,
-                                                    HALF_CHUNK,
+                                        let testing_densities = pad3d(
+                                            &density_buffer,
+                                            SAMPLES_PER_CHUNK_DIM,
+                                            SAMPLES_PER_CHUNK_DIM,
+                                            SAMPLES_PER_CHUNK_DIM,
+                                            -100,
+                                        );
+                                        let has_surface =
+                                            if padded_chunk_contains_surface(&testing_densities) {
+                                                let (vertices, normals, material_ids, indices) =
+                                                    mc_mesh_generation(
+                                                        &density_buffer,
+                                                        &material_buffer,
+                                                        SAMPLES_PER_CHUNK_DIM,
+                                                        HALF_CHUNK,
+                                                    );
+                                                let mesh = generate_bevy_mesh(
+                                                    vertices,
+                                                    normals,
+                                                    material_ids,
+                                                    indices,
                                                 );
-                                            let mesh = generate_bevy_mesh(
-                                                vertices,
-                                                normals,
-                                                material_ids,
-                                                indices,
-                                            );
-                                            let had_entity_before = request
-                                                .prev_has_entity
-                                                .as_ref()
-                                                .map(|a| a[rolling])
-                                                .unwrap_or(false);
-                                            if had_entity_before {
-                                                chunk_spawn_channel
-                                                    .send(ChunkSpawnResult::ToChangeLod((
-                                                        chunk_coord,
-                                                        mesh,
-                                                    )))
-                                                    .unwrap();
+                                                let had_entity_before = request
+                                                    .prev_has_entity
+                                                    .as_ref()
+                                                    .map(|a| a[rolling])
+                                                    .unwrap_or(false);
+                                                if had_entity_before {
+                                                    chunk_spawn_channel
+                                                        .send(ChunkSpawnResult::ToChangeLod((
+                                                            chunk_coord,
+                                                            mesh,
+                                                        )))
+                                                        .unwrap();
+                                                } else {
+                                                    chunk_spawn_channel
+                                                        .send(ChunkSpawnResult::ToSpawn((
+                                                            chunk_coord,
+                                                            mesh,
+                                                        )))
+                                                        .unwrap();
+                                                }
+                                                true
                                             } else {
-                                                chunk_spawn_channel
-                                                    .send(ChunkSpawnResult::ToSpawn((
-                                                        chunk_coord,
-                                                        mesh,
-                                                    )))
-                                                    .unwrap();
-                                            }
-                                            true
-                                        } else {
-                                            false
-                                        };
+                                                false
+                                            };
                                         has_surface
                                     }
                                     LoadStateTransition::ToFullWithCollider => {
-                                        let has_surface = if chunk_contains_surface(&density_buffer)
-                                        {
-                                            let (vertices, normals, material_ids, indices) =
-                                                mc_mesh_generation(
-                                                    &density_buffer,
-                                                    &material_buffer,
-                                                    SAMPLES_PER_CHUNK_DIM,
-                                                    HALF_CHUNK,
+                                        let testing_densities = pad3d(
+                                            &density_buffer,
+                                            SAMPLES_PER_CHUNK_DIM,
+                                            SAMPLES_PER_CHUNK_DIM,
+                                            SAMPLES_PER_CHUNK_DIM,
+                                            -100,
+                                        );
+                                        let has_surface =
+                                            if padded_chunk_contains_surface(&testing_densities) {
+                                                let (vertices, normals, material_ids, indices) =
+                                                    mc_mesh_generation(
+                                                        &density_buffer,
+                                                        &material_buffer,
+                                                        SAMPLES_PER_CHUNK_DIM,
+                                                        HALF_CHUNK,
+                                                    );
+                                                let mesh = generate_bevy_mesh(
+                                                    vertices,
+                                                    normals,
+                                                    material_ids,
+                                                    indices,
                                                 );
-                                            let mesh = generate_bevy_mesh(
-                                                vertices,
-                                                normals,
-                                                material_ids,
-                                                indices,
-                                            );
-                                            let collider = Collider::from_bevy_mesh(
-                                                &mesh,
-                                                &ComputedColliderShape::TriMesh(
-                                                    TriMeshFlags::default(),
-                                                ),
-                                            )
-                                            .unwrap();
-                                            let had_entity_before = request
-                                                .prev_has_entity
-                                                .as_ref()
-                                                .map(|a| a[rolling])
-                                                .unwrap_or(false);
-                                            if had_entity_before {
-                                                chunk_spawn_channel
+                                                let collider = Collider::from_bevy_mesh(
+                                                    &mesh,
+                                                    &ComputedColliderShape::TriMesh(
+                                                        TriMeshFlags::default(),
+                                                    ),
+                                                )
+                                                .unwrap();
+                                                let had_entity_before = request
+                                                    .prev_has_entity
+                                                    .as_ref()
+                                                    .map(|a| a[rolling])
+                                                    .unwrap_or(false);
+                                                if had_entity_before {
+                                                    chunk_spawn_channel
                                                     .send(ChunkSpawnResult::ToChangeLodAddCollider(
                                                         (chunk_coord, mesh, collider),
                                                     ))
                                                     .unwrap();
+                                                } else {
+                                                    chunk_spawn_channel
+                                                        .send(
+                                                            ChunkSpawnResult::ToSpawnWithCollider(
+                                                                (chunk_coord, collider, mesh),
+                                                            ),
+                                                        )
+                                                        .unwrap();
+                                                }
+                                                true
                                             } else {
-                                                chunk_spawn_channel
-                                                    .send(ChunkSpawnResult::ToSpawnWithCollider((
-                                                        chunk_coord,
-                                                        collider,
-                                                        mesh,
-                                                    )))
-                                                    .unwrap();
-                                            }
-                                            true
-                                        } else {
-                                            false
-                                        };
+                                                false
+                                            };
                                         has_surface
                                     }
                                     LoadStateTransition::NoChangeAddCollider => {
-                                        let has_surface = if chunk_contains_surface(&density_buffer)
-                                        {
-                                            let (vertices, normals, material_ids, indices) =
-                                                mc_mesh_generation(
-                                                    &density_buffer,
-                                                    &material_buffer,
-                                                    SAMPLES_PER_CHUNK_DIM,
-                                                    HALF_CHUNK,
+                                        let testing_densities = pad3d(
+                                            &density_buffer,
+                                            SAMPLES_PER_CHUNK_DIM,
+                                            SAMPLES_PER_CHUNK_DIM,
+                                            SAMPLES_PER_CHUNK_DIM,
+                                            -100,
+                                        );
+                                        let has_surface =
+                                            if padded_chunk_contains_surface(&testing_densities) {
+                                                let (vertices, normals, material_ids, indices) =
+                                                    mc_mesh_generation(
+                                                        &density_buffer,
+                                                        &material_buffer,
+                                                        SAMPLES_PER_CHUNK_DIM,
+                                                        HALF_CHUNK,
+                                                    );
+                                                let mesh = generate_bevy_mesh(
+                                                    vertices,
+                                                    normals,
+                                                    material_ids,
+                                                    indices,
                                                 );
-                                            let mesh = generate_bevy_mesh(
-                                                vertices,
-                                                normals,
-                                                material_ids,
-                                                indices,
-                                            );
-                                            let collider = Collider::from_bevy_mesh(
-                                                &mesh,
-                                                &ComputedColliderShape::TriMesh(
-                                                    TriMeshFlags::default(),
-                                                ),
-                                            )
-                                            .unwrap();
-                                            let had_entity_before = request
-                                                .prev_has_entity
-                                                .as_ref()
-                                                .map(|a| a[rolling])
-                                                .unwrap_or(false);
-                                            if had_entity_before {
-                                                chunk_spawn_channel
-                                                    .send(ChunkSpawnResult::ToGiveCollider((
-                                                        chunk_coord,
-                                                        collider,
-                                                    )))
-                                                    .unwrap();
+                                                let collider = Collider::from_bevy_mesh(
+                                                    &mesh,
+                                                    &ComputedColliderShape::TriMesh(
+                                                        TriMeshFlags::default(),
+                                                    ),
+                                                )
+                                                .unwrap();
+                                                let had_entity_before = request
+                                                    .prev_has_entity
+                                                    .as_ref()
+                                                    .map(|a| a[rolling])
+                                                    .unwrap_or(false);
+                                                if had_entity_before {
+                                                    chunk_spawn_channel
+                                                        .send(ChunkSpawnResult::ToGiveCollider((
+                                                            chunk_coord,
+                                                            collider,
+                                                        )))
+                                                        .unwrap();
+                                                } else {
+                                                    chunk_spawn_channel
+                                                        .send(
+                                                            ChunkSpawnResult::ToSpawnWithCollider(
+                                                                (chunk_coord, collider, mesh),
+                                                            ),
+                                                        )
+                                                        .unwrap();
+                                                }
+                                                true
                                             } else {
-                                                chunk_spawn_channel
-                                                    .send(ChunkSpawnResult::ToSpawnWithCollider((
-                                                        chunk_coord,
-                                                        collider,
-                                                        mesh,
-                                                    )))
-                                                    .unwrap();
-                                            }
-                                            true
-                                        } else {
-                                            false
-                                        };
+                                                false
+                                            };
                                         has_surface
                                     }
                                 };
