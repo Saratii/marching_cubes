@@ -39,7 +39,6 @@ fn benchmark_generate_densities_cpu(c: &mut Criterion) {
                 black_box(&mut heightmap_buffer),
                 black_box(&mut dhdx_buffer),
                 black_box(&mut dhdz_buffer),
-                SAMPLES_PER_CHUNK_DIM,
             ));
         })
     });
@@ -63,7 +62,6 @@ fn benchmark_generate_uniform_densities_cpu(c: &mut Criterion) {
                 black_box(&mut heightmap_buffer),
                 black_box(&mut dhdx_buffer),
                 black_box(&mut dhdz_buffer),
-                SAMPLES_PER_CHUNK_DIM,
             ))
         })
     });
@@ -98,7 +96,6 @@ fn benchmark_marching_cubes(c: &mut Criterion) {
         &mut heightmap_buffer,
         &mut dhdx_buffer,
         &mut dhdz_buffer,
-        SAMPLES_PER_CHUNK_DIM,
     );
     c.bench_function("marching_cubes", |b| {
         b.iter(|| {
@@ -107,6 +104,8 @@ fn benchmark_marching_cubes(c: &mut Criterion) {
                 black_box(materials_buffer.as_ref()),
                 black_box(SAMPLES_PER_CHUNK_DIM),
                 black_box(HALF_CHUNK),
+                false,
+                black_box(densities_buffer.as_ref()),
             ));
         })
     });
@@ -126,7 +125,6 @@ fn benchmark_heightmap_single_chunk_cpu(c: &mut Criterion) {
             );
             black_box(generate_terrain_heights(
                 black_box(&mut heightmap_buffer),
-                SAMPLES_PER_CHUNK_DIM,
                 black_box(&height_samples),
             ));
         })
@@ -162,7 +160,6 @@ fn benchmark_cluster_heightmap_cpu(c: &mut Criterion) {
                     );
                     let heights = generate_terrain_heights(
                         black_box(&mut heightmap_buffer),
-                        SAMPLES_PER_CHUNK_DIM,
                         black_box(&height_samples),
                     );
                     results.insert((chunk_coord.0, chunk_coord.1), heights);
@@ -220,7 +217,6 @@ fn find_chunk_with_surface() -> (i16, i16, i16) {
             &mut heightmap_buffer,
             &mut dhdx_buffer,
             &mut dhdz_buffer,
-            SAMPLES_PER_CHUNK_DIM,
         );
         if chunk_contains_surface(densities_buffer.as_ref()) {
             return chunk_coord;
@@ -241,7 +237,6 @@ fn benchmark_compute_heightmap_gradients(c: &mut Criterion) {
             black_box(compute_heightmap_gradients(
                 black_box(&mut dhdx_buffer),
                 black_box(&mut dhdz_buffer),
-                black_box(SAMPLES_PER_CHUNK_DIM),
                 black_box(&height_samples),
             ));
         })
