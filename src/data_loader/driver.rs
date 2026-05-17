@@ -599,6 +599,7 @@ fn chunk_loader_thread(
                                                         &material_buffer_r5,
                                                         RF5_SAMPLES_PER_CHUNK_DIM,
                                                         HALF_CHUNK,
+                                                        false,
                                                     );
                                                 let mesh = generate_bevy_mesh(
                                                     vertices,
@@ -655,6 +656,7 @@ fn chunk_loader_thread(
                                                         &material_buffer_r4,
                                                         RF4_SAMPLES_PER_CHUNK_DIM,
                                                         HALF_CHUNK,
+                                                        false,
                                                     );
                                                 let mesh = generate_bevy_mesh(
                                                     vertices,
@@ -711,6 +713,7 @@ fn chunk_loader_thread(
                                                         &material_buffer_r3,
                                                         RF3_SAMPLES_PER_CHUNK_DIM,
                                                         HALF_CHUNK,
+                                                        false,
                                                     );
                                                 let mesh = generate_bevy_mesh(
                                                     vertices,
@@ -767,6 +770,7 @@ fn chunk_loader_thread(
                                                         &material_buffer_r2,
                                                         RF2_SAMPLES_PER_CHUNK_DIM,
                                                         HALF_CHUNK,
+                                                        false,
                                                     );
                                                 let mesh = generate_bevy_mesh(
                                                     vertices,
@@ -823,6 +827,7 @@ fn chunk_loader_thread(
                                                         &material_buffer_r1,
                                                         RF1_SAMPLES_PER_CHUNK_DIM,
                                                         HALF_CHUNK,
+                                                        false,
                                                     );
                                                 let mesh = generate_bevy_mesh(
                                                     vertices,
@@ -868,10 +873,11 @@ fn chunk_loader_thread(
                                             if padded_chunk_contains_surface(&testing_densities) {
                                                 let (vertices, normals, material_ids, indices) =
                                                     mc_mesh_generation(
-                                                        &density_buffer,
+                                                        &testing_densities,
                                                         &material_buffer,
                                                         SAMPLES_PER_CHUNK_DIM,
                                                         HALF_CHUNK,
+                                                        true,
                                                     );
                                                 let mesh = generate_bevy_mesh(
                                                     vertices,
@@ -917,10 +923,11 @@ fn chunk_loader_thread(
                                             if padded_chunk_contains_surface(&testing_densities) {
                                                 let (vertices, normals, material_ids, indices) =
                                                     mc_mesh_generation(
-                                                        &density_buffer,
+                                                        &testing_densities,
                                                         &material_buffer,
                                                         SAMPLES_PER_CHUNK_DIM,
                                                         HALF_CHUNK,
+                                                        true,
                                                     );
                                                 let mesh = generate_bevy_mesh(
                                                     vertices,
@@ -973,10 +980,11 @@ fn chunk_loader_thread(
                                             if padded_chunk_contains_surface(&testing_densities) {
                                                 let (vertices, normals, material_ids, indices) =
                                                     mc_mesh_generation(
-                                                        &density_buffer,
+                                                        &testing_densities,
                                                         &material_buffer,
                                                         SAMPLES_PER_CHUNK_DIM,
                                                         HALF_CHUNK,
+                                                        true,
                                                     );
                                                 let mesh = generate_bevy_mesh(
                                                     vertices,
