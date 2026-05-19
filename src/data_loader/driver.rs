@@ -484,7 +484,16 @@ fn chunk_loader_thread(
         }
         let bound = heap.len().min(PROCESS_BATCH_SIZE);
         for _ in 0..bound {
-            internal_queue.push(heap.pop().unwrap());
+            let req = heap.pop().unwrap();
+            #[cfg(feature = "debug")]
+            assert!(
+                !internal_queue
+                    .iter()
+                    .any(|r: &ClusterRequest| r.position == req.position),
+                "Duplicate popped from heap: {:?}",
+                req.position
+            );
+            internal_queue.push(req);
         }
         drop(heap);
         for request in internal_queue.drain(..) {
@@ -1079,10 +1088,26 @@ fn svo_manager_thread(
         &mut chunks_being_loaded,
         &mut request_buffer,
     );
+    #[cfg(feature = "debug")]
+    for req in &request_buffer {
+        assert!(
+            chunks_being_loaded.contains(&req.position),
+            "fill_missing produced {:?} but it's not in chunks_being_loaded — it was already in-flight or in SVO",
+            req.position,
+        );
+    }
     let (lock, cv) = &*priority_queue;
     {
         let mut heap = lock.lock().unwrap();
         for req in request_buffer.drain(..) {
+            #[cfg(feature = "debug")]
+            assert!(
+                !heap
+                    .iter()
+                    .any(|r: &ClusterRequest| r.position == req.position),
+                "Duplicate request queued for {:?}",
+                req.position
+            );
             heap.push(req);
         }
     }
@@ -1094,10 +1119,48 @@ fn svo_manager_thread(
             terrain_map_lock.insert(chunk_coord, terrain_chunk);
         }
         drop(terrain_map_lock);
+        #[cfg(feature = "debug")]
+        let mut seen_this_drain = FxHashSet::default();
         while let Ok(result) = results_channel.try_recv() {
-            //store the last state transition used for load
+            #[cfg(feature = "debug")]
+            assert!(
+                chunks_being_loaded.contains(&result.cluster_coord),
+                "Result arrived for cluster {:?} NOT in chunks_being_loaded. load_state: {:?}",
+                result.cluster_coord,
+                result.load_state,
+            );
+            #[cfg(feature = "debug")]
+            assert!(
+                seen_this_drain.insert(result.cluster_coord),
+                "Two results for {:?} in same drain. load_state: {:?}",
+                result.cluster_coord,
+                result.load_state,
+            );
+            #[cfg(feature = "debug")]
+            assert!(
+                chunks_being_loaded.contains(&result.cluster_coord),
+                "Result arrived for cluster {:?} that was NOT in chunks_being_loaded. load_state: {:?}",
+                result.cluster_coord,
+                result.load_state,
+            );
+            #[cfg(feature = "debug")]
+            assert!(
+                !svo.root.contains(&result.cluster_coord),
+                "About to overwrite {:?}, existing: {:?}, incoming: {:?}, in_flight: {}",
+                result.cluster_coord,
+                svo.root.get(result.cluster_coord).unwrap().1,
+                result.load_state,
+                chunks_being_loaded.contains(&result.cluster_coord),
+            );
             svo.root
                 .insert(result.cluster_coord, result.has_entity, result.load_state);
+            #[cfg(feature = "debug")]
+            assert!(
+                chunks_being_loaded.remove(&result.cluster_coord),
+                "Failed to remove {:?}",
+                result.cluster_coord
+            );
+            #[cfg(not(feature = "debug"))]
             chunks_being_loaded.remove(&result.cluster_coord);
         }
         let player_translation_lock = player_translation.lock().unwrap();
@@ -1106,6 +1169,14 @@ fn svo_manager_thread(
         let mut chunks_to_deallocate = Vec::new();
         svo.root
             .query_chunks_outside_sphere(&player_translation, &mut chunks_to_deallocate);
+        #[cfg(feature = "debug")]
+        for (cluster_coord, _) in &chunks_to_deallocate {
+            assert!(
+                !chunks_being_loaded.contains(cluster_coord),
+                "Trying to deallocate cluster {:?} that is still in-flight",
+                cluster_coord
+            );
+        }
         for (chunk_coord, _) in &chunks_to_deallocate {
             svo.root.delete(*chunk_coord);
         }
@@ -1137,10 +1208,31 @@ fn svo_manager_thread(
             &mut chunks_being_loaded,
             &mut request_buffer,
         );
+        #[cfg(feature = "debug")]
+        for req in &request_buffer {
+            assert!(
+                chunks_being_loaded.contains(&req.position),
+                "fill_missing produced {:?} but it's not in chunks_being_loaded — it was already in-flight or in SVO",
+                req.position,
+            );
+        }
         let (lock, cv) = &*priority_queue;
         {
             let mut heap = lock.lock().unwrap();
             for req in request_buffer.drain(..) {
+                #[cfg(feature = "debug")]
+                assert!(
+                    !heap
+                        .iter()
+                        .any(|r: &ClusterRequest| r.position == req.position),
+                    "Duplicate position in queue: {:?}, existing transition: {:?}, new transition: {:?}",
+                    req.position,
+                    heap.iter()
+                        .find(|r| r.position == req.position)
+                        .unwrap()
+                        .load_state_transition,
+                    req.load_state_transition,
+                );
                 heap.push(req);
             }
         }
