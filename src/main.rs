@@ -22,12 +22,14 @@ use marching_cubes::data_loader::driver::{
     validate_player_spawn,
 };
 use marching_cubes::data_loader::file_loader::setup_chunk_loading;
-use marching_cubes::lighting::lighting_main::{apply_shadow_setting, setup_camera, setup_lighting};
+use marching_cubes::lighting::lighting_main::{
+    apply_settings_changes, setup_camera, setup_lighting,
+};
 use marching_cubes::player::digging::handle_digging_input;
 use marching_cubes::player::player::{
-    CameraController, KeyBindings, camera_look, camera_zoom, grab_on_click, handle_focus_change,
-    initial_grab_cursor, player_movement, spawn_player, sync_player_mutex, toggle_camera,
-    toggle_fly_mode,
+    CameraController, KeyBindings, camera_look, camera_zoom, free_cam_movement, grab_on_click,
+    handle_focus_change, initial_grab_cursor, player_movement, spawn_free_cam_root, spawn_player,
+    sync_player_mutex, toggle_first_person, toggle_fly_mode, toggle_free_cam,
 };
 use marching_cubes::settings::settings_driver::{load_settings, save_monitor_on_move};
 use marching_cubes::terrain::chunk_generator::get_fbm;
@@ -122,6 +124,7 @@ fn main() {
                 initial_grab_cursor,
                 setup_lighting,
                 setup_camera,
+                spawn_free_cam_root,
             ),
         )
         .add_systems(First, record_frame_start)
@@ -129,7 +132,7 @@ fn main() {
             Update,
             (
                 handle_digging_input,
-                toggle_camera,
+                toggle_first_person,
                 camera_zoom,
                 camera_look,
                 player_movement,
@@ -153,9 +156,10 @@ fn main() {
                 grab_on_click,
                 count_vertices_on_key,
                 toggle_fly_mode,
-                apply_shadow_setting,
+                apply_settings_changes,
             ),
         )
+        .add_systems(Update, (toggle_free_cam, free_cam_movement))
         .run();
 }
 

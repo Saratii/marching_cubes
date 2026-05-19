@@ -43,6 +43,9 @@ pub struct FlyMode {
     pub active: bool,
 }
 
+#[derive(Resource)]
+pub struct FreeCamRoot(pub Entity);
+
 #[derive(Component)]
 pub struct PlayerTag;
 
@@ -76,6 +79,21 @@ impl Default for CameraController {
 }
 
 #[derive(Resource)]
+pub struct FreeCamMode {
+    pub is_active: bool,
+    pub world_position: Vec3,
+}
+
+impl Default for FreeCamMode {
+    fn default() -> Self {
+        Self {
+            is_active: false,
+            world_position: Vec3::ZERO,
+        }
+    }
+}
+
+#[derive(Resource)]
 pub struct KeyBindings {
     pub move_forward: KeyCode,
     pub move_backward: KeyCode,
@@ -86,6 +104,8 @@ pub struct KeyBindings {
     pub fly_down: KeyCode,
     pub toggle_fly: KeyCode,
     pub fly_fast: KeyCode,
+    pub toggle_first_person: KeyCode,
+    pub toggle_free_cam: KeyCode,
 }
 
 impl Default for KeyBindings {
@@ -100,6 +120,8 @@ impl Default for KeyBindings {
             fly_down: KeyCode::KeyQ,
             toggle_fly: KeyCode::KeyF,
             fly_fast: KeyCode::ShiftLeft,
+            toggle_first_person: KeyCode::KeyC,
+            toggle_free_cam: KeyCode::KeyR,
         }
     }
 }
@@ -111,6 +133,8 @@ pub fn spawn_player(
     mut player_data_file: ResMut<PlayerDataFile>,
     fbm: Res<NoiseFunction>,
     main_camera: Query<Entity, With<MainCameraTag>>,
+    camera_controller: Res<CameraController>,
+    mut camera_transform: Query<&mut Transform, With<MainCameraTag>>,
 ) {
     let player_spawn = match read_player_position(&mut player_data_file.0) {
         Some(pos) => pos,
@@ -163,13 +187,16 @@ pub fn spawn_player(
     commands
         .entity(player)
         .add_child(main_camera.iter().next().unwrap());
+    if let Ok(mut transform) = camera_transform.single_mut() {
+        update_first_person_camera(&mut transform, &camera_controller);
+    }
     //add a huge baseplate to hide the atmosphere edge. Idk if this is intended but it kinda works
     let baseplate = commands
         .spawn((
-            Mesh3d(meshes.add(Cuboid::new(1000000.0, 0.01, 1000000.0))),
+            Mesh3d(meshes.add(Cuboid::new(1000000000.0, 0.01, 10000000000.0))),
             Transform::from_translation(Vec3::new(0.0, -1000.0, 0.0)),
             MeshMaterial3d(materials.add(StandardMaterial {
-                base_color: Color::BLACK,
+                base_color: Color::srgb(0.0, 0.0, 1.0),
                 ..default()
             })),
             Visibility::Visible, //to prevent inheriting the player's hidden visibility
@@ -178,13 +205,18 @@ pub fn spawn_player(
     commands.entity(player).add_child(baseplate);
 }
 
-pub fn toggle_camera(
+pub fn toggle_first_person(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut camera_transform: Query<&mut Transform, With<MainCameraTag>>,
     mut camera_controller: ResMut<CameraController>,
     mut player_visibility: Query<&mut Visibility, With<PlayerTag>>,
+    key_bindings: Res<KeyBindings>,
+    free_cam: Res<FreeCamMode>,
 ) {
-    if keyboard.just_pressed(KeyCode::KeyC) {
+    if free_cam.is_active {
+        return;
+    }
+    if keyboard.just_pressed(key_bindings.toggle_first_person) {
         let mut camera_transform = camera_transform.iter_mut().next().unwrap();
         if !camera_controller.is_first_person {
             camera_controller.is_first_person = true;
@@ -229,6 +261,7 @@ pub fn camera_look(
     mut camera_transform_query: Query<&mut Transform, With<MainCameraTag>>,
     mut camera_controller: ResMut<CameraController>,
     menu_root_query: Query<&MenuRoot>,
+    free_cam: ResMut<FreeCamMode>,
 ) {
     if !menu_root_query.is_empty() {
         return;
@@ -247,7 +280,9 @@ pub fn camera_look(
         }
         if angles_changed {
             let mut camera_transform = camera_transform_query.iter_mut().next().unwrap();
-            if camera_controller.is_first_person {
+            if free_cam.is_active {
+                update_first_person_camera(&mut camera_transform, &camera_controller);
+            } else if camera_controller.is_first_person {
                 update_first_person_camera(&mut camera_transform, &camera_controller);
             } else {
                 update_camera_position(&mut camera_transform, &camera_controller);
@@ -306,6 +341,7 @@ pub fn player_movement(
     key_bindings: Res<KeyBindings>,
     camera_controller: Res<CameraController>,
     menu_root_query: Query<&MenuRoot>,
+    free_cam: Res<FreeCamMode>,
 ) {
     let Ok((mut controller, mut vertical_velocity, fly_mode, controller_output)) =
         player_query.single_mut()
@@ -318,7 +354,7 @@ pub fn player_movement(
     let forward = yaw_rotation * Vec3::NEG_Z;
     let right = yaw_rotation * Vec3::X;
     let mut movement_vec = Vec3::ZERO;
-    if !menu_open {
+    if !menu_open && !free_cam.is_active {
         let mut horizontal = Vec3::ZERO;
         if keyboard.pressed(key_bindings.move_forward) {
             horizontal += forward;
@@ -355,15 +391,17 @@ pub fn player_movement(
             if keyboard.just_pressed(key_bindings.jump) && is_grounded {
                 vertical_velocity.y = JUMP_IMPULSE;
             }
-            if !is_grounded {
-                vertical_velocity.y += BASE_GRAVITY
-                    * time.delta_secs()
-                    * INITIAL_CHUNKS_LOADED.load(Ordering::Relaxed) as u8 as f32;
-            } else if vertical_velocity.y < 0.0 {
-                vertical_velocity.y = 0.0;
-            }
-            movement_vec.y = vertical_velocity.y;
         }
+    }
+    if !fly_mode.active {
+        if !is_grounded {
+            vertical_velocity.y += BASE_GRAVITY
+                * time.delta_secs()
+                * INITIAL_CHUNKS_LOADED.load(Ordering::Relaxed) as u8 as f32;
+        } else if vertical_velocity.y < 0.0 {
+            vertical_velocity.y = 0.0;
+        }
+        movement_vec.y = vertical_velocity.y;
     }
     controller.translation = Some(movement_vec * time.delta_secs());
 }
@@ -421,12 +459,128 @@ pub fn toggle_fly_mode(
     keyboard: Res<ButtonInput<KeyCode>>,
     key_bindings: Res<KeyBindings>,
     mut fly_mode_query: Query<(&mut FlyMode, &mut VerticalVelocity), With<PlayerTag>>,
+    free_cam: Res<FreeCamMode>,
 ) {
     if keyboard.just_pressed(key_bindings.toggle_fly) {
+        if free_cam.is_active {
+            return;
+        }
         let Ok((mut fly_mode, mut vertical_velocity)) = fly_mode_query.single_mut() else {
             return;
         };
         fly_mode.active = !fly_mode.active;
         vertical_velocity.y = 0.0;
     }
+}
+
+pub fn toggle_free_cam(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut free_cam: ResMut<FreeCamMode>,
+    mut camera_controller: ResMut<CameraController>,
+    camera_global_transform: Query<&GlobalTransform, With<MainCameraTag>>,
+    mut commands: Commands,
+    camera_entity_query: Query<Entity, With<MainCameraTag>>,
+    player_entity_query: Query<Entity, With<PlayerTag>>,
+    free_cam_root: Res<FreeCamRoot>,
+    key_bindings: Res<KeyBindings>,
+    mut player_visibility_query: Query<&mut Visibility, With<PlayerTag>>,
+) {
+    if !keyboard.just_pressed(key_bindings.toggle_free_cam) {
+        return;
+    }
+    let Ok(camera_entity) = camera_entity_query.single() else {
+        return;
+    };
+    let Ok(player_entity) = player_entity_query.single() else {
+        return;
+    };
+    if !free_cam.is_active {
+        if let Ok(global) = camera_global_transform.get(camera_entity) {
+            free_cam.world_position = global.translation();
+        }
+        commands.entity(free_cam_root.0).add_child(camera_entity);
+        commands.entity(camera_entity).insert(
+            Transform::from_translation(free_cam.world_position).with_rotation(Quat::from_euler(
+                EulerRot::YXZ,
+                camera_controller.yaw,
+                camera_controller.pitch,
+                0.0,
+            )),
+        );
+        if let Ok(mut vis) = player_visibility_query.single_mut() {
+            *vis = Visibility::Visible;
+        }
+        free_cam.is_active = true;
+    } else {
+        commands.entity(player_entity).add_child(camera_entity);
+        commands.entity(camera_entity).insert(
+            Transform::from_translation(CAMERA_FIRST_PERSON_OFFSET).with_rotation(
+                Quat::from_rotation_y(camera_controller.yaw)
+                    * Quat::from_rotation_x(camera_controller.pitch),
+            ),
+        );
+        camera_controller.is_first_person = true;
+        free_cam.is_active = false;
+        if let Ok(mut vis) = player_visibility_query.single_mut() {
+            *vis = Visibility::Hidden;
+        }
+    }
+}
+
+pub fn free_cam_movement(
+    time: Res<Time>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    key_bindings: Res<KeyBindings>,
+    camera_controller: Res<CameraController>,
+    free_cam: Res<FreeCamMode>,
+    mut camera_transform: Query<&mut Transform, With<MainCameraTag>>,
+    menu_root_query: Query<&MenuRoot>,
+) {
+    if !free_cam.is_active || !menu_root_query.is_empty() {
+        return;
+    }
+    let Ok(mut cam_transform) = camera_transform.single_mut() else {
+        return;
+    };
+    let yaw_rotation = Quat::from_rotation_y(camera_controller.yaw);
+    let forward = yaw_rotation * Vec3::NEG_Z;
+    let right = yaw_rotation * Vec3::X;
+
+    let speed_multiplier = if keyboard.pressed(key_bindings.fly_fast) {
+        FLY_FAST_MULTIPLIER
+    } else {
+        1.0
+    };
+    let speed = FLY_SPEED * speed_multiplier;
+    let mut delta = Vec3::ZERO;
+    if keyboard.pressed(key_bindings.move_forward) {
+        delta += forward;
+    }
+    if keyboard.pressed(key_bindings.move_backward) {
+        delta -= forward;
+    }
+    if keyboard.pressed(key_bindings.move_left) {
+        delta -= right;
+    }
+    if keyboard.pressed(key_bindings.move_right) {
+        delta += right;
+    }
+    if keyboard.pressed(key_bindings.fly_up) {
+        delta += Vec3::Y;
+    }
+    if keyboard.pressed(key_bindings.fly_down) {
+        delta -= Vec3::Y;
+    }
+    if delta.length_squared() > 0.0 {
+        delta = delta.normalize();
+    }
+    cam_transform.translation += delta * speed * time.delta_secs();
+}
+
+pub fn spawn_free_cam_root(mut commands: Commands) {
+    let root = commands
+        .spawn((Transform::default(), Visibility::default()))
+        .id();
+    commands.insert_resource(FreeCamRoot(root));
+    commands.insert_resource(FreeCamMode::default());
 }

@@ -119,6 +119,8 @@ pub enum SettingsType {
     FpsChange,
     ShadowsToggle,
     RenderRadiusChange,
+    FogStartMultiplier,
+    FogEndMultiplier,
 }
 
 impl SettingsType {
@@ -139,6 +141,12 @@ impl SettingsType {
                 "Render Radius: {}",
                 s.render_radius_squared.to_display_string()
             ),
+            SettingsType::FogStartMultiplier => {
+                format!("Fog Start Multiplier: {:.2}", s.fog_start_multiplier)
+            }
+            SettingsType::FogEndMultiplier => {
+                format!("Fog End Multiplier: {:.2}", s.fog_end_multiplier)
+            }
         }
     }
 
@@ -165,6 +173,16 @@ impl SettingsType {
                     settings.render_radius_squared.prev_step()
                 };
             }
+            SettingsType::FogStartMultiplier => {
+                let new = settings.fog_start_multiplier + if dir_next { 0.05 } else { -0.05 };
+                let new = new.clamp(0.0, settings.fog_end_multiplier - 0.05);
+                settings.fog_start_multiplier = new;
+            }
+            SettingsType::FogEndMultiplier => {
+                let new = settings.fog_end_multiplier + if dir_next { 0.05 } else { -0.05 };
+                let new = new.clamp(settings.fog_start_multiplier + 0.05, 1.0);
+                settings.fog_end_multiplier = new;
+            }
         }
     }
 }
@@ -180,6 +198,8 @@ pub struct ConfigurableSettings {
     pub debug_lod_5: bool,
     pub shadows: bool,
     pub render_radius_squared: RenderRadiusSquared,
+    pub fog_start_multiplier: f32,
+    pub fog_end_multiplier: f32,
 }
 
 pub fn load_configurable_settings() -> ConfigurableSettings {
@@ -201,6 +221,8 @@ impl Default for ConfigurableSettings {
             debug_lod_5: false,
             shadows: true,
             render_radius_squared: RenderRadiusSquared::default(),
+            fog_start_multiplier: 0.7,
+            fog_end_multiplier: 0.8,
         }
     }
 }

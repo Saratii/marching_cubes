@@ -18,10 +18,12 @@ const INACTIVE_BORDER_COLOR: Color = Color::srgba(0.5, 0.5, 0.7, 1.0);
 const FONT_SIZE: f32 = 24.0;
 const SETTINGS_ROW_HEIGHT: f32 = 40.0;
 const SETTINGS_ROW_BORDER_SIZE: f32 = 3.0;
-const GENERAL_SETTINGS: [SettingsType; 3] = [
+const GENERAL_SETTINGS: [SettingsType; 5] = [
     SettingsType::FpsChange,
     SettingsType::ShadowsToggle,
     SettingsType::RenderRadiusChange,
+    SettingsType::FogStartMultiplier,
+    SettingsType::FogEndMultiplier,
 ];
 #[cfg(feature = "debug")]
 const DEBUG_SETTINGS: [SettingsType; 6] = [
@@ -209,7 +211,7 @@ fn spawn_menu(commands: &mut Commands, settings: &ConfigurableSettings) {
                 .spawn((
                     Node {
                         width: Val::Px(400.0),
-                        height: Val::Px(350.0),
+                        height: Val::Px(400.0),
                         flex_direction: FlexDirection::Column,
                         ..default()
                     },
@@ -378,6 +380,60 @@ fn spawn_menu(commands: &mut Commands, settings: &ConfigurableSettings) {
                                                 Text(
                                                     SettingsType::RenderRadiusChange.text(settings),
                                                 ),
+                                                TextFont {
+                                                    font_size: FONT_SIZE,
+                                                    ..default()
+                                                },
+                                                TextColor(Color::WHITE),
+                                            ));
+                                        });
+                                    parent
+                                        .spawn((
+                                            Node {
+                                                width: Val::Percent(100.0),
+                                                height: Val::Px(SETTINGS_ROW_HEIGHT),
+                                                justify_content: JustifyContent::Center,
+                                                align_items: AlignItems::Center,
+                                                border: UiRect::all(Val::Px(
+                                                    SETTINGS_ROW_BORDER_SIZE,
+                                                )),
+                                                ..default()
+                                            },
+                                            BorderColor::all(INACTIVE_BORDER_COLOR),
+                                            SettingRow(SettingsType::FogStartMultiplier),
+                                        ))
+                                        .with_children(|parent| {
+                                            parent.spawn((
+                                                SettingLabel(SettingsType::FogStartMultiplier),
+                                                Text(
+                                                    SettingsType::FogStartMultiplier.text(settings),
+                                                ),
+                                                TextFont {
+                                                    font_size: FONT_SIZE,
+                                                    ..default()
+                                                },
+                                                TextColor(Color::WHITE),
+                                            ));
+                                        });
+                                    parent
+                                        .spawn((
+                                            Node {
+                                                width: Val::Percent(100.0),
+                                                height: Val::Px(SETTINGS_ROW_HEIGHT),
+                                                justify_content: JustifyContent::Center,
+                                                align_items: AlignItems::Center,
+                                                border: UiRect::all(Val::Px(
+                                                    SETTINGS_ROW_BORDER_SIZE,
+                                                )),
+                                                ..default()
+                                            },
+                                            BorderColor::all(INACTIVE_BORDER_COLOR),
+                                            SettingRow(SettingsType::FogEndMultiplier),
+                                        ))
+                                        .with_children(|parent| {
+                                            parent.spawn((
+                                                SettingLabel(SettingsType::FogEndMultiplier),
+                                                Text(SettingsType::FogEndMultiplier.text(settings)),
                                                 TextFont {
                                                     font_size: FONT_SIZE,
                                                     ..default()
