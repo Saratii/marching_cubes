@@ -7,13 +7,13 @@ use std::mem::transmute;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use crate::constants::SAMPLES_PER_CHUNK;
+use crate::constants::{SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_PADDED};
 use crate::data_loader::column_range_map::ColumnRangeMap;
 use crate::terrain::chunk_generator::MaterialCode;
 use crate::terrain::terrain::Uniformity;
 
-const BYTES_PER_VOXEL: usize = std::mem::size_of::<i16>() + std::mem::size_of::<u8>();
-pub const CHUNK_SERIALIZED_SIZE: usize = SAMPLES_PER_CHUNK * BYTES_PER_VOXEL;
+pub const CHUNK_SERIALIZED_SIZE: usize = SAMPLES_PER_CHUNK * std::mem::size_of::<u8>()
+    + SAMPLES_PER_CHUNK_PADDED * std::mem::size_of::<i16>();
 const TOMBSTONE_BYTES: [u8; 6] = [0xFF; 6];
 
 #[derive(Resource)]
@@ -49,12 +49,12 @@ pub fn deserialize_chunk_data(
     density_buffer: &mut [i16],
     material_buffer: &mut [MaterialCode],
 ) {
-    let (sdf_bytes, material_bytes) = data.split_at(SAMPLES_PER_CHUNK * 2);
-    for (index, (sdf_chunk, &material)) in sdf_bytes.chunks_exact(2).zip(material_bytes).enumerate()
-    {
-        let density = i16::from_le_bytes([sdf_chunk[0], sdf_chunk[1]]);
-        density_buffer[index] = density;
-        material_buffer[index] = unsafe { transmute::<u8, MaterialCode>(material) };
+    let (sdf_bytes, material_bytes) = data.split_at(SAMPLES_PER_CHUNK_PADDED * 2);
+    for (chunk, dst) in sdf_bytes.chunks_exact(2).zip(density_buffer.iter_mut()) {
+        *dst = i16::from_le_bytes([chunk[0], chunk[1]]);
+    }
+    for (&src, dst) in material_bytes.iter().zip(material_buffer.iter_mut()) {
+        *dst = unsafe { transmute::<u8, MaterialCode>(src) };
     }
 }
 

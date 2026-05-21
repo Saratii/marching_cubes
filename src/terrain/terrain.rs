@@ -12,7 +12,7 @@ use fastnoise2::{SafeNode, generator::GeneratorWrapper};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    constants::SAMPLES_PER_CHUNK_DIM,
+    constants::SAMPLES_PER_CHUNK_DIM_PADDED,
     conversions::flatten_index,
     data_loader::file_loader::get_project_root,
     terrain::{
@@ -74,12 +74,12 @@ impl NonUniformTerrainChunk {
     }
 
     pub fn get_density(&self, x: u32, y: u32, z: u32) -> i16 {
-        let index = flatten_index(x, y, z, SAMPLES_PER_CHUNK_DIM);
+        let index = flatten_index(x, y, z, SAMPLES_PER_CHUNK_DIM_PADDED);
         self.densities[index as usize]
     }
 
     pub fn get_mut_density(&mut self, x: u32, y: u32, z: u32) -> &mut i16 {
-        let index = flatten_index(x, y, z, SAMPLES_PER_CHUNK_DIM);
+        let index = flatten_index(x, y, z, SAMPLES_PER_CHUNK_DIM_PADDED);
         let densities = Arc::make_mut(&mut self.densities);
         &mut densities[index as usize]
     }
