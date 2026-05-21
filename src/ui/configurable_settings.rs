@@ -121,6 +121,7 @@ pub enum SettingsType {
     RenderRadiusChange,
     FogStartMultiplier,
     FogEndMultiplier,
+    DistanceFogToggle,
 }
 
 impl SettingsType {
@@ -147,6 +148,7 @@ impl SettingsType {
             SettingsType::FogEndMultiplier => {
                 format!("Fog End Multiplier: {:.2}", s.fog_end_multiplier)
             }
+            SettingsType::DistanceFogToggle => format!("Distance Fog: {}", on_off(s.distance_fog)),
         }
     }
 
@@ -183,6 +185,7 @@ impl SettingsType {
                 let new = new.clamp(settings.fog_start_multiplier + 0.05, 1.0);
                 settings.fog_end_multiplier = new;
             }
+            SettingsType::DistanceFogToggle => settings.distance_fog = !settings.distance_fog,
         }
     }
 }
@@ -200,6 +203,7 @@ pub struct ConfigurableSettings {
     pub render_radius_squared: RenderRadiusSquared,
     pub fog_start_multiplier: f32,
     pub fog_end_multiplier: f32,
+    pub distance_fog: bool,
 }
 
 pub fn load_configurable_settings() -> ConfigurableSettings {
@@ -223,6 +227,7 @@ impl Default for ConfigurableSettings {
             render_radius_squared: RenderRadiusSquared::default(),
             fog_start_multiplier: 0.7,
             fog_end_multiplier: 0.8,
+            distance_fog: true,
         }
     }
 }

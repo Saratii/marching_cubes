@@ -33,6 +33,8 @@ pub fn apply_settings_changes(
     settings: Res<ConfigurableSettings>,
     mut light_query: Query<&mut DirectionalLight, With<SunLightTag>>,
     mut fog_query: Query<&mut DistanceFog, With<MainCameraTag>>,
+    mut commands: Commands,
+    camera_entity_query: Query<Entity, With<MainCameraTag>>,
 ) {
     if !settings.is_changed() {
         return;
@@ -40,12 +42,27 @@ pub fn apply_settings_changes(
     if let Ok(mut light) = light_query.single_mut() {
         light.shadows_enabled = settings.shadows;
     }
-    if let Ok(mut fog) = fog_query.single_mut() {
-        let render_radius = settings.render_radius_squared.0.sqrt();
-        fog.falloff = FogFalloff::Linear {
-            start: render_radius * settings.fog_start_multiplier,
-            end: render_radius * settings.fog_end_multiplier,
-        };
+    if let Ok(entity) = camera_entity_query.single() {
+        if settings.distance_fog {
+            let render_radius = settings.render_radius_squared.0.sqrt();
+            if let Ok(mut fog) = fog_query.single_mut() {
+                fog.falloff = FogFalloff::Linear {
+                    start: render_radius * settings.fog_start_multiplier,
+                    end: render_radius * settings.fog_end_multiplier,
+                };
+            } else {
+                commands.entity(entity).insert(DistanceFog {
+                    color: Color::srgb(0.8, 0.8, 0.9),
+                    falloff: FogFalloff::Linear {
+                        start: render_radius * settings.fog_start_multiplier,
+                        end: render_radius * settings.fog_end_multiplier,
+                    },
+                    ..default()
+                });
+            }
+        } else {
+            commands.entity(entity).remove::<DistanceFog>();
+        }
     }
 }
 

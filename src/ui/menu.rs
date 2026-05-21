@@ -18,10 +18,11 @@ const INACTIVE_BORDER_COLOR: Color = Color::srgba(0.5, 0.5, 0.7, 1.0);
 const FONT_SIZE: f32 = 24.0;
 const SETTINGS_ROW_HEIGHT: f32 = 40.0;
 const SETTINGS_ROW_BORDER_SIZE: f32 = 3.0;
-const GENERAL_SETTINGS: [SettingsType; 5] = [
+const GENERAL_SETTINGS: [SettingsType; 6] = [
     SettingsType::FpsChange,
     SettingsType::ShadowsToggle,
     SettingsType::RenderRadiusChange,
+    SettingsType::DistanceFogToggle,
     SettingsType::FogStartMultiplier,
     SettingsType::FogEndMultiplier,
 ];
@@ -379,6 +380,34 @@ fn spawn_menu(commands: &mut Commands, settings: &ConfigurableSettings) {
                                                 SettingLabel(SettingsType::RenderRadiusChange),
                                                 Text(
                                                     SettingsType::RenderRadiusChange.text(settings),
+                                                ),
+                                                TextFont {
+                                                    font_size: FONT_SIZE,
+                                                    ..default()
+                                                },
+                                                TextColor(Color::WHITE),
+                                            ));
+                                        });
+                                    parent
+                                        .spawn((
+                                            Node {
+                                                width: Val::Percent(100.0),
+                                                height: Val::Px(SETTINGS_ROW_HEIGHT),
+                                                justify_content: JustifyContent::Center,
+                                                align_items: AlignItems::Center,
+                                                border: UiRect::all(Val::Px(
+                                                    SETTINGS_ROW_BORDER_SIZE,
+                                                )),
+                                                ..default()
+                                            },
+                                            BorderColor::all(INACTIVE_BORDER_COLOR),
+                                            SettingRow(SettingsType::DistanceFogToggle),
+                                        ))
+                                        .with_children(|parent| {
+                                            parent.spawn((
+                                                SettingLabel(SettingsType::DistanceFogToggle),
+                                                Text(
+                                                    SettingsType::DistanceFogToggle.text(settings),
                                                 ),
                                                 TextFont {
                                                     font_size: FONT_SIZE,
