@@ -369,6 +369,8 @@ fn get_or_create_edge_vertex(
                 + d2.x as usize];
             let material = if material1 == MaterialCode::Grass || material2 == MaterialCode::Grass {
                 MaterialCode::Grass
+            } else if material1 == MaterialCode::Sand || material2 == MaterialCode::Sand {
+                MaterialCode::Sand
             } else if material1 != MaterialCode::Air {
                 material1
             } else {

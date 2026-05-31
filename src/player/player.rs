@@ -196,7 +196,7 @@ pub fn spawn_player(
             Mesh3d(meshes.add(Cuboid::new(1000000000.0, 0.01, 10000000000.0))),
             Transform::from_translation(Vec3::new(0.0, -1000.0, 0.0)),
             MeshMaterial3d(materials.add(StandardMaterial {
-                base_color: Color::srgb(0.0, 0.0, 1.0),
+                base_color: Color::BLACK,
                 ..default()
             })),
             Visibility::Visible, //to prevent inheriting the player's hidden visibility

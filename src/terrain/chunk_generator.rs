@@ -416,8 +416,8 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 // otherwise pick the closest-to-surface solid.
 //always called with full res chunk
 pub fn downscale(
-    densities_in: &[i16], // (SAMPLES_PER_CHUNK_DIM + 2) **3
-    materials_in: &[MaterialCode],
+    densities_in: &[i16],          // (SAMPLES_PER_CHUNK_DIM + 2) **3
+    materials_in: &[MaterialCode], // (SAMPLES_PER_CHUNK) **3
     densities_out: &mut [i16],
     materials_out: &mut [MaterialCode],
     out_dim: usize,
@@ -448,8 +448,9 @@ pub fn downscale(
                 );
                 let out_i = zy_base + target_x;
                 densities_out[out_i] = quantize_f32_to_i16(new_density);
-                let new_material = pick_surface_material_block_prefer_biomes(
+                let new_material = pick_surface_material(
                     materials_in,
+                    densities_in,
                     mat_target_x,
                     mat_target_y,
                     mat_target_z,
@@ -463,31 +464,38 @@ pub fn downscale(
     }
 }
 
-fn pick_surface_material_block_prefer_biomes(
-    materials: &[MaterialCode], // unpadded, SAMPLES_PER_CHUNK_DIM^3
-    full_res_start_x: usize,
-    full_res_start_y: usize,
-    full_res_start_z: usize,
-    full_res_end_x: usize,
-    full_res_end_y: usize,
-    full_res_end_z: usize,
+fn pick_surface_material(
+    materials: &[MaterialCode],
+    densities: &[i16],
+    start_x: usize,
+    start_y: usize,
+    start_z: usize,
+    end_x: usize,
+    end_y: usize,
+    end_z: usize,
 ) -> MaterialCode {
-    let mut best_biome = MaterialCode::Air;
-    for full_res_z in full_res_start_z..=full_res_end_z {
-        for full_res_y in full_res_start_y..=full_res_end_y {
-            let base = (full_res_z * SAMPLES_PER_CHUNK_DIM + full_res_y) * SAMPLES_PER_CHUNK_DIM;
-            for full_res_x in full_res_start_x..=full_res_end_x {
-                let material = materials[base + full_res_x];
-                if material == MaterialCode::Grass || material == MaterialCode::Sand {
-                    return material;
+    let mut best_mat = MaterialCode::Air;
+    let mut best_dist: u16 = u16::MAX;
+    for z in start_z..=end_z {
+        for y in start_y..=end_y {
+            let mat_base = (z * SAMPLES_PER_CHUNK_DIM + y) * SAMPLES_PER_CHUNK_DIM;
+            let den_base = ((z + 1) * SAMPLES_PER_CHUNK_DIM_PADDED + (y + 1))
+                * SAMPLES_PER_CHUNK_DIM_PADDED
+                + 1;
+            for x in start_x..=end_x {
+                let density = densities[den_base + x];
+                if density >= 0 {
+                    continue;
                 }
-                if material == MaterialCode::Dirt {
-                    best_biome = material;
+                let dist = density.unsigned_abs();
+                if dist < best_dist {
+                    best_dist = dist;
+                    best_mat = materials[mat_base + x];
                 }
             }
         }
     }
-    best_biome
+    best_mat
 }
 
 fn sample_trilinear_density(

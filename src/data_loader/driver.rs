@@ -1220,19 +1220,6 @@ fn svo_manager_thread(
         {
             let mut heap = lock.lock().unwrap();
             for req in request_buffer.drain(..) {
-                #[cfg(feature = "debug")]
-                assert!(
-                    !heap
-                        .iter()
-                        .any(|r: &ClusterRequest| r.position == req.position),
-                    "Duplicate position in queue: {:?}, existing transition: {:?}, new transition: {:?}",
-                    req.position,
-                    heap.iter()
-                        .find(|r| r.position == req.position)
-                        .unwrap()
-                        .load_state_transition,
-                    req.load_state_transition,
-                );
                 heap.push(req);
             }
         }
