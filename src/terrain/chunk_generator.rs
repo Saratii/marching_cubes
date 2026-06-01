@@ -9,7 +9,8 @@ use std::f32;
 use crate::{
     constants::{
         CHUNK_WORLD_SIZE, HALF_CHUNK, NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED,
-        SAMPLES_PER_CHUNK_DIM, SAMPLES_PER_CHUNK_DIM_PADDED, VOXEL_WORLD_SIZE,
+        SAMPLES_PER_CHUNK_2D, SAMPLES_PER_CHUNK_2D_PADDED, SAMPLES_PER_CHUNK_DIM,
+        SAMPLES_PER_CHUNK_DIM_PADDED, VOXEL_WORLD_SIZE,
     },
     terrain::terrain::Uniformity,
 };
@@ -208,41 +209,36 @@ pub fn fill_voxel_densities(
     dhdx: &[f32],             //(SAMPLES_PER_CHUNK_DIM + 2) x (SAMPLES_PER_CHUNK_DIM + 2)
     dhdz: &[f32],             //(SAMPLES_PER_CHUNK_DIM + 2) x (SAMPLES_PER_CHUNK_DIM + 2)
 ) -> bool {
-    let testing_samples_per_chunk_dim = SAMPLES_PER_CHUNK_DIM + 2;
-    let testing_samples_per_chunk_2d =
-        testing_samples_per_chunk_dim * testing_samples_per_chunk_dim;
-    let mat_dim = SAMPLES_PER_CHUNK_DIM;
-    let mat_2d = mat_dim * mat_dim;
     let solid_threshold = quantize_f32_to_i16(-1.0);
     let mut is_uniform = true;
     let mut init_distance = 0;
     let mut init_material = MaterialCode::Air;
     let mut has_init = false;
-    for z in [1, testing_samples_per_chunk_dim - 2] {
-        let height_base = z * testing_samples_per_chunk_dim;
-        let z_base = z * testing_samples_per_chunk_2d;
-        let mat_z_base = (z - 1) * mat_2d;
-        for y in 1..testing_samples_per_chunk_dim - 1 {
+    for z in [1, SAMPLES_PER_CHUNK_DIM_PADDED - 2] {
+        let height_base = z * SAMPLES_PER_CHUNK_DIM_PADDED;
+        let z_base = z * SAMPLES_PER_CHUNK_2D_PADDED;
+        let mat_z_base = (z - 1) * SAMPLES_PER_CHUNK_2D;
+        for y in 1..SAMPLES_PER_CHUNK_DIM_PADDED - 1 {
             let world_y = chunk_start.y + (y as f32 - 1.0) * VOXEL_WORLD_SIZE;
             let below_sea = world_y < 0.0;
-            let base_rolling_voxel_index = z_base + y * testing_samples_per_chunk_dim;
-            let mat_base = mat_z_base + (y - 1) * mat_dim;
-            for x in 1..testing_samples_per_chunk_dim - 1 {
+            let base_rolling_voxel_index = z_base + y * SAMPLES_PER_CHUNK_DIM_PADDED;
+            let mat_base = mat_z_base + (y - 1) * SAMPLES_PER_CHUNK_DIM;
+            for x in 1..SAMPLES_PER_CHUNK_DIM_PADDED - 1 {
                 let rolling_voxel_index = base_rolling_voxel_index + x;
                 let mat_index = mat_base + (x - 1);
                 let terrain_height = heightmap_buffer[height_base + x];
                 let distance_to_surface = {
                     let vertical_dist = world_y - terrain_height;
-                    let gidx = z * testing_samples_per_chunk_dim + x;
+                    let gidx = z * SAMPLES_PER_CHUNK_DIM_PADDED + x;
                     let gx = dhdx[gidx];
                     let gz = dhdz[gidx];
                     (vertical_dist / (1.0 + gx * gx + gz * gz).sqrt()).clamp(-10.0, 10.0)
                 };
-                let quantized = quantize_f32_to_i16(distance_to_surface);
-                densities[rolling_voxel_index] = quantized;
-                let mat = if quantized >= 0 {
+                let quantized_distance_to_surface = quantize_f32_to_i16(distance_to_surface);
+                densities[rolling_voxel_index] = quantized_distance_to_surface;
+                let mat = if quantized_distance_to_surface >= 0 {
                     MaterialCode::Air
-                } else if quantized < solid_threshold {
+                } else if quantized_distance_to_surface < solid_threshold {
                     MaterialCode::Dirt
                 } else if below_sea {
                     MaterialCode::Sand
@@ -252,41 +248,42 @@ pub fn fill_voxel_densities(
                 materials[mat_index] = mat;
                 if is_uniform {
                     if !has_init {
-                        init_distance = quantized;
+                        init_distance = quantized_distance_to_surface;
                         init_material = mat;
                         has_init = true;
-                    } else if init_distance != quantized || init_material != mat {
+                    } else if init_distance != quantized_distance_to_surface || init_material != mat
+                    {
                         is_uniform = false;
                     }
                 }
             }
         }
     }
-    for z in 1..testing_samples_per_chunk_dim - 1 {
-        let height_base = z * testing_samples_per_chunk_dim;
-        let z_base = z * testing_samples_per_chunk_2d;
-        let mat_z_base = (z - 1) * mat_2d;
-        for y in [1, testing_samples_per_chunk_dim - 2] {
+    for z in 1..SAMPLES_PER_CHUNK_DIM_PADDED - 1 {
+        let height_base = z * SAMPLES_PER_CHUNK_DIM_PADDED;
+        let z_base = z * SAMPLES_PER_CHUNK_2D_PADDED;
+        let mat_z_base = (z - 1) * SAMPLES_PER_CHUNK_2D;
+        for y in [1, SAMPLES_PER_CHUNK_DIM_PADDED - 2] {
             let world_y = chunk_start.y + (y as f32 - 1.0) * VOXEL_WORLD_SIZE;
             let below_sea = world_y < 0.0;
-            let base_rolling_voxel_index = z_base + y * testing_samples_per_chunk_dim;
-            let mat_base = mat_z_base + (y - 1) * mat_dim;
-            for x in 1..testing_samples_per_chunk_dim - 1 {
+            let base_rolling_voxel_index = z_base + y * SAMPLES_PER_CHUNK_DIM_PADDED;
+            let mat_base = mat_z_base + (y - 1) * SAMPLES_PER_CHUNK_DIM;
+            for x in 1..SAMPLES_PER_CHUNK_DIM_PADDED - 1 {
                 let rolling_voxel_index = base_rolling_voxel_index + x;
                 let mat_index = mat_base + (x - 1);
                 let terrain_height = heightmap_buffer[height_base + x];
                 let distance_to_surface = {
                     let vertical_dist = world_y - terrain_height;
-                    let gidx = z * testing_samples_per_chunk_dim + x;
+                    let gidx = z * SAMPLES_PER_CHUNK_DIM_PADDED + x;
                     let gx = dhdx[gidx];
                     let gz = dhdz[gidx];
                     (vertical_dist / (1.0 + gx * gx + gz * gz).sqrt()).clamp(-10.0, 10.0)
                 };
-                let quantized = quantize_f32_to_i16(distance_to_surface);
-                densities[rolling_voxel_index] = quantized;
-                let mat = if quantized >= 0 {
+                let quantized_distance_to_surface = quantize_f32_to_i16(distance_to_surface);
+                densities[rolling_voxel_index] = quantized_distance_to_surface;
+                let mat = if quantized_distance_to_surface >= 0 {
                     MaterialCode::Air
-                } else if quantized < solid_threshold {
+                } else if quantized_distance_to_surface < solid_threshold {
                     MaterialCode::Dirt
                 } else if below_sea {
                     MaterialCode::Sand
@@ -296,41 +293,42 @@ pub fn fill_voxel_densities(
                 materials[mat_index] = mat;
                 if is_uniform {
                     if !has_init {
-                        init_distance = quantized;
+                        init_distance = quantized_distance_to_surface;
                         init_material = mat;
                         has_init = true;
-                    } else if init_distance != quantized || init_material != mat {
+                    } else if init_distance != quantized_distance_to_surface || init_material != mat
+                    {
                         is_uniform = false;
                     }
                 }
             }
         }
     }
-    for z in 1..testing_samples_per_chunk_dim - 1 {
-        let height_base = z * testing_samples_per_chunk_dim;
-        let z_base = z * testing_samples_per_chunk_2d;
-        let mat_z_base = (z - 1) * mat_2d;
-        for y in 1..testing_samples_per_chunk_dim - 1 {
+    for z in 1..SAMPLES_PER_CHUNK_DIM_PADDED - 1 {
+        let height_base = z * SAMPLES_PER_CHUNK_DIM_PADDED;
+        let z_base = z * SAMPLES_PER_CHUNK_2D_PADDED;
+        let mat_z_base = (z - 1) * SAMPLES_PER_CHUNK_2D;
+        for y in 1..SAMPLES_PER_CHUNK_DIM_PADDED - 1 {
             let world_y = chunk_start.y + (y as f32 - 1.0) * VOXEL_WORLD_SIZE;
             let below_sea = world_y < 0.0;
-            let base_rolling_voxel_index = z_base + y * testing_samples_per_chunk_dim;
-            let mat_base = mat_z_base + (y - 1) * mat_dim;
-            for x in [1, testing_samples_per_chunk_dim - 2] {
+            let base_rolling_voxel_index = z_base + y * SAMPLES_PER_CHUNK_DIM_PADDED;
+            let mat_base = mat_z_base + (y - 1) * SAMPLES_PER_CHUNK_DIM;
+            for x in [1, SAMPLES_PER_CHUNK_DIM_PADDED - 2] {
                 let rolling_voxel_index = base_rolling_voxel_index + x;
                 let mat_index = mat_base + (x - 1);
                 let terrain_height = heightmap_buffer[height_base + x];
                 let distance_to_surface = {
                     let vertical_dist = world_y - terrain_height;
-                    let gidx = z * testing_samples_per_chunk_dim + x;
+                    let gidx = z * SAMPLES_PER_CHUNK_DIM_PADDED + x;
                     let gx = dhdx[gidx];
                     let gz = dhdz[gidx];
                     (vertical_dist / (1.0 + gx * gx + gz * gz).sqrt()).clamp(-10.0, 10.0)
                 };
-                let quantized = quantize_f32_to_i16(distance_to_surface);
-                densities[rolling_voxel_index] = quantized;
-                let mat = if quantized >= 0 {
+                let quantized_distance_to_surface = quantize_f32_to_i16(distance_to_surface);
+                densities[rolling_voxel_index] = quantized_distance_to_surface;
+                let mat = if quantized_distance_to_surface >= 0 {
                     MaterialCode::Air
-                } else if quantized < solid_threshold {
+                } else if quantized_distance_to_surface < solid_threshold {
                     MaterialCode::Dirt
                 } else if below_sea {
                     MaterialCode::Sand
@@ -340,10 +338,11 @@ pub fn fill_voxel_densities(
                 materials[mat_index] = mat;
                 if is_uniform {
                     if !has_init {
-                        init_distance = quantized;
+                        init_distance = quantized_distance_to_surface;
                         init_material = mat;
                         has_init = true;
-                    } else if init_distance != quantized || init_material != mat {
+                    } else if init_distance != quantized_distance_to_surface || init_material != mat
+                    {
                         is_uniform = false;
                     }
                 }
@@ -353,34 +352,38 @@ pub fn fill_voxel_densities(
     if is_uniform {
         return is_uniform;
     }
-    for z in 0..testing_samples_per_chunk_dim {
-        let height_base = z * testing_samples_per_chunk_dim;
-        let z_base = z * testing_samples_per_chunk_2d;
-        for y in 0..testing_samples_per_chunk_dim {
+    for z in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
+        let height_base = z * SAMPLES_PER_CHUNK_DIM_PADDED;
+        let z_base = z * SAMPLES_PER_CHUNK_2D_PADDED;
+        for y in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
             let world_y = chunk_start.y + (y as f32 - 1.0) * VOXEL_WORLD_SIZE;
             let below_sea = world_y < 0.0;
-            let base_rolling_voxel_index = z_base + y * testing_samples_per_chunk_dim;
-            for x in 0..testing_samples_per_chunk_dim {
+            let base_rolling_voxel_index = z_base + y * SAMPLES_PER_CHUNK_DIM_PADDED;
+            for x in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
                 let rolling_voxel_index = base_rolling_voxel_index + x;
                 let terrain_height = heightmap_buffer[height_base + x];
                 let distance_to_surface = {
                     let vertical_dist = world_y - terrain_height;
-                    let gidx = z * testing_samples_per_chunk_dim + x;
+                    let gidx = z * SAMPLES_PER_CHUNK_DIM_PADDED + x;
                     let gx = dhdx[gidx];
                     let gz = dhdz[gidx];
                     (vertical_dist / (1.0 + gx * gx + gz * gz).sqrt()).clamp(-10.0, 10.0)
                 };
-                let quantized = quantize_f32_to_i16(distance_to_surface);
-                densities[rolling_voxel_index] = quantized;
-                let interior =
-                    x >= 1 && x <= mat_dim && y >= 1 && y <= mat_dim && z >= 1 && z <= mat_dim;
+                let quantized_distance_to_surface = quantize_f32_to_i16(distance_to_surface);
+                densities[rolling_voxel_index] = quantized_distance_to_surface;
+                let interior = x >= 1
+                    && x <= SAMPLES_PER_CHUNK_DIM
+                    && y >= 1
+                    && y <= SAMPLES_PER_CHUNK_DIM
+                    && z >= 1
+                    && z <= SAMPLES_PER_CHUNK_DIM;
                 if interior {
-                    let mat_z_base = (z - 1) * mat_2d;
-                    let mat_base = mat_z_base + (y - 1) * mat_dim;
+                    let mat_z_base = (z - 1) * SAMPLES_PER_CHUNK_2D;
+                    let mat_base = mat_z_base + (y - 1) * SAMPLES_PER_CHUNK_DIM;
                     let mat_index = mat_base + (x - 1);
-                    let mat = if quantized >= 0 {
+                    let mat = if quantized_distance_to_surface >= 0 {
                         MaterialCode::Air
-                    } else if quantized < solid_threshold {
+                    } else if quantized_distance_to_surface < solid_threshold {
                         MaterialCode::Dirt
                     } else if below_sea {
                         MaterialCode::Sand
