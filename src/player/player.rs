@@ -237,8 +237,12 @@ pub fn camera_zoom(
     mut scroll_events: MessageReader<MouseWheel>,
     mut camera_transform_query: Query<&mut Transform, With<MainCameraTag>>,
     mut camera_controller: ResMut<CameraController>,
+    free_cam: Res<FreeCamMode>,
 ) {
-    if camera_controller.is_first_person || !camera_controller.is_cursor_grabbed {
+    if camera_controller.is_first_person
+        || !camera_controller.is_cursor_grabbed
+        || free_cam.is_active
+    {
         return;
     }
     let mut camera_transform = camera_transform_query.iter_mut().next().unwrap();
