@@ -104,10 +104,13 @@ impl SvoNode {
         load_state: LoadState,
     ) {
         if self.size == 1 {
-            debug_assert!(
+            #[cfg(feature = "debug")]
+            assert!(
                 self.chunk.is_none(),
-                "Overwriting existing chunk at {:?}",
-                coord
+                "Overwriting existing chunk at {:?}, existing state: {:?}, incoming state: {:?}",
+                coord,
+                self.chunk.as_ref().unwrap().1,
+                load_state
             );
             self.chunk = Some((has_entity, load_state));
             return;
@@ -237,6 +240,7 @@ impl SvoNode {
                             desired_load_state,
                         );
                         let prev_has_entity = self.chunk.as_ref().unwrap().0;
+                        self.chunk = None;
                         chunks_being_loaded.insert(self.lower_cluster_coord);
                         request_buffer.push(ClusterRequest {
                             position: self.lower_cluster_coord,
@@ -387,7 +391,8 @@ fn get_load_state_transition_from_states(
     current: LoadState,
     desired: LoadState,
 ) -> LoadStateTransition {
-    debug_assert!(desired != current);
+    #[cfg(feature = "debug")]
+    assert!(desired != current);
     match (current, desired) {
         (LoadState::Full, LoadState::FullWithCollider) => LoadStateTransition::NoChangeAddCollider,
         (_, LoadState::FullWithCollider) => LoadStateTransition::ToFullWithCollider,

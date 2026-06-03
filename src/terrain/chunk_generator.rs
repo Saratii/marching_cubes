@@ -4,9 +4,14 @@ use fastnoise2::{
     SafeNode,
     generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
 };
+use std::f32;
 
 use crate::{
-    constants::{CHUNK_WORLD_SIZE, HALF_CHUNK, NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED},
+    constants::{
+        CHUNK_WORLD_SIZE, HALF_CHUNK, NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED,
+        SAMPLES_PER_CHUNK_2D, SAMPLES_PER_CHUNK_2D_PADDED, SAMPLES_PER_CHUNK_DIM,
+        SAMPLES_PER_CHUNK_DIM_PADDED, VOXEL_WORLD_SIZE,
+    },
     terrain::terrain::Uniformity,
 };
 
@@ -27,30 +32,24 @@ pub fn get_fbm() -> GeneratorWrapper<SafeNode> {
     (mountains).build()
 }
 
+//assumed to only be called on full res buffers
 pub fn generate_chunk_into_buffers(
     fbm: &GeneratorWrapper<SafeNode>,
     chunk_start: Vec3,
-    density_buffer: &mut [i16],
+    density_buffer: &mut [i16], //(SAMPLES_PER_CHUNK_DIM + 2) **3
     material_buffer: &mut [MaterialCode],
-    heightmap_buffer: &mut [f32],
-    dhdx_buffer: &mut [f32],
-    dhdz_buffer: &mut [f32],
-    samples_per_chunk_dim: usize,
+    heightmap_buffer: &mut [f32], //(SAMPLES_PER_CHUNK_DIM + 2) * (SAMPLES_PER_CHUNK_DIM + 2)
+    dhdx_buffer: &mut [f32],      //(SAMPLES_PER_CHUNK_DIM + 2) * (SAMPLES_PER_CHUNK_DIM + 2)
+    dhdz_buffer: &mut [f32],      //(SAMPLES_PER_CHUNK_DIM + 2) * (SAMPLES_PER_CHUNK_DIM + 2)
 ) -> Uniformity {
     let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, fbm);
-    generate_terrain_heights(heightmap_buffer, samples_per_chunk_dim, &noise_samples);
-    compute_heightmap_gradients(
-        dhdx_buffer,
-        dhdz_buffer,
-        samples_per_chunk_dim,
-        &noise_samples,
-    );
+    generate_terrain_heights(heightmap_buffer, &noise_samples);
+    compute_heightmap_gradients(dhdx_buffer, dhdz_buffer, &noise_samples);
     let is_uniform = fill_voxel_densities(
         density_buffer,
         material_buffer,
         &chunk_start,
         heightmap_buffer,
-        samples_per_chunk_dim,
         dhdx_buffer,
         dhdz_buffer,
     );
@@ -101,6 +100,32 @@ pub fn calculate_chunk_start(chunk_coord: &(i16, i16, i16)) -> Vec3 {
 }
 
 //it may be better to store a byte signifying if a chunk contains a surface when saving to disk
+//ignore padding
+pub fn padded_chunk_contains_surface(
+    density_buffer: &[i16], // (SAMPLES_PER_CHUNK_DIM+2) **3
+) -> bool {
+    let mut has_positive = false;
+    let mut has_negative = false;
+    for z in 1..=SAMPLES_PER_CHUNK_DIM {
+        for y in 1..=SAMPLES_PER_CHUNK_DIM {
+            let base = (z * SAMPLES_PER_CHUNK_DIM_PADDED + y) * SAMPLES_PER_CHUNK_DIM_PADDED;
+            for x in 1..=SAMPLES_PER_CHUNK_DIM {
+                let density = density_buffer[base + x];
+                if density > 0 {
+                    has_positive = true;
+                } else if density < 0 {
+                    has_negative = true;
+                }
+                if has_positive && has_negative {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+//ignore padding
 pub fn chunk_contains_surface(density_buffer: &[i16]) -> bool {
     let mut has_positive = false;
     let mut has_negative = false;
@@ -119,14 +144,13 @@ pub fn chunk_contains_surface(density_buffer: &[i16]) -> bool {
 
 //Sample the fbm noise at a higher resolution and then bilinearly interpolate to get smooth terrain heights
 pub fn generate_terrain_heights(
-    heightmap_buffer: &mut [f32],
-    samples_per_chunk_dim: usize,
+    heightmap_buffer: &mut [f32], // (SAMPLES_PER_CHUNK_DIM + 2) * (SAMPLES_PER_CHUNK_DIM + 2)
     noise_samples: &[f32],
 ) {
-    let inv_samples = 1.0 / (samples_per_chunk_dim - 1) as f32;
+    let inv_samples = 1.0 / (SAMPLES_PER_CHUNK_DIM - 1) as f32;
     let mut roller = 0;
-    for z in 0..samples_per_chunk_dim {
-        let t_z = z as f32 * inv_samples;
+    for z in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
+        let t_z = (z as f32 - 1.0) * inv_samples;
         let grid_z = 1.0 + t_z * 2.0;
         let grid_z_idx = grid_z as usize;
         let gz0 = grid_z_idx.saturating_sub(1).min(4);
@@ -138,8 +162,8 @@ pub fn generate_terrain_heights(
         let b1 = gz1 * 5;
         let b2 = gz2 * 5;
         let b3 = gz3 * 5;
-        for x in 0..samples_per_chunk_dim {
-            let t_x = x as f32 * inv_samples;
+        for x in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
+            let t_x = (x as f32 - 1.0) * inv_samples;
             let grid_x = 1.0 + t_x * 2.0;
             let grid_x_idx = grid_x as usize;
             let gx0 = grid_x_idx.saturating_sub(1).min(4);
@@ -175,38 +199,40 @@ pub fn generate_terrain_heights(
 //optimized by first iterating over the boundary voxels to quickly determine uniformity
 //assumes that the surface passes through one of the chunk sides
 //will break if a "cave" is fully enclosed within the chunk
+//only called on full res chunk buffers
+//padding is not considered for uniformity.
 pub fn fill_voxel_densities(
-    densities: &mut [i16],
+    densities: &mut [i16], //(SAMPLES_PER_CHUNK_DIM + 2) **3
     materials: &mut [MaterialCode],
     chunk_start: &Vec3,
-    terrain_heights: &[f32],
-    samples_per_chunk_dim: usize,
-    dhdx: &[f32],
-    dhdz: &[f32],
+    heightmap_buffer: &[f32], //(SAMPLES_PER_CHUNK_DIM + 2) x (SAMPLES_PER_CHUNK_DIM + 2)
+    dhdx: &[f32],             //(SAMPLES_PER_CHUNK_DIM + 2) x (SAMPLES_PER_CHUNK_DIM + 2)
+    dhdz: &[f32],             //(SAMPLES_PER_CHUNK_DIM + 2) x (SAMPLES_PER_CHUNK_DIM + 2)
 ) -> bool {
-    let voxel_size = CHUNK_WORLD_SIZE / (samples_per_chunk_dim - 1) as f32;
-    let heightmap_grid_size: usize = samples_per_chunk_dim * samples_per_chunk_dim;
     let solid_threshold = quantize_f32_to_i16(-1.0);
     let mut is_uniform = true;
     let mut init_distance = 0;
     let mut init_material = MaterialCode::Air;
     let mut has_init = false;
-    for z in [0, samples_per_chunk_dim - 1] {
-        let height_base = z * samples_per_chunk_dim;
-        let z_base = z * heightmap_grid_size;
-        for y in 0..samples_per_chunk_dim {
-            let world_y = chunk_start.y + y as f32 * voxel_size;
+    for z in [1, SAMPLES_PER_CHUNK_DIM_PADDED - 2] {
+        let height_base = z * SAMPLES_PER_CHUNK_DIM_PADDED;
+        let z_base = z * SAMPLES_PER_CHUNK_2D_PADDED;
+        let mat_z_base = (z - 1) * SAMPLES_PER_CHUNK_2D;
+        for y in 1..SAMPLES_PER_CHUNK_DIM_PADDED - 1 {
+            let world_y = chunk_start.y + (y as f32 - 1.0) * VOXEL_WORLD_SIZE;
             let below_sea = world_y < 0.0;
-            let base_rolling_voxel_index = z_base + y * samples_per_chunk_dim;
-            for x in 0..samples_per_chunk_dim {
+            let base_rolling_voxel_index = z_base + y * SAMPLES_PER_CHUNK_DIM_PADDED;
+            let mat_base = mat_z_base + (y - 1) * SAMPLES_PER_CHUNK_DIM;
+            for x in 1..SAMPLES_PER_CHUNK_DIM_PADDED - 1 {
                 let rolling_voxel_index = base_rolling_voxel_index + x;
-                let terrain_height = terrain_heights[height_base + x];
+                let mat_index = mat_base + (x - 1);
+                let terrain_height = heightmap_buffer[height_base + x];
                 let distance_to_surface = {
                     let vertical_dist = world_y - terrain_height;
-                    let gidx = z * samples_per_chunk_dim + x;
-                    let dhdx = dhdx[gidx];
-                    let dhdz = dhdz[gidx];
-                    (vertical_dist / (1.0 + dhdx * dhdx + dhdz * dhdz).sqrt()).clamp(-10.0, 10.0)
+                    let gidx = z * SAMPLES_PER_CHUNK_DIM_PADDED + x;
+                    let gx = dhdx[gidx];
+                    let gz = dhdz[gidx];
+                    (vertical_dist / (1.0 + gx * gx + gz * gz).sqrt()).clamp(-10.0, 10.0)
                 };
                 let quantized_distance_to_surface = quantize_f32_to_i16(distance_to_surface);
                 densities[rolling_voxel_index] = quantized_distance_to_surface;
@@ -219,7 +245,7 @@ pub fn fill_voxel_densities(
                 } else {
                     MaterialCode::Grass
                 };
-                materials[rolling_voxel_index] = mat;
+                materials[mat_index] = mat;
                 if is_uniform {
                     if !has_init {
                         init_distance = quantized_distance_to_surface;
@@ -233,22 +259,25 @@ pub fn fill_voxel_densities(
             }
         }
     }
-    for z in 1..samples_per_chunk_dim - 1 {
-        let height_base = z * samples_per_chunk_dim;
-        let z_base = z * heightmap_grid_size;
-        for y in [0, samples_per_chunk_dim - 1] {
-            let world_y = chunk_start.y + y as f32 * voxel_size;
+    for z in 1..SAMPLES_PER_CHUNK_DIM_PADDED - 1 {
+        let height_base = z * SAMPLES_PER_CHUNK_DIM_PADDED;
+        let z_base = z * SAMPLES_PER_CHUNK_2D_PADDED;
+        let mat_z_base = (z - 1) * SAMPLES_PER_CHUNK_2D;
+        for y in [1, SAMPLES_PER_CHUNK_DIM_PADDED - 2] {
+            let world_y = chunk_start.y + (y as f32 - 1.0) * VOXEL_WORLD_SIZE;
             let below_sea = world_y < 0.0;
-            let base_rolling_voxel_index = z_base + y * samples_per_chunk_dim;
-            for x in 0..samples_per_chunk_dim {
+            let base_rolling_voxel_index = z_base + y * SAMPLES_PER_CHUNK_DIM_PADDED;
+            let mat_base = mat_z_base + (y - 1) * SAMPLES_PER_CHUNK_DIM;
+            for x in 1..SAMPLES_PER_CHUNK_DIM_PADDED - 1 {
                 let rolling_voxel_index = base_rolling_voxel_index + x;
-                let terrain_height = terrain_heights[height_base + x];
+                let mat_index = mat_base + (x - 1);
+                let terrain_height = heightmap_buffer[height_base + x];
                 let distance_to_surface = {
                     let vertical_dist = world_y - terrain_height;
-                    let gidx = z * samples_per_chunk_dim + x;
-                    let dhdx = dhdx[gidx];
-                    let dhdz = dhdz[gidx];
-                    (vertical_dist / (1.0 + dhdx * dhdx + dhdz * dhdz).sqrt()).clamp(-10.0, 10.0)
+                    let gidx = z * SAMPLES_PER_CHUNK_DIM_PADDED + x;
+                    let gx = dhdx[gidx];
+                    let gz = dhdz[gidx];
+                    (vertical_dist / (1.0 + gx * gx + gz * gz).sqrt()).clamp(-10.0, 10.0)
                 };
                 let quantized_distance_to_surface = quantize_f32_to_i16(distance_to_surface);
                 densities[rolling_voxel_index] = quantized_distance_to_surface;
@@ -261,7 +290,7 @@ pub fn fill_voxel_densities(
                 } else {
                     MaterialCode::Grass
                 };
-                materials[rolling_voxel_index] = mat;
+                materials[mat_index] = mat;
                 if is_uniform {
                     if !has_init {
                         init_distance = quantized_distance_to_surface;
@@ -275,22 +304,25 @@ pub fn fill_voxel_densities(
             }
         }
     }
-    for z in 1..samples_per_chunk_dim - 1 {
-        let height_base = z * samples_per_chunk_dim;
-        let z_base = z * heightmap_grid_size;
-        for y in 1..samples_per_chunk_dim - 1 {
-            let world_y = chunk_start.y + y as f32 * voxel_size;
+    for z in 1..SAMPLES_PER_CHUNK_DIM_PADDED - 1 {
+        let height_base = z * SAMPLES_PER_CHUNK_DIM_PADDED;
+        let z_base = z * SAMPLES_PER_CHUNK_2D_PADDED;
+        let mat_z_base = (z - 1) * SAMPLES_PER_CHUNK_2D;
+        for y in 1..SAMPLES_PER_CHUNK_DIM_PADDED - 1 {
+            let world_y = chunk_start.y + (y as f32 - 1.0) * VOXEL_WORLD_SIZE;
             let below_sea = world_y < 0.0;
-            let base_rolling_voxel_index = z_base + y * samples_per_chunk_dim;
-            for x in [0, samples_per_chunk_dim - 1] {
+            let base_rolling_voxel_index = z_base + y * SAMPLES_PER_CHUNK_DIM_PADDED;
+            let mat_base = mat_z_base + (y - 1) * SAMPLES_PER_CHUNK_DIM;
+            for x in [1, SAMPLES_PER_CHUNK_DIM_PADDED - 2] {
                 let rolling_voxel_index = base_rolling_voxel_index + x;
-                let terrain_height = terrain_heights[height_base + x];
+                let mat_index = mat_base + (x - 1);
+                let terrain_height = heightmap_buffer[height_base + x];
                 let distance_to_surface = {
                     let vertical_dist = world_y - terrain_height;
-                    let gidx = z * samples_per_chunk_dim + x;
-                    let dhdx = dhdx[gidx];
-                    let dhdz = dhdz[gidx];
-                    (vertical_dist / (1.0 + dhdx * dhdx + dhdz * dhdz).sqrt()).clamp(-10.0, 10.0)
+                    let gidx = z * SAMPLES_PER_CHUNK_DIM_PADDED + x;
+                    let gx = dhdx[gidx];
+                    let gz = dhdz[gidx];
+                    (vertical_dist / (1.0 + gx * gx + gz * gz).sqrt()).clamp(-10.0, 10.0)
                 };
                 let quantized_distance_to_surface = quantize_f32_to_i16(distance_to_surface);
                 densities[rolling_voxel_index] = quantized_distance_to_surface;
@@ -303,7 +335,7 @@ pub fn fill_voxel_densities(
                 } else {
                     MaterialCode::Grass
                 };
-                materials[rolling_voxel_index] = mat;
+                materials[mat_index] = mat;
                 if is_uniform {
                     if !has_init {
                         init_distance = quantized_distance_to_surface;
@@ -319,27 +351,36 @@ pub fn fill_voxel_densities(
     }
     if is_uniform {
         return is_uniform;
-    } else {
-        for z in 1..samples_per_chunk_dim - 1 {
-            let height_base = z * samples_per_chunk_dim;
-            let z_base = z * heightmap_grid_size;
-            for y in 1..samples_per_chunk_dim - 1 {
-                let world_y = chunk_start.y + y as f32 * voxel_size;
-                let below_sea = world_y < 0.0;
-                let base_rolling_voxel_index = z_base + y * samples_per_chunk_dim;
-                for x in 1..samples_per_chunk_dim - 1 {
-                    let rolling_voxel_index = base_rolling_voxel_index + x;
-                    let terrain_height = terrain_heights[height_base + x];
-                    let distance_to_surface = {
-                        let vertical_dist = world_y - terrain_height;
-                        let gidx = z * samples_per_chunk_dim + x;
-                        let dhdx = dhdx[gidx];
-                        let dhdz = dhdz[gidx];
-                        (vertical_dist / (1.0 + dhdx * dhdx + dhdz * dhdz).sqrt())
-                            .clamp(-10.0, 10.0)
-                    };
-                    let quantized_distance_to_surface = quantize_f32_to_i16(distance_to_surface);
-                    densities[rolling_voxel_index] = quantized_distance_to_surface;
+    }
+    for z in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
+        let height_base = z * SAMPLES_PER_CHUNK_DIM_PADDED;
+        let z_base = z * SAMPLES_PER_CHUNK_2D_PADDED;
+        for y in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
+            let world_y = chunk_start.y + (y as f32 - 1.0) * VOXEL_WORLD_SIZE;
+            let below_sea = world_y < 0.0;
+            let base_rolling_voxel_index = z_base + y * SAMPLES_PER_CHUNK_DIM_PADDED;
+            for x in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
+                let rolling_voxel_index = base_rolling_voxel_index + x;
+                let terrain_height = heightmap_buffer[height_base + x];
+                let distance_to_surface = {
+                    let vertical_dist = world_y - terrain_height;
+                    let gidx = z * SAMPLES_PER_CHUNK_DIM_PADDED + x;
+                    let gx = dhdx[gidx];
+                    let gz = dhdz[gidx];
+                    (vertical_dist / (1.0 + gx * gx + gz * gz).sqrt()).clamp(-10.0, 10.0)
+                };
+                let quantized_distance_to_surface = quantize_f32_to_i16(distance_to_surface);
+                densities[rolling_voxel_index] = quantized_distance_to_surface;
+                let interior = x >= 1
+                    && x <= SAMPLES_PER_CHUNK_DIM
+                    && y >= 1
+                    && y <= SAMPLES_PER_CHUNK_DIM
+                    && z >= 1
+                    && z <= SAMPLES_PER_CHUNK_DIM;
+                if interior {
+                    let mat_z_base = (z - 1) * SAMPLES_PER_CHUNK_2D;
+                    let mat_base = mat_z_base + (y - 1) * SAMPLES_PER_CHUNK_DIM;
+                    let mat_index = mat_base + (x - 1);
                     let mat = if quantized_distance_to_surface >= 0 {
                         MaterialCode::Air
                     } else if quantized_distance_to_surface < solid_threshold {
@@ -349,18 +390,7 @@ pub fn fill_voxel_densities(
                     } else {
                         MaterialCode::Grass
                     };
-                    materials[rolling_voxel_index] = mat;
-                    if is_uniform {
-                        if !has_init {
-                            init_distance = quantized_distance_to_surface;
-                            init_material = mat;
-                            has_init = true;
-                        } else if init_distance != quantized_distance_to_surface
-                            || init_material != mat
-                        {
-                            is_uniform = false;
-                        }
-                    }
+                    materials[mat_index] = mat;
                 }
             }
         }
@@ -387,50 +417,49 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 // Material = scan the corresponding input block;
 // prefer grass/sand if any exist near the surface,
 // otherwise pick the closest-to-surface solid.
+//always called with full res chunk
 pub fn downscale(
-    densities_in: &[i16],
-    materials_in: &[MaterialCode],
-    in_dim: usize,
+    densities_in: &[i16],          // (SAMPLES_PER_CHUNK_DIM + 2) **3
+    materials_in: &[MaterialCode], // (SAMPLES_PER_CHUNK) **3
     densities_out: &mut [i16],
     materials_out: &mut [MaterialCode],
     out_dim: usize,
 ) {
-    let in_max = in_dim - 1;
+    let in_max = SAMPLES_PER_CHUNK_DIM - 1;
     let out_max = out_dim - 1;
     let stride = in_max / out_max;
     for target_z in 0..out_dim {
-        let high_sample_z = (target_z as f32 / out_max as f32) * in_max as f32;
-        let full_res_target_z = target_z * stride;
-        let full_res_end_z = (full_res_target_z + stride).min(in_dim - 1);
+        let high_sample_z = 1.0 + (target_z as f32 / out_max as f32) * in_max as f32;
+        let mat_target_z = target_z * stride;
+        let mat_end_z = (mat_target_z + stride).min(SAMPLES_PER_CHUNK_DIM - 1);
         let z_base = target_z * out_dim;
         for target_y in 0..out_dim {
-            let high_sample_y = (target_y as f32 / out_max as f32) * in_max as f32;
-            let full_res_target_y = target_y * stride;
-            let full_res_end_y = (full_res_target_y + stride).min(in_dim - 1);
+            let high_sample_y = 1.0 + (target_y as f32 / out_max as f32) * in_max as f32;
+            let mat_target_y = target_y * stride;
+            let mat_end_y = (mat_target_y + stride).min(SAMPLES_PER_CHUNK_DIM - 1);
             let zy_base = (z_base + target_y) * out_dim;
             for target_x in 0..out_dim {
-                let full_res_target_x = target_x * stride;
-                let high_sample_x = (target_x as f32 / out_max as f32) * in_max as f32;
+                let high_sample_x = 1.0 + (target_x as f32 / out_max as f32) * in_max as f32;
+                let mat_target_x = target_x * stride;
+                let mat_end_x = (mat_target_x + stride).min(SAMPLES_PER_CHUNK_DIM - 1);
                 let new_density = sample_trilinear_density(
                     densities_in,
-                    in_dim,
+                    SAMPLES_PER_CHUNK_DIM_PADDED,
                     high_sample_x,
                     high_sample_y,
                     high_sample_z,
                 );
                 let out_i = zy_base + target_x;
                 densities_out[out_i] = quantize_f32_to_i16(new_density);
-                let full_res_end_x = (full_res_target_x + stride).min(in_dim - 1);
-                let new_material = pick_surface_material_block_prefer_biomes(
-                    densities_in,
+                let new_material = pick_surface_material(
                     materials_in,
-                    in_dim,
-                    full_res_target_x,
-                    full_res_target_y,
-                    full_res_target_z,
-                    full_res_end_x,
-                    full_res_end_y,
-                    full_res_end_z,
+                    densities_in,
+                    mat_target_x,
+                    mat_target_y,
+                    mat_target_z,
+                    mat_end_x,
+                    mat_end_y,
+                    mat_end_z,
                 );
                 materials_out[out_i] = new_material;
             }
@@ -438,64 +467,38 @@ pub fn downscale(
     }
 }
 
-fn pick_surface_material_block_prefer_biomes(
-    densities: &[i16],
+fn pick_surface_material(
     materials: &[MaterialCode],
-    in_dim: usize,
-    full_res_start_x: usize,
-    full_res_start_y: usize,
-    full_res_start_z: usize,
-    full_res_end_x: usize,
-    full_res_end_y: usize,
-    full_res_end_z: usize,
+    densities: &[i16],
+    start_x: usize,
+    start_y: usize,
+    start_z: usize,
+    end_x: usize,
+    end_y: usize,
+    end_z: usize,
 ) -> MaterialCode {
-    let mut best_m = MaterialCode::Air;
-    let mut best_abs = i16::MAX;
-    for full_res_z in full_res_start_z..=full_res_end_z {
-        for full_res_y in full_res_start_y..=full_res_end_y {
-            let base = (full_res_z * in_dim + full_res_y) * in_dim;
-            for full_res_x in full_res_start_x..=full_res_end_x {
-                let index = base + full_res_x;
-                let density = densities[index];
-                let material = materials[index];
-                if material == MaterialCode::Air || density >= 0 {
+    let mut best_mat = MaterialCode::Air;
+    let mut best_dist: u16 = u16::MAX;
+    for z in start_z..=end_z {
+        for y in start_y..=end_y {
+            let mat_base = (z * SAMPLES_PER_CHUNK_DIM + y) * SAMPLES_PER_CHUNK_DIM;
+            let den_base = ((z + 1) * SAMPLES_PER_CHUNK_DIM_PADDED + (y + 1))
+                * SAMPLES_PER_CHUNK_DIM_PADDED
+                + 1;
+            for x in start_x..=end_x {
+                let density = densities[den_base + x];
+                if density >= 0 {
                     continue;
                 }
-                let abs = density.abs();
-                if abs < best_abs {
-                    best_abs = abs;
-                    best_m = material;
+                let dist = density.unsigned_abs();
+                if dist < best_dist {
+                    best_dist = dist;
+                    best_mat = materials[mat_base + x];
                 }
             }
         }
     }
-    if best_m != MaterialCode::Air {
-        return best_m;
-    }
-    let mut best_any_m = MaterialCode::Air;
-    let mut best_any_abs = i16::MAX;
-    let mut best_any_solid = false;
-    for full_res_z in full_res_start_z..=full_res_end_z {
-        for full_res_y in full_res_start_y..=full_res_end_y {
-            let base = (full_res_z * in_dim + full_res_y) * in_dim;
-            for full_res_x in full_res_start_x..=full_res_end_x {
-                let index = base + full_res_x;
-                let density = densities[index];
-                let material = materials[index];
-                if material == MaterialCode::Air {
-                    continue;
-                }
-                let abs = density.abs();
-                let solid = density < 0;
-                if abs < best_any_abs || (abs == best_any_abs && solid && !best_any_solid) {
-                    best_any_abs = abs;
-                    best_any_solid = solid;
-                    best_any_m = material;
-                }
-            }
-        }
-    }
-    best_any_m
+    best_mat
 }
 
 fn sample_trilinear_density(
@@ -535,9 +538,8 @@ fn sample_trilinear_density(
 }
 
 pub fn compute_heightmap_gradients(
-    dhdx: &mut [f32],
-    dhdz: &mut [f32],
-    dim: usize,
+    dhdx: &mut [f32], //(SAMPLES_PER_CHUNK_DIM + 2) * (SAMPLES_PER_CHUNK_DIM + 2)
+    dhdz: &mut [f32], //(SAMPLES_PER_CHUNK_DIM + 2) * (SAMPLES_PER_CHUNK_DIM + 2)
     noise_height_samples: &[f32],
 ) {
     const INV_CHUNK_SIZE: f32 = 1.0 / CHUNK_WORLD_SIZE;
@@ -558,9 +560,9 @@ pub fn compute_heightmap_gradients(
     }
     let mut vg = [0.0; 16];
     let mut zg = [0.0; 16];
-    let inv_samples = 1.0 / (dim - 1) as f32;
-    for z in 0..dim {
-        let t_z = z as f32 * inv_samples;
+    let inv_samples = 1.0 / (SAMPLES_PER_CHUNK_DIM - 1) as f32;
+    for z in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
+        let t_z = (z as f32 - 1.0) * inv_samples;
         let grid_z = 1.0 + t_z * 2.0;
         let iz = grid_z as usize;
         let gz0 = iz.saturating_sub(1).min(4);
@@ -572,9 +574,9 @@ pub fn compute_heightmap_gradients(
         let b1 = gz1 * 5;
         let b2 = gz2 * 5;
         let b3 = gz3 * 5;
-        let base_z = z * dim;
-        for x in 0..dim {
-            let t_x = x as f32 * inv_samples;
+        let base_z = z * SAMPLES_PER_CHUNK_DIM_PADDED;
+        for x in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
+            let t_x = (x as f32 - 1.0) * inv_samples;
             let grid_x = 1.0 + t_x * 2.0;
             let ix = grid_x as usize;
             let gx0i = ix.saturating_sub(1).min(4);

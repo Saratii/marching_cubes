@@ -4,6 +4,7 @@ use bevy::math::Vec3;
 use rustc_hash::{FxBuildHasher, FxHashMap as HashMap};
 
 use crate::{
+    constants::{SAMPLES_PER_CHUNK_DIM, SAMPLES_PER_CHUNK_DIM_PADDED},
     marching_cubes::tables::{CORNER_OFFSETS, EDGE_ID_OFFSETS, EDGE_VERTICES, TRIANGLE_TABLE},
     terrain::chunk_generator::MaterialCode,
 };
@@ -15,11 +16,138 @@ fn make_edge_key(x: u16, y: u16, z: u16, dir: u8) -> u64 {
     (x as u64) | ((y as u64) << 16) | ((z as u64) << 32) | ((dir as u64) << 48)
 }
 
+#[inline(always)]
+fn sample_full_res(
+    densities_full_res: &[i16],
+    x: usize,
+    y: usize,
+    z: usize,
+    padded_dim: usize,
+) -> f32 {
+    let stride = padded_dim * padded_dim;
+    densities_full_res[z * stride + y * padded_dim + x] as f32
+}
+
+fn sample_full_res_trilinear(densities_full_res: &[i16], local_pos: Vec3, half_extent: f32) -> f32 {
+    let inv_voxel = (SAMPLES_PER_CHUNK_DIM - 1) as f32 / (half_extent * 2.0);
+    let fx = (local_pos.x + half_extent) * inv_voxel + 1.0;
+    let fy = (local_pos.y + half_extent) * inv_voxel + 1.0;
+    let fz = (local_pos.z + half_extent) * inv_voxel + 1.0;
+    let fx = fx.clamp(0.0, (SAMPLES_PER_CHUNK_DIM_PADDED - 1) as f32);
+    let fy = fy.clamp(0.0, (SAMPLES_PER_CHUNK_DIM_PADDED - 1) as f32);
+    let fz = fz.clamp(0.0, (SAMPLES_PER_CHUNK_DIM_PADDED - 1) as f32);
+    let ix = fx as usize;
+    let iy = fy as usize;
+    let iz = fz as usize;
+    let tx = fx - ix as f32;
+    let ty = fy - iy as f32;
+    let tz = fz - iz as f32;
+    let ix1 = (ix + 1).min(SAMPLES_PER_CHUNK_DIM_PADDED - 1);
+    let iy1 = (iy + 1).min(SAMPLES_PER_CHUNK_DIM_PADDED - 1);
+    let iz1 = (iz + 1).min(SAMPLES_PER_CHUNK_DIM_PADDED - 1);
+    let d000 = sample_full_res(densities_full_res, ix, iy, iz, SAMPLES_PER_CHUNK_DIM_PADDED);
+    let d100 = sample_full_res(
+        densities_full_res,
+        ix1,
+        iy,
+        iz,
+        SAMPLES_PER_CHUNK_DIM_PADDED,
+    );
+    let d010 = sample_full_res(
+        densities_full_res,
+        ix,
+        iy1,
+        iz,
+        SAMPLES_PER_CHUNK_DIM_PADDED,
+    );
+    let d110 = sample_full_res(
+        densities_full_res,
+        ix1,
+        iy1,
+        iz,
+        SAMPLES_PER_CHUNK_DIM_PADDED,
+    );
+    let d001 = sample_full_res(
+        densities_full_res,
+        ix,
+        iy,
+        iz1,
+        SAMPLES_PER_CHUNK_DIM_PADDED,
+    );
+    let d101 = sample_full_res(
+        densities_full_res,
+        ix1,
+        iy,
+        iz1,
+        SAMPLES_PER_CHUNK_DIM_PADDED,
+    );
+    let d011 = sample_full_res(
+        densities_full_res,
+        ix,
+        iy1,
+        iz1,
+        SAMPLES_PER_CHUNK_DIM_PADDED,
+    );
+    let d111 = sample_full_res(
+        densities_full_res,
+        ix1,
+        iy1,
+        iz1,
+        SAMPLES_PER_CHUNK_DIM_PADDED,
+    );
+    let c00 = d000 + tx * (d100 - d000);
+    let c10 = d010 + tx * (d110 - d010);
+    let c01 = d001 + tx * (d101 - d001);
+    let c11 = d011 + tx * (d111 - d011);
+    let c0 = c00 + ty * (c10 - c00);
+    let c1 = c01 + ty * (c11 - c01);
+    c0 + tz * (c1 - c0)
+}
+
+#[inline(always)]
+fn compute_full_res_gradient(
+    densities_full_res: &[i16],
+    local_pos: Vec3,
+    half_extent: f32,
+) -> Vec3 {
+    let h = (half_extent * 2.0) / (SAMPLES_PER_CHUNK_DIM - 1) as f32 * 0.5;
+    let dx = sample_full_res_trilinear(
+        densities_full_res,
+        local_pos + Vec3::new(h, 0.0, 0.0),
+        half_extent,
+    ) - sample_full_res_trilinear(
+        densities_full_res,
+        local_pos - Vec3::new(h, 0.0, 0.0),
+        half_extent,
+    );
+    let dy = sample_full_res_trilinear(
+        densities_full_res,
+        local_pos + Vec3::new(0.0, h, 0.0),
+        half_extent,
+    ) - sample_full_res_trilinear(
+        densities_full_res,
+        local_pos - Vec3::new(0.0, h, 0.0),
+        half_extent,
+    );
+    let dz = sample_full_res_trilinear(
+        densities_full_res,
+        local_pos + Vec3::new(0.0, 0.0, h),
+        half_extent,
+    ) - sample_full_res_trilinear(
+        densities_full_res,
+        local_pos - Vec3::new(0.0, 0.0, h),
+        half_extent,
+    );
+    Vec3::new(dx, dy, dz)
+}
+
 pub fn mc_mesh_generation(
     densities: &[i16],
     materials: &[MaterialCode],
     samples_per_chunk_dim: usize,
     half_extent: f32,
+    densities_padded: bool,
+    densities_full_res: &[i16],
 ) -> (Vec<Vec3>, Vec<Vec3>, Vec<u32>, Vec<u32>) {
     let mut edge_to_vertex: HashMap<EdgeKey, u32> = HashMap::with_hasher(FxBuildHasher::default());
     let cubes_per_chunk_dim = samples_per_chunk_dim - 1;
@@ -28,24 +156,34 @@ pub fn mc_mesh_generation(
     let mut normals = Vec::new();
     let mut material_ids = Vec::new();
     let mut indices = Vec::new();
-    let stride = samples_per_chunk_dim * samples_per_chunk_dim;
+    let density_dim = if densities_padded {
+        samples_per_chunk_dim + 2
+    } else {
+        samples_per_chunk_dim
+    };
+    let stride = density_dim * density_dim;
+    let density_offset = if densities_padded {
+        stride + density_dim + 1
+    } else {
+        0
+    };
+    let mat_stride = samples_per_chunk_dim * samples_per_chunk_dim;
     for z_idx in 0..cubes_per_chunk_dim {
         let cube_z_world_pos = -half_extent + z_idx as f32 * voxel_size;
         let z_base = z_idx * stride;
+        let mat_z_base = z_idx * mat_stride;
         for y_idx in 0..cubes_per_chunk_dim {
             let cube_y_world_pos = -half_extent + y_idx as f32 * voxel_size;
-            let yz_base = z_base + y_idx * samples_per_chunk_dim;
+            let yz_base = z_base + y_idx * density_dim;
+            let mat_yz_base = mat_z_base + y_idx * samples_per_chunk_dim;
             for x_idx in 0..cubes_per_chunk_dim {
                 let cube_x_world_pos = -half_extent + x_idx as f32 * voxel_size;
                 let cube_world_pos =
                     Vec3::new(cube_x_world_pos, cube_y_world_pos, cube_z_world_pos);
-                let voxel_idx = yz_base + x_idx;
-                let cube_corner_densities = sample_cube_corner_densities(
-                    densities,
-                    samples_per_chunk_dim,
-                    stride,
-                    voxel_idx,
-                );
+                let voxel_idx = density_offset + yz_base + x_idx;
+                let mat_voxel_idx = mat_yz_base + x_idx;
+                let cube_corner_densities =
+                    sample_cube_corner_densities(densities, density_dim, stride, voxel_idx);
                 let sdf_sign_mask = compute_sdf_sign_mask(&cube_corner_densities);
                 if sdf_sign_mask == 0 || sdf_sign_mask == 255 {
                     continue;
@@ -56,7 +194,7 @@ pub fn mc_mesh_generation(
                     y_idx,
                     z_idx,
                     cube_world_pos,
-                    voxel_idx,
+                    mat_voxel_idx,
                     &mut vertices,
                     &mut normals,
                     &mut material_ids,
@@ -64,18 +202,14 @@ pub fn mc_mesh_generation(
                     materials,
                     samples_per_chunk_dim,
                     voxel_size,
-                    stride,
+                    mat_stride,
                     &mut edge_to_vertex,
                     &cube_corner_densities,
                     edge_table,
+                    densities_full_res,
+                    half_extent,
                 );
             }
-        }
-    }
-    for normal in normals.iter_mut() {
-        let len = normal.length();
-        if len > 0.0001 {
-            *normal /= len;
         }
     }
     (vertices, normals, material_ids, indices)
@@ -95,7 +229,7 @@ fn triangulate_cube_with_cache(
     y_idx: usize,
     z_idx: usize,
     cube_world_pos: Vec3,
-    voxel_idx: usize,
+    mat_voxel_idx: usize,
     vertices: &mut Vec<Vec3>,
     normals: &mut Vec<Vec3>,
     material_ids: &mut Vec<u32>,
@@ -103,10 +237,12 @@ fn triangulate_cube_with_cache(
     materials: &[MaterialCode],
     samples_per_chunk_dim: usize,
     voxel_size: f32,
-    stride: usize,
+    mat_stride: usize,
     edge_to_vertex: &mut HashMap<EdgeKey, u32>,
     cube_corner_densities: &[f32; 8],
     edge_table: &[i32; 16],
+    densities_full_res: &[i16],
+    half_extent: f32,
 ) {
     let mut i = 0;
     while edge_table[i] != -1 {
@@ -123,10 +259,12 @@ fn triangulate_cube_with_cache(
             material_ids,
             materials,
             samples_per_chunk_dim,
-            stride,
-            voxel_idx,
+            mat_stride,
+            mat_voxel_idx,
             edge_to_vertex,
             edge_id,
+            densities_full_res,
+            half_extent,
         );
         let edge_index = edge_table[i + 1] as usize;
         let (dx, dy, dz, dir) = EDGE_ID_OFFSETS[edge_index];
@@ -141,10 +279,12 @@ fn triangulate_cube_with_cache(
             material_ids,
             materials,
             samples_per_chunk_dim,
-            stride,
-            voxel_idx,
+            mat_stride,
+            mat_voxel_idx,
             edge_to_vertex,
             edge_id,
+            densities_full_res,
+            half_extent,
         );
         let edge_index = edge_table[i + 2] as usize;
         let (dx, dy, dz, dir) = EDGE_ID_OFFSETS[edge_index];
@@ -159,24 +299,16 @@ fn triangulate_cube_with_cache(
             material_ids,
             materials,
             samples_per_chunk_dim,
-            stride,
-            voxel_idx,
+            mat_stride,
+            mat_voxel_idx,
             edge_to_vertex,
             edge_id,
+            densities_full_res,
+            half_extent,
         );
-        let i1 = v1 as usize;
-        let i2 = v2 as usize;
-        let i3 = v3 as usize;
-        let p1 = vertices[i1];
-        let p2 = vertices[i2];
-        let p3 = vertices[i3];
-        let n = (p2 - p1).cross(p3 - p1);
-        normals[i1] += n;
-        normals[i2] += n;
-        normals[i3] += n;
-        let m1 = material_ids[i1];
-        let m2 = material_ids[i2];
-        let m3 = material_ids[i3];
+        let m1 = material_ids[v1 as usize];
+        let m2 = material_ids[v2 as usize];
+        let m3 = material_ids[v3 as usize];
         if m1 == m2 && m2 == m3 {
             indices.push(v1);
             indices.push(v2);
@@ -210,10 +342,12 @@ fn get_or_create_edge_vertex(
     material_ids: &mut Vec<u32>,
     materials: &[MaterialCode],
     samples_per_chunk_dim: usize,
-    stride: usize,
-    voxel_idx: usize,
+    mat_stride: usize,
+    mat_voxel_idx: usize,
     edge_to_vertex: &mut HashMap<EdgeKey, u32>,
     edge_id: u64,
+    densities_full_res: &[i16],
+    half_extent: f32,
 ) -> u32 {
     match edge_to_vertex.entry(edge_id) {
         Entry::Occupied(e) => *e.get(),
@@ -225,25 +359,33 @@ fn get_or_create_edge_vertex(
             let v2 = d2 * voxel_size + cube_world_pos;
             let position =
                 interpolate_edge_from_base(v1_idx, v2_idx, cube_corner_densities, v1, v2);
-            let material1 = materials[voxel_idx
-                + d1.z as usize * stride
+            let material1 = materials[mat_voxel_idx
+                + d1.z as usize * mat_stride
                 + d1.y as usize * samples_per_chunk_dim
                 + d1.x as usize];
-            let material2 = materials[voxel_idx
-                + d2.z as usize * stride
+            let material2 = materials[mat_voxel_idx
+                + d2.z as usize * mat_stride
                 + d2.y as usize * samples_per_chunk_dim
                 + d2.x as usize];
             let material = if material1 == MaterialCode::Grass || material2 == MaterialCode::Grass {
                 MaterialCode::Grass
+            } else if material1 == MaterialCode::Sand || material2 == MaterialCode::Sand {
+                MaterialCode::Sand
             } else if material1 != MaterialCode::Air {
                 material1
             } else {
                 material2
             };
+            let gradient = compute_full_res_gradient(densities_full_res, position, half_extent);
+            let normal = if gradient.length_squared() > 0.0001 {
+                gradient.normalize()
+            } else {
+                Vec3::Y
+            };
             let idx = vertices.len() as u32;
             vertices.push(position);
+            normals.push(normal);
             material_ids.push(material as u32);
-            normals.push(Vec3::ZERO);
             e.insert(idx);
             idx
         }

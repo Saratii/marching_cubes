@@ -5,7 +5,8 @@ use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
 
 use crate::{
     constants::{
-        CHUNK_WORLD_SIZE, HALF_CHUNK, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_DIM, VOXEL_WORLD_SIZE,
+        CHUNK_WORLD_SIZE, HALF_CHUNK, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_DIM,
+        SAMPLES_PER_CHUNK_DIM_PADDED, SAMPLES_PER_CHUNK_PADDED, VOXEL_WORLD_SIZE,
     },
     conversions::{
         chunk_coord_to_world_pos, flatten_index, world_pos_to_chunk_coord, world_pos_to_voxel_index,
@@ -89,6 +90,8 @@ pub fn handle_digging_input(
                         &materials,
                         SAMPLES_PER_CHUNK_DIM,
                         HALF_CHUNK,
+                        true,
+                        &densities,
                     );
                     match uniformity {
                         Uniformity::Air | Uniformity::Dirt => {
@@ -219,12 +222,12 @@ fn dig_sphere(
                         Uniformity,
                     ) = match terrain_chunk {
                         TerrainChunk::UniformAir => (
-                            Arc::new([i16::MAX; SAMPLES_PER_CHUNK]),
+                            Arc::new([i16::MAX; SAMPLES_PER_CHUNK_PADDED]),
                             Arc::new([MaterialCode::Air; SAMPLES_PER_CHUNK]),
                             Uniformity::Air,
                         ),
                         TerrainChunk::UniformDirt => (
-                            Arc::new([i16::MIN; SAMPLES_PER_CHUNK]),
+                            Arc::new([i16::MIN; SAMPLES_PER_CHUNK_PADDED]),
                             Arc::new([MaterialCode::Dirt; SAMPLES_PER_CHUNK]),
                             Uniformity::Dirt,
                         ),
@@ -254,6 +257,7 @@ fn dig_sphere(
     modified_chunks
 }
 
+//syncing the neighboring paddings is not necessary because definitionally if padding is touched so were the non padded neighboring densities which get remeshed anyway.
 fn modify_chunk_voxels(
     densities: &mut [i16],
     chunk_coord: &(i16, i16, i16),
@@ -263,25 +267,25 @@ fn modify_chunk_voxels(
     inv_radius_sq: f32,
 ) -> bool {
     let chunk_center = chunk_coord_to_world_pos(&chunk_coord);
-    let node_min = Vec3::new(
-        chunk_center.x - HALF_CHUNK,
-        chunk_center.y - HALF_CHUNK,
-        chunk_center.z - HALF_CHUNK,
+    let padded_origin = Vec3::new(
+        chunk_center.x - HALF_CHUNK - VOXEL_WORLD_SIZE,
+        chunk_center.y - HALF_CHUNK - VOXEL_WORLD_SIZE,
+        chunk_center.z - HALF_CHUNK - VOXEL_WORLD_SIZE,
     );
     let mut chunk_modified = false;
-    for z in 0..SAMPLES_PER_CHUNK_DIM {
-        let world_z = node_min.z + z as f32 * VOXEL_WORLD_SIZE;
-        for y in 0..SAMPLES_PER_CHUNK_DIM {
-            let world_y = node_min.y + y as f32 * VOXEL_WORLD_SIZE;
-            for x in 0..SAMPLES_PER_CHUNK_DIM {
-                let world_x = node_min.x + x as f32 * VOXEL_WORLD_SIZE;
+    for z in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
+        let world_z = padded_origin.z + z as f32 * VOXEL_WORLD_SIZE;
+        for y in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
+            let world_y = padded_origin.y + y as f32 * VOXEL_WORLD_SIZE;
+            for x in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
+                let world_x = padded_origin.x + x as f32 * VOXEL_WORLD_SIZE;
                 let voxel_world_pos = Vec3::new(world_x, world_y, world_z);
                 let distance_squared = voxel_world_pos.distance_squared(dig_center);
                 if distance_squared <= radius_squared {
                     let falloff = 1.0 - distance_squared * inv_radius_sq;
                     let dig_amount = strength * falloff;
                     let flat_index =
-                        flatten_index(x as u32, y as u32, z as u32, SAMPLES_PER_CHUNK_DIM);
+                        flatten_index(x as u32, y as u32, z as u32, SAMPLES_PER_CHUNK_DIM_PADDED);
                     let current_density = &mut densities[flat_index as usize];
                     if *current_density < 0 {
                         let sdf_f32 = dequantize_i16_to_f32(*current_density);
