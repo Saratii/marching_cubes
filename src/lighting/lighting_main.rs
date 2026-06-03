@@ -2,11 +2,12 @@ use std::f32::consts::FRAC_PI_4;
 
 use bevy::{
     camera::Exposure,
-    core_pipeline::tonemapping::Tonemapping,
+    core_pipeline::{prepass::DepthPrepass, tonemapping::Tonemapping},
     light::AtmosphereEnvironmentMapLight,
     pbr::{Atmosphere, AtmosphereSettings, ScatteringMedium, ScreenSpaceReflections},
     post_process::bloom::Bloom,
     prelude::*,
+    render::experimental::occlusion_culling::OcclusionCulling,
 };
 
 use crate::{
@@ -63,6 +64,15 @@ pub fn apply_settings_changes(
         } else {
             commands.entity(entity).remove::<DistanceFog>();
         }
+        if settings.occlusion_culling {
+            commands
+                .entity(entity)
+                .insert((DepthPrepass, OcclusionCulling));
+        } else {
+            commands
+                .entity(entity)
+                .remove::<(DepthPrepass, OcclusionCulling)>();
+        }
     }
 }
 
@@ -80,9 +90,9 @@ pub fn setup_camera(
             rotation: Quat::IDENTITY,
             scale: Vec3::ONE,
         },
-        Camera::default(),
-        IsDefaultUiCamera,
+        OcclusionCulling,
         MainCameraTag,
+        DepthPrepass,
         Atmosphere {
             bottom_radius: 6_360_000.0,
             top_radius: 6_460_000.0,

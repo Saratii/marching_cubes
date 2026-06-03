@@ -1,4 +1,5 @@
 use bevy::{
+    asset::AssetPath,
     mesh::MeshVertexBufferLayoutRef,
     pbr::{MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline},
     prelude::*,
@@ -9,7 +10,7 @@ use bevy::{
     shader::ShaderRef,
 };
 
-use crate::terrain::ATTRIBUTE_MATERIAL_ID;
+use crate::{data_loader::file_loader::get_project_root, terrain::ATTRIBUTE_MATERIAL_ID};
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
 pub struct TerrainMaterialExtension {
@@ -22,11 +23,15 @@ pub struct TerrainMaterialExtension {
 
 impl MaterialExtension for TerrainMaterialExtension {
     fn vertex_shader() -> ShaderRef {
-        "shaders/triplanar.wgsl".into()
+        let root = get_project_root();
+        let path = root.join("assets/shaders/triplanar.wgsl");
+        ShaderRef::Path(AssetPath::from(path))
     }
 
     fn fragment_shader() -> ShaderRef {
-        "shaders/triplanar.wgsl".into()
+        let root = get_project_root();
+        let path = root.join("assets/shaders/triplanar.wgsl");
+        ShaderRef::Path(AssetPath::from(path))
     }
 
     fn specialize(

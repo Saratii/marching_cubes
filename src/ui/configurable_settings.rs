@@ -122,6 +122,7 @@ pub enum SettingsType {
     FogStartMultiplier,
     FogEndMultiplier,
     DistanceFogToggle,
+    OcclusionCullingToggle,
 }
 
 impl SettingsType {
@@ -149,6 +150,7 @@ impl SettingsType {
                 format!("Fog End Multiplier: {:.2}", s.fog_end_multiplier)
             }
             SettingsType::DistanceFogToggle => format!("Distance Fog: {}", on_off(s.distance_fog)),
+            SettingsType::OcclusionCullingToggle => format!("Occlusion Culling: {}", on_off(s.occlusion_culling)),
         }
     }
 
@@ -186,6 +188,7 @@ impl SettingsType {
                 settings.fog_end_multiplier = new;
             }
             SettingsType::DistanceFogToggle => settings.distance_fog = !settings.distance_fog,
+            SettingsType::OcclusionCullingToggle => settings.occlusion_culling = !settings.occlusion_culling,
         }
     }
 }
@@ -204,6 +207,7 @@ pub struct ConfigurableSettings {
     pub fog_start_multiplier: f32,
     pub fog_end_multiplier: f32,
     pub distance_fog: bool,
+    pub occlusion_culling: bool,
 }
 
 pub fn load_configurable_settings() -> ConfigurableSettings {
@@ -228,6 +232,7 @@ impl Default for ConfigurableSettings {
             fog_start_multiplier: 0.7,
             fog_end_multiplier: 0.8,
             distance_fog: true,
+            occlusion_culling: true,
         }
     }
 }

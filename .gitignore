@@ -5,3 +5,4 @@ perf.data.old
 /plots/latest
 profile.json.gz
 profile.kernel.etl
+imgui.ini

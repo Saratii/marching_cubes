@@ -120,7 +120,7 @@ fn main() {
                 setup_map,
                 spawn_crosshair,
                 spawn_player.after(setup_chunk_loading).after(setup_camera),
-                spawn_minimap.after(spawn_player),
+                // spawn_minimap.after(spawn_player),
                 initial_grab_cursor,
                 setup_lighting,
                 setup_camera,
