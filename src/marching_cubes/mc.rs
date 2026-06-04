@@ -4,7 +4,9 @@ use bevy::math::Vec3;
 use rustc_hash::{FxBuildHasher, FxHashMap as HashMap};
 
 use crate::{
-    constants::{SAMPLES_PER_CHUNK_DIM, SAMPLES_PER_CHUNK_DIM_PADDED},
+    constants::{
+        CHUNK_WORLD_SIZE, HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, SAMPLES_PER_CHUNK_DIM_PADDED,
+    },
     marching_cubes::tables::{CORNER_OFFSETS, EDGE_ID_OFFSETS, EDGE_VERTICES, TRIANGLE_TABLE},
     terrain::chunk_generator::MaterialCode,
 };
@@ -28,11 +30,11 @@ fn sample_full_res(
     densities_full_res[z * stride + y * padded_dim + x] as f32
 }
 
-fn sample_full_res_trilinear(densities_full_res: &[i16], local_pos: Vec3, half_extent: f32) -> f32 {
-    let inv_voxel = (SAMPLES_PER_CHUNK_DIM - 1) as f32 / (half_extent * 2.0);
-    let fx = (local_pos.x + half_extent) * inv_voxel + 1.0;
-    let fy = (local_pos.y + half_extent) * inv_voxel + 1.0;
-    let fz = (local_pos.z + half_extent) * inv_voxel + 1.0;
+fn sample_full_res_trilinear(densities_full_res: &[i16], local_pos: Vec3) -> f32 {
+    let inv_voxel = (SAMPLES_PER_CHUNK_DIM - 1) as f32 / CHUNK_WORLD_SIZE;
+    let fx = (local_pos.x + HALF_CHUNK) * inv_voxel + 1.0;
+    let fy = (local_pos.y + HALF_CHUNK) * inv_voxel + 1.0;
+    let fz = (local_pos.z + HALF_CHUNK) * inv_voxel + 1.0;
     let fx = fx.clamp(0.0, (SAMPLES_PER_CHUNK_DIM_PADDED - 1) as f32);
     let fy = fy.clamp(0.0, (SAMPLES_PER_CHUNK_DIM_PADDED - 1) as f32);
     let fz = fz.clamp(0.0, (SAMPLES_PER_CHUNK_DIM_PADDED - 1) as f32);
@@ -105,39 +107,14 @@ fn sample_full_res_trilinear(densities_full_res: &[i16], local_pos: Vec3, half_e
 }
 
 #[inline(always)]
-fn compute_full_res_gradient(
-    densities_full_res: &[i16],
-    local_pos: Vec3,
-    half_extent: f32,
-) -> Vec3 {
-    let h = (half_extent * 2.0) / (SAMPLES_PER_CHUNK_DIM - 1) as f32 * 0.5;
-    let dx = sample_full_res_trilinear(
-        densities_full_res,
-        local_pos + Vec3::new(h, 0.0, 0.0),
-        half_extent,
-    ) - sample_full_res_trilinear(
-        densities_full_res,
-        local_pos - Vec3::new(h, 0.0, 0.0),
-        half_extent,
-    );
-    let dy = sample_full_res_trilinear(
-        densities_full_res,
-        local_pos + Vec3::new(0.0, h, 0.0),
-        half_extent,
-    ) - sample_full_res_trilinear(
-        densities_full_res,
-        local_pos - Vec3::new(0.0, h, 0.0),
-        half_extent,
-    );
-    let dz = sample_full_res_trilinear(
-        densities_full_res,
-        local_pos + Vec3::new(0.0, 0.0, h),
-        half_extent,
-    ) - sample_full_res_trilinear(
-        densities_full_res,
-        local_pos - Vec3::new(0.0, 0.0, h),
-        half_extent,
-    );
+fn compute_full_res_gradient(densities_full_res: &[i16], local_pos: Vec3) -> Vec3 {
+    let h = CHUNK_WORLD_SIZE / (SAMPLES_PER_CHUNK_DIM - 1) as f32 * 0.5;
+    let dx = sample_full_res_trilinear(densities_full_res, local_pos + Vec3::new(h, 0.0, 0.0))
+        - sample_full_res_trilinear(densities_full_res, local_pos - Vec3::new(h, 0.0, 0.0));
+    let dy = sample_full_res_trilinear(densities_full_res, local_pos + Vec3::new(0.0, h, 0.0))
+        - sample_full_res_trilinear(densities_full_res, local_pos - Vec3::new(0.0, h, 0.0));
+    let dz = sample_full_res_trilinear(densities_full_res, local_pos + Vec3::new(0.0, 0.0, h))
+        - sample_full_res_trilinear(densities_full_res, local_pos - Vec3::new(0.0, 0.0, h));
     Vec3::new(dx, dy, dz)
 }
 
@@ -145,13 +122,12 @@ pub fn mc_mesh_generation(
     densities: &[i16],
     materials: &[MaterialCode],
     samples_per_chunk_dim: usize,
-    half_extent: f32,
     densities_padded: bool,
     densities_full_res: &[i16],
 ) -> (Vec<Vec3>, Vec<Vec3>, Vec<u32>, Vec<u32>) {
     let mut edge_to_vertex: HashMap<EdgeKey, u32> = HashMap::with_hasher(FxBuildHasher::default());
     let cubes_per_chunk_dim = samples_per_chunk_dim - 1;
-    let voxel_size = (half_extent * 2.0) / (samples_per_chunk_dim - 1) as f32;
+    let voxel_size = CHUNK_WORLD_SIZE / (samples_per_chunk_dim - 1) as f32;
     let mut vertices = Vec::new();
     let mut normals = Vec::new();
     let mut material_ids = Vec::new();
@@ -169,15 +145,15 @@ pub fn mc_mesh_generation(
     };
     let mat_stride = samples_per_chunk_dim * samples_per_chunk_dim;
     for z_idx in 0..cubes_per_chunk_dim {
-        let cube_z_world_pos = -half_extent + z_idx as f32 * voxel_size;
+        let cube_z_world_pos = -HALF_CHUNK + z_idx as f32 * voxel_size;
         let z_base = z_idx * stride;
         let mat_z_base = z_idx * mat_stride;
         for y_idx in 0..cubes_per_chunk_dim {
-            let cube_y_world_pos = -half_extent + y_idx as f32 * voxel_size;
+            let cube_y_world_pos = -HALF_CHUNK + y_idx as f32 * voxel_size;
             let yz_base = z_base + y_idx * density_dim;
             let mat_yz_base = mat_z_base + y_idx * samples_per_chunk_dim;
             for x_idx in 0..cubes_per_chunk_dim {
-                let cube_x_world_pos = -half_extent + x_idx as f32 * voxel_size;
+                let cube_x_world_pos = -HALF_CHUNK + x_idx as f32 * voxel_size;
                 let cube_world_pos =
                     Vec3::new(cube_x_world_pos, cube_y_world_pos, cube_z_world_pos);
                 let voxel_idx = density_offset + yz_base + x_idx;
@@ -207,7 +183,6 @@ pub fn mc_mesh_generation(
                     &cube_corner_densities,
                     edge_table,
                     densities_full_res,
-                    half_extent,
                 );
             }
         }
@@ -242,7 +217,6 @@ fn triangulate_cube_with_cache(
     cube_corner_densities: &[f32; 8],
     edge_table: &[i32; 16],
     densities_full_res: &[i16],
-    half_extent: f32,
 ) {
     let mut i = 0;
     while edge_table[i] != -1 {
@@ -264,7 +238,6 @@ fn triangulate_cube_with_cache(
             edge_to_vertex,
             edge_id,
             densities_full_res,
-            half_extent,
         );
         let edge_index = edge_table[i + 1] as usize;
         let (dx, dy, dz, dir) = EDGE_ID_OFFSETS[edge_index];
@@ -284,7 +257,6 @@ fn triangulate_cube_with_cache(
             edge_to_vertex,
             edge_id,
             densities_full_res,
-            half_extent,
         );
         let edge_index = edge_table[i + 2] as usize;
         let (dx, dy, dz, dir) = EDGE_ID_OFFSETS[edge_index];
@@ -304,7 +276,6 @@ fn triangulate_cube_with_cache(
             edge_to_vertex,
             edge_id,
             densities_full_res,
-            half_extent,
         );
         let m1 = material_ids[v1 as usize];
         let m2 = material_ids[v2 as usize];
@@ -347,7 +318,6 @@ fn get_or_create_edge_vertex(
     edge_to_vertex: &mut HashMap<EdgeKey, u32>,
     edge_id: u64,
     densities_full_res: &[i16],
-    half_extent: f32,
 ) -> u32 {
     match edge_to_vertex.entry(edge_id) {
         Entry::Occupied(e) => *e.get(),
@@ -376,7 +346,7 @@ fn get_or_create_edge_vertex(
             } else {
                 material2
             };
-            let gradient = compute_full_res_gradient(densities_full_res, position, half_extent);
+            let gradient = compute_full_res_gradient(densities_full_res, position);
             let normal = if gradient.length_squared() > 0.0001 {
                 gradient.normalize()
             } else {

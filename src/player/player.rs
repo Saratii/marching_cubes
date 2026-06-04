@@ -12,11 +12,14 @@ use crate::{
         CAMERA_FIRST_PERSON_OFFSET, NOISE_AMPLITUDE, NOISE_FREQUENCY, PLAYER_CUBOID_SIZE,
         PLAYER_SPAWN, WORLD_SEED,
     },
+    conversions::world_pos_to_chunk_coord,
     data_loader::{
         driver::{INITIAL_CHUNKS_LOADED, PlayerTranslationMutexHandle},
-        file_loader::{PlayerDataFile, read_player_position, write_player_position},
+        file_loader::{
+            ChunkEntityMap, PlayerDataFile, read_player_position, write_player_position,
+        },
     },
-    terrain::terrain::NoiseFunction,
+    terrain::terrain::{ChunkTag, NoiseFunction},
     ui::menu::MenuRoot,
 };
 
@@ -587,4 +590,25 @@ pub fn spawn_free_cam_root(mut commands: Commands) {
         .id();
     commands.insert_resource(FreeCamRoot(root));
     commands.insert_resource(FreeCamMode::default());
+}
+
+//wait for a chunk to exist with a collider at or below the player
+pub fn validate_player_spawn(
+    chunk_entity_map: Res<ChunkEntityMap>,
+    player_position_query: Query<&Transform, (With<PlayerTag>, Without<ChunkTag>)>,
+    spawned_chunks_query: Query<(), (With<ChunkTag>, With<Collider>)>,
+) {
+    let player_position = player_position_query.iter().next().unwrap();
+    let player_chunk = world_pos_to_chunk_coord(&player_position.translation);
+    for chunk_y in (player_chunk.1 - 10..=player_chunk.1).rev() {
+        if let Some(entity) = chunk_entity_map
+            .0
+            .get(&(player_chunk.0, chunk_y, player_chunk.2))
+        {
+            if spawned_chunks_query.get(*entity).is_ok() {
+                INITIAL_CHUNKS_LOADED.store(true, Ordering::Relaxed);
+                break;
+            }
+        }
+    }
 }

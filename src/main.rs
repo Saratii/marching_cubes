@@ -19,7 +19,6 @@ use iyes_perf_ui::prelude::PerfUiDefaultEntries;
 
 use marching_cubes::data_loader::driver::{
     FrameStart, INITIAL_CHUNKS_LOADED, chunk_spawn_reciever, setup_chunk_driver,
-    validate_player_spawn,
 };
 use marching_cubes::data_loader::file_loader::setup_chunk_loading;
 use marching_cubes::lighting::lighting_main::{
@@ -30,6 +29,7 @@ use marching_cubes::player::player::{
     CameraController, KeyBindings, camera_look, camera_zoom, free_cam_movement, grab_on_click,
     handle_focus_change, initial_grab_cursor, player_movement, spawn_free_cam_root, spawn_player,
     sync_player_mutex, toggle_first_person, toggle_fly_mode, toggle_free_cam,
+    validate_player_spawn,
 };
 use marching_cubes::settings::settings_driver::{load_settings, save_monitor_on_move};
 use marching_cubes::terrain::chunk_generator::get_fbm;

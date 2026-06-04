@@ -2,18 +2,16 @@ use bevy::math::Vec3;
 use criterion::{Criterion, criterion_group, criterion_main};
 
 use marching_cubes::{
-    constants::{
-        CHUNKS_PER_CLUSTER_DIM, HALF_CHUNK, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_2D,
-        SAMPLES_PER_CHUNK_DIM,
-    },
+    constants::{CHUNKS_PER_CLUSTER_DIM, SAMPLES_PER_CHUNK_2D, SAMPLES_PER_CHUNK_DIM},
     conversions::{chunk_coord_to_cluster_coord, world_pos_to_chunk_coord},
+    data_loader::driver::ChunkBuffers,
     marching_cubes::mc::mc_mesh_generation,
     terrain::{
         chunk_compute_pipeline::GpuTerrainGenerator,
         chunk_generator::{
-            MaterialCode, calculate_chunk_start, chunk_contains_surface,
-            compute_heightmap_gradients, generate_chunk_into_buffers,
-            generate_noise_height_samples, generate_terrain_heights, get_fbm,
+            calculate_chunk_start, chunk_contains_surface, compute_heightmap_gradients,
+            generate_chunk_into_buffers, generate_noise_height_samples, generate_terrain_heights,
+            get_fbm,
         },
         heightmap_compute_pipeline::GpuHeightmapGenerator,
     },
@@ -23,22 +21,14 @@ use std::{collections::HashMap, hint::black_box};
 fn benchmark_generate_densities_cpu(c: &mut Criterion) {
     let chunk_coord = find_chunk_with_surface();
     let fbm = get_fbm();
-    let mut densities_buffer = Box::new([0; SAMPLES_PER_CHUNK]);
-    let mut materials_buffer = Box::new([MaterialCode::Air; SAMPLES_PER_CHUNK]);
-    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
-    let mut dhdx_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
-    let mut dhdz_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
+    let mut chunk_buffers = ChunkBuffers::new();
     c.bench_function("generate_densities_cpu", |b| {
         b.iter(|| {
             let chunk_start = calculate_chunk_start(&chunk_coord);
             black_box(generate_chunk_into_buffers(
                 black_box(&fbm),
                 black_box(chunk_start),
-                black_box(densities_buffer.as_mut()),
-                black_box(materials_buffer.as_mut()),
-                black_box(&mut heightmap_buffer),
-                black_box(&mut dhdx_buffer),
-                black_box(&mut dhdz_buffer),
+                black_box(&mut chunk_buffers),
             ));
         })
     });
@@ -46,22 +36,14 @@ fn benchmark_generate_densities_cpu(c: &mut Criterion) {
 
 fn benchmark_generate_uniform_densities_cpu(c: &mut Criterion) {
     let fbm = get_fbm();
-    let mut densities_buffer = Box::new([0; SAMPLES_PER_CHUNK]);
-    let mut materials_buffer = Box::new([MaterialCode::Air; SAMPLES_PER_CHUNK]);
-    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
-    let mut dhdx_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
-    let mut dhdz_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
+    let mut chunk_buffers = ChunkBuffers::new();
     c.bench_function("generate_uniform_densities_cpu", |b| {
         b.iter(|| {
             let chunk_start = calculate_chunk_start(&(0, 2000, 0));
             black_box(generate_chunk_into_buffers(
                 black_box(&fbm),
                 black_box(chunk_start),
-                black_box(densities_buffer.as_mut()),
-                black_box(materials_buffer.as_mut()),
-                black_box(&mut heightmap_buffer),
-                black_box(&mut dhdx_buffer),
-                black_box(&mut dhdz_buffer),
+                black_box(&mut chunk_buffers),
             ))
         })
     });
@@ -83,29 +65,16 @@ fn benchmark_marching_cubes(c: &mut Criterion) {
     let chunk = find_chunk_with_surface();
     let fbm = get_fbm();
     let chunk_start = calculate_chunk_start(&chunk);
-    let mut densities_buffer = Box::new([0; SAMPLES_PER_CHUNK]);
-    let mut materials_buffer = Box::new([MaterialCode::Air; SAMPLES_PER_CHUNK]);
-    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
-    let mut dhdx_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
-    let mut dhdz_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
-    generate_chunk_into_buffers(
-        &fbm,
-        chunk_start,
-        densities_buffer.as_mut(),
-        materials_buffer.as_mut(),
-        &mut heightmap_buffer,
-        &mut dhdx_buffer,
-        &mut dhdz_buffer,
-    );
+    let mut chunk_buffers = ChunkBuffers::new();
+    generate_chunk_into_buffers(&fbm, chunk_start, black_box(&mut chunk_buffers));
     c.bench_function("marching_cubes", |b| {
         b.iter(|| {
             black_box(mc_mesh_generation(
-                black_box(densities_buffer.as_ref()),
-                black_box(materials_buffer.as_ref()),
+                black_box(&chunk_buffers.density),
+                black_box(&chunk_buffers.material),
                 black_box(SAMPLES_PER_CHUNK_DIM),
-                black_box(HALF_CHUNK),
                 false,
-                black_box(densities_buffer.as_ref()),
+                black_box(&chunk_buffers.density),
             ));
         })
     });
@@ -200,25 +169,13 @@ fn benchmark_batch_cluster_heightmaps_gpu(c: &mut Criterion) {
 }
 
 fn find_chunk_with_surface() -> (i16, i16, i16) {
-    let mut densities_buffer = Box::new([0; SAMPLES_PER_CHUNK]);
-    let mut materials_buffer = Box::new([MaterialCode::Air; SAMPLES_PER_CHUNK]);
-    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
-    let mut dhdx_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
-    let mut dhdz_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
+    let mut chunk_buffers = ChunkBuffers::new();
     let fbm = get_fbm();
     for chunk_y in -100..100 {
         let chunk_coord = (0, chunk_y, 0);
         let chunk_start = calculate_chunk_start(&chunk_coord);
-        generate_chunk_into_buffers(
-            &fbm,
-            chunk_start,
-            densities_buffer.as_mut(),
-            materials_buffer.as_mut(),
-            &mut heightmap_buffer,
-            &mut dhdx_buffer,
-            &mut dhdz_buffer,
-        );
-        if chunk_contains_surface(densities_buffer.as_ref()) {
+        generate_chunk_into_buffers(&fbm, chunk_start, &mut chunk_buffers);
+        if chunk_contains_surface(&chunk_buffers.density) {
             return chunk_coord;
         }
     }

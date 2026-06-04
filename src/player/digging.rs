@@ -89,7 +89,6 @@ pub fn handle_digging_input(
                         &densities,
                         &materials,
                         SAMPLES_PER_CHUNK_DIM,
-                        HALF_CHUNK,
                         true,
                         &densities,
                     );

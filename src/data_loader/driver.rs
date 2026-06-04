@@ -2,9 +2,8 @@ use crate::constants::SAMPLES_PER_CHUNK_PADDED;
 use crate::terrain::chunk_generator::padded_chunk_contains_surface;
 use crate::{
     constants::{
-        CHUNK_WORLD_SIZE, CHUNKS_PER_CLUSTER, CHUNKS_PER_CLUSTER_DIM, HALF_CHUNK, NOISE_AMPLITUDE,
-        NOISE_FREQUENCY, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_2D_PADDED, SAMPLES_PER_CHUNK_DIM,
-        SIMULATION_RADIUS_SQUARED, WORLD_SEED,
+        CHUNKS_PER_CLUSTER, CHUNKS_PER_CLUSTER_DIM, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_2D_PADDED,
+        SAMPLES_PER_CHUNK_DIM, SIMULATION_RADIUS_SQUARED,
     },
     conversions::cluster_coord_to_min_chunk_coord,
     data_loader::{
@@ -42,10 +41,9 @@ use std::{
 };
 
 use crate::{
-    conversions::{chunk_coord_to_world_pos, world_pos_to_chunk_coord},
+    conversions::chunk_coord_to_world_pos,
     data_loader::file_loader::{ChunkEntityMap, write_uniform_chunk},
     marching_cubes::mc::mc_mesh_generation,
-    player::player::PlayerTag,
     sparse_voxel_octree::ChunkSvo,
     terrain::{
         chunk_generator::chunk_contains_surface,
@@ -53,8 +51,75 @@ use crate::{
     },
 };
 
+const RF1: usize = 2;
+const RF2: usize = 4;
+const RF3: usize = 8;
+const RF4: usize = 16;
+const RF5: usize = 32;
+const RF1_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF1;
+const RF2_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF2;
+const RF3_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF3;
+const RF4_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF4;
+const RF5_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF5;
+
 //I dont like this but, block player movement until first chunk load happens
 pub static INITIAL_CHUNKS_LOADED: AtomicBool = AtomicBool::new(false);
+
+enum FullLodMode {
+    NoCollider,
+    WithCollider,
+    AddColliderToExisting,
+}
+
+pub struct ChunkBuffers {
+    pub density: [i16; SAMPLES_PER_CHUNK_PADDED],
+    pub material: [MaterialCode; SAMPLES_PER_CHUNK],
+    pub heightmap: [f32; SAMPLES_PER_CHUNK_2D_PADDED],
+    pub dhdx: [f32; SAMPLES_PER_CHUNK_2D_PADDED],
+    pub dhdz: [f32; SAMPLES_PER_CHUNK_2D_PADDED],
+}
+
+impl ChunkBuffers {
+    pub fn new() -> Self {
+        Self {
+            density: [0; SAMPLES_PER_CHUNK_PADDED],
+            material: [MaterialCode::Air; SAMPLES_PER_CHUNK],
+            heightmap: [0.0; SAMPLES_PER_CHUNK_2D_PADDED],
+            dhdx: [0.0; SAMPLES_PER_CHUNK_2D_PADDED],
+            dhdz: [0.0; SAMPLES_PER_CHUNK_2D_PADDED],
+        }
+    }
+}
+
+struct LodBuffers {
+    density_r1: [i16; SAMPLES_PER_CHUNK / RF1.pow(3)],
+    material_r1: [MaterialCode; SAMPLES_PER_CHUNK / RF1.pow(3)],
+    density_r2: [i16; SAMPLES_PER_CHUNK / RF2.pow(3)],
+    material_r2: [MaterialCode; SAMPLES_PER_CHUNK / RF2.pow(3)],
+    density_r3: [i16; SAMPLES_PER_CHUNK / RF3.pow(3)],
+    material_r3: [MaterialCode; SAMPLES_PER_CHUNK / RF3.pow(3)],
+    density_r4: [i16; SAMPLES_PER_CHUNK / RF4.pow(3)],
+    material_r4: [MaterialCode; SAMPLES_PER_CHUNK / RF4.pow(3)],
+    density_r5: [i16; SAMPLES_PER_CHUNK / RF5.pow(3)],
+    material_r5: [MaterialCode; SAMPLES_PER_CHUNK / RF5.pow(3)],
+}
+
+impl LodBuffers {
+    fn new() -> Self {
+        Self {
+            density_r1: [0; SAMPLES_PER_CHUNK / RF1.pow(3)],
+            material_r1: [MaterialCode::Air; SAMPLES_PER_CHUNK / RF1.pow(3)],
+            density_r2: [0; SAMPLES_PER_CHUNK / RF2.pow(3)],
+            material_r2: [MaterialCode::Air; SAMPLES_PER_CHUNK / RF2.pow(3)],
+            density_r3: [0; SAMPLES_PER_CHUNK / RF3.pow(3)],
+            material_r3: [MaterialCode::Air; SAMPLES_PER_CHUNK / RF3.pow(3)],
+            density_r4: [0; SAMPLES_PER_CHUNK / RF4.pow(3)],
+            material_r4: [MaterialCode::Air; SAMPLES_PER_CHUNK / RF4.pow(3)],
+            density_r5: [0; SAMPLES_PER_CHUNK / RF5.pow(3)],
+            material_r5: [MaterialCode::Air; SAMPLES_PER_CHUNK / RF5.pow(3)],
+        }
+    }
+}
 
 #[derive(Resource)]
 pub struct FrameStart(pub Instant);
@@ -174,6 +239,12 @@ impl Ord for ClusterRequest {
 impl PartialOrd for ClusterRequest {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+impl ClusterRequest {
+    fn had_entity(&self, idx: usize) -> bool {
+        self.prev_has_entity.map_or(false, |a| a[idx])
     }
 }
 
@@ -422,38 +493,10 @@ fn chunk_loader_thread(
     priority_queue: Arc<(Mutex<BinaryHeap<ClusterRequest>>, Condvar)>,
     terrain_chunk_map_insert_sender: Sender<((i16, i16, i16), TerrainChunk)>,
 ) {
-    const RF1: usize = 2;
-    const RF2: usize = 4;
-    const RF3: usize = 8;
-    const RF4: usize = 16;
-    const RF5: usize = 32;
-    const RF1_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF1;
-    const RF1_SAMPLES_PER_CHUNK: usize = SAMPLES_PER_CHUNK / RF1.pow(3);
-    const RF2_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF2;
-    const RF2_SAMPLES_PER_CHUNK: usize = SAMPLES_PER_CHUNK / RF2.pow(3);
-    const RF3_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF3;
-    const RF3_SAMPLES_PER_CHUNK: usize = SAMPLES_PER_CHUNK / RF3.pow(3);
-    const RF4_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF4;
-    const RF4_SAMPLES_PER_CHUNK: usize = SAMPLES_PER_CHUNK / RF4.pow(3);
-    const RF5_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF5;
-    const RF5_SAMPLES_PER_CHUNK: usize = SAMPLES_PER_CHUNK / RF5.pow(3);
+    let mut lod_buffers = LodBuffers::new();
+    let mut chunk_buffers = ChunkBuffers::new();
     const PROCESS_BATCH_SIZE: usize = 64;
     let mut internal_queue = Vec::with_capacity(32);
-    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D_PADDED];
-    let mut dhdx_buffer = [0.0; SAMPLES_PER_CHUNK_2D_PADDED];
-    let mut dhdz_buffer = [0.0; SAMPLES_PER_CHUNK_2D_PADDED];
-    let mut density_buffer = [0; SAMPLES_PER_CHUNK_PADDED];
-    let mut material_buffer = [MaterialCode::Air; SAMPLES_PER_CHUNK];
-    let mut density_buffer_r1 = [0; RF1_SAMPLES_PER_CHUNK];
-    let mut material_buffer_r1 = [MaterialCode::Air; RF1_SAMPLES_PER_CHUNK];
-    let mut density_buffer_r2 = [0; RF2_SAMPLES_PER_CHUNK];
-    let mut material_buffer_r2 = [MaterialCode::Air; RF2_SAMPLES_PER_CHUNK];
-    let mut density_buffer_r3 = [0; RF3_SAMPLES_PER_CHUNK];
-    let mut material_buffer_r3 = [MaterialCode::Air; RF3_SAMPLES_PER_CHUNK];
-    let mut density_buffer_r4 = [0; RF4_SAMPLES_PER_CHUNK];
-    let mut material_buffer_r4 = [MaterialCode::Air; RF4_SAMPLES_PER_CHUNK];
-    let mut density_buffer_r5 = [0; RF5_SAMPLES_PER_CHUNK];
-    let mut material_buffer_r5 = [MaterialCode::Air; RF5_SAMPLES_PER_CHUNK];
     #[cfg(feature = "timers")]
     let mut chunks_generated = 0;
     #[cfg(feature = "timers")]
@@ -504,511 +547,31 @@ fn chunk_loader_thread(
                 for chunk_y in min_chunk.1..min_chunk.1 + CHUNKS_PER_CLUSTER_DIM as i16 {
                     for chunk_z in min_chunk.2..min_chunk.2 + CHUNKS_PER_CLUSTER_DIM as i16 {
                         let chunk_coord = (chunk_x, chunk_y, chunk_z);
-                        let uniformity_option = column_range_map_read_only.contains(chunk_coord);
-                        let uniformity = if uniformity_option.is_none() {
-                            //wasnt in the cache, check if in non uniform index map
-                            let file_offset = index_map_read
-                                .get(&chunk_coord)
-                                .copied()
-                                .or_else(|| index_map_delta.read().get(&chunk_coord).copied());
-                            let uniformity = if let Some(offset) = file_offset {
-                                //if its found here its not uniform
-                                load_chunk(
-                                    &mut chunk_data_file_read,
-                                    offset,
-                                    &mut density_buffer,
-                                    &mut material_buffer,
-                                );
-                                //propagate uniformity
-                                Uniformity::NonUniform
-                            } else {
-                                //not in non uniform file and not in uniform cache, must generate
-                                let chunk_start = calculate_chunk_start(&chunk_coord);
-                                let uniformity = generate_chunk_into_buffers(
-                                    &fbm,
-                                    chunk_start,
-                                    &mut density_buffer,
-                                    &mut material_buffer,
-                                    &mut heightmap_buffer,
-                                    &mut dhdx_buffer,
-                                    &mut dhdz_buffer,
-                                );
-                                //if we find a uniform chunk we send a write command
-                                match uniformity {
-                                    Uniformity::Air => {
-                                        write_sender
-                                            .send(WriteCmd::WriteUniformAir { coord: chunk_coord })
-                                            .unwrap();
-                                    }
-                                    Uniformity::Dirt => {
-                                        write_sender
-                                            .send(WriteCmd::WriteUniformDirt { coord: chunk_coord })
-                                            .unwrap();
-                                    }
-                                    Uniformity::NonUniform => {}
-                                }
-                                uniformity
-                            };
-                            uniformity
-                        } else {
-                            uniformity_option.unwrap()
-                        };
-                        //at this point we know the uniformity, the buffer is filled if non uniform, and the uniform update write was sent
-                        let has_surface = match uniformity {
-                            Uniformity::Air => false,
-                            Uniformity::Dirt => false,
-                            Uniformity::NonUniform => {
-                                let has_surface = match request.load_state_transition {
-                                    LoadStateTransition::ToLod5 => {
-                                        downscale(
-                                            &density_buffer,
-                                            &material_buffer,
-                                            &mut density_buffer_r5,
-                                            &mut material_buffer_r5,
-                                            RF5_SAMPLES_PER_CHUNK_DIM,
-                                        );
-                                        let has_surface =
-                                            if chunk_contains_surface(&density_buffer_r5) {
-                                                let (vertices, normals, material_ids, indices) =
-                                                    mc_mesh_generation(
-                                                        &density_buffer_r5,
-                                                        &material_buffer_r5,
-                                                        RF5_SAMPLES_PER_CHUNK_DIM,
-                                                        HALF_CHUNK,
-                                                        false,
-                                                        &density_buffer,
-                                                    );
-                                                let mesh = generate_bevy_mesh(
-                                                    vertices,
-                                                    normals,
-                                                    material_ids,
-                                                    indices,
-                                                );
-                                                let had_entity_before = request
-                                                    .prev_has_entity
-                                                    .as_ref()
-                                                    .map(|a| a[rolling])
-                                                    .unwrap_or(false);
-                                                if had_entity_before {
-                                                    chunk_spawn_channel
-                                                        .send(ChunkSpawnResult::ToChangeLod((
-                                                            chunk_coord,
-                                                            mesh,
-                                                        )))
-                                                        .unwrap();
-                                                } else {
-                                                    chunk_spawn_channel
-                                                        .send(ChunkSpawnResult::ToSpawn((
-                                                            chunk_coord,
-                                                            mesh,
-                                                        )))
-                                                        .unwrap();
-                                                }
-                                                true
-                                            } else {
-                                                false
-                                            };
-                                        has_surface
-                                    }
-                                    LoadStateTransition::ToLod4 => {
-                                        downscale(
-                                            &density_buffer,
-                                            &material_buffer,
-                                            &mut density_buffer_r4,
-                                            &mut material_buffer_r4,
-                                            RF4_SAMPLES_PER_CHUNK_DIM,
-                                        );
-                                        let has_surface =
-                                            if chunk_contains_surface(&density_buffer_r4) {
-                                                let (vertices, normals, material_ids, indices) =
-                                                    mc_mesh_generation(
-                                                        &density_buffer_r4,
-                                                        &material_buffer_r4,
-                                                        RF4_SAMPLES_PER_CHUNK_DIM,
-                                                        HALF_CHUNK,
-                                                        false,
-                                                        &density_buffer,
-                                                    );
-                                                let mesh = generate_bevy_mesh(
-                                                    vertices,
-                                                    normals,
-                                                    material_ids,
-                                                    indices,
-                                                );
-                                                let had_entity_before = request
-                                                    .prev_has_entity
-                                                    .as_ref()
-                                                    .map(|a| a[rolling])
-                                                    .unwrap_or(false);
-                                                if had_entity_before {
-                                                    chunk_spawn_channel
-                                                        .send(ChunkSpawnResult::ToChangeLod((
-                                                            chunk_coord,
-                                                            mesh,
-                                                        )))
-                                                        .unwrap();
-                                                } else {
-                                                    chunk_spawn_channel
-                                                        .send(ChunkSpawnResult::ToSpawn((
-                                                            chunk_coord,
-                                                            mesh,
-                                                        )))
-                                                        .unwrap();
-                                                }
-                                                true
-                                            } else {
-                                                false
-                                            };
-                                        has_surface
-                                    }
-                                    LoadStateTransition::ToLod3 => {
-                                        downscale(
-                                            &density_buffer,
-                                            &material_buffer,
-                                            &mut density_buffer_r3,
-                                            &mut material_buffer_r3,
-                                            RF3_SAMPLES_PER_CHUNK_DIM,
-                                        );
-                                        let has_surface =
-                                            if chunk_contains_surface(&density_buffer_r3) {
-                                                let (vertices, normals, material_ids, indices) =
-                                                    mc_mesh_generation(
-                                                        &density_buffer_r3,
-                                                        &material_buffer_r3,
-                                                        RF3_SAMPLES_PER_CHUNK_DIM,
-                                                        HALF_CHUNK,
-                                                        false,
-                                                        &density_buffer,
-                                                    );
-                                                let mesh = generate_bevy_mesh(
-                                                    vertices,
-                                                    normals,
-                                                    material_ids,
-                                                    indices,
-                                                );
-                                                let had_entity_before = request
-                                                    .prev_has_entity
-                                                    .as_ref()
-                                                    .map(|a| a[rolling])
-                                                    .unwrap_or(false);
-                                                if had_entity_before {
-                                                    chunk_spawn_channel
-                                                        .send(ChunkSpawnResult::ToChangeLod((
-                                                            chunk_coord,
-                                                            mesh,
-                                                        )))
-                                                        .unwrap();
-                                                } else {
-                                                    chunk_spawn_channel
-                                                        .send(ChunkSpawnResult::ToSpawn((
-                                                            chunk_coord,
-                                                            mesh,
-                                                        )))
-                                                        .unwrap();
-                                                }
-                                                true
-                                            } else {
-                                                false
-                                            };
-                                        has_surface
-                                    }
-                                    LoadStateTransition::ToLod2 => {
-                                        downscale(
-                                            &density_buffer,
-                                            &material_buffer,
-                                            &mut density_buffer_r2,
-                                            &mut material_buffer_r2,
-                                            RF2_SAMPLES_PER_CHUNK_DIM,
-                                        );
-                                        let has_surface =
-                                            if chunk_contains_surface(&density_buffer_r2) {
-                                                let (vertices, normals, material_ids, indices) =
-                                                    mc_mesh_generation(
-                                                        &density_buffer_r2,
-                                                        &material_buffer_r2,
-                                                        RF2_SAMPLES_PER_CHUNK_DIM,
-                                                        HALF_CHUNK,
-                                                        false,
-                                                        &density_buffer,
-                                                    );
-                                                let mesh = generate_bevy_mesh(
-                                                    vertices,
-                                                    normals,
-                                                    material_ids,
-                                                    indices,
-                                                );
-                                                let had_entity_before = request
-                                                    .prev_has_entity
-                                                    .as_ref()
-                                                    .map(|a| a[rolling])
-                                                    .unwrap_or(false);
-                                                if had_entity_before {
-                                                    chunk_spawn_channel
-                                                        .send(ChunkSpawnResult::ToChangeLod((
-                                                            chunk_coord,
-                                                            mesh,
-                                                        )))
-                                                        .unwrap();
-                                                } else {
-                                                    chunk_spawn_channel
-                                                        .send(ChunkSpawnResult::ToSpawn((
-                                                            chunk_coord,
-                                                            mesh,
-                                                        )))
-                                                        .unwrap();
-                                                }
-                                                true
-                                            } else {
-                                                false
-                                            };
-                                        has_surface
-                                    }
-                                    LoadStateTransition::ToLod1 => {
-                                        downscale(
-                                            &density_buffer,
-                                            &material_buffer,
-                                            &mut density_buffer_r1,
-                                            &mut material_buffer_r1,
-                                            RF1_SAMPLES_PER_CHUNK_DIM,
-                                        );
-                                        let has_surface =
-                                            if chunk_contains_surface(&density_buffer_r1) {
-                                                let (vertices, normals, material_ids, indices) =
-                                                    mc_mesh_generation(
-                                                        &density_buffer_r1,
-                                                        &material_buffer_r1,
-                                                        RF1_SAMPLES_PER_CHUNK_DIM,
-                                                        HALF_CHUNK,
-                                                        false,
-                                                        &density_buffer,
-                                                    );
-                                                let mesh = generate_bevy_mesh(
-                                                    vertices,
-                                                    normals,
-                                                    material_ids,
-                                                    indices,
-                                                );
-                                                let had_entity_before = request
-                                                    .prev_has_entity
-                                                    .as_ref()
-                                                    .map(|a| a[rolling])
-                                                    .unwrap_or(false);
-                                                if had_entity_before {
-                                                    chunk_spawn_channel
-                                                        .send(ChunkSpawnResult::ToChangeLod((
-                                                            chunk_coord,
-                                                            mesh,
-                                                        )))
-                                                        .unwrap();
-                                                } else {
-                                                    chunk_spawn_channel
-                                                        .send(ChunkSpawnResult::ToSpawn((
-                                                            chunk_coord,
-                                                            mesh,
-                                                        )))
-                                                        .unwrap();
-                                                }
-                                                true
-                                            } else {
-                                                false
-                                            };
-                                        has_surface
-                                    }
-                                    LoadStateTransition::ToFull => {
-                                        let has_surface =
-                                            if padded_chunk_contains_surface(&density_buffer) {
-                                                let (vertices, normals, material_ids, indices) =
-                                                    mc_mesh_generation(
-                                                        &density_buffer,
-                                                        &material_buffer,
-                                                        SAMPLES_PER_CHUNK_DIM,
-                                                        HALF_CHUNK,
-                                                        true,
-                                                        &density_buffer,
-                                                    );
-                                                let mesh = generate_bevy_mesh(
-                                                    vertices,
-                                                    normals,
-                                                    material_ids,
-                                                    indices,
-                                                );
-                                                let had_entity_before = request
-                                                    .prev_has_entity
-                                                    .as_ref()
-                                                    .map(|a| a[rolling])
-                                                    .unwrap_or(false);
-                                                if had_entity_before {
-                                                    chunk_spawn_channel
-                                                        .send(ChunkSpawnResult::ToChangeLod((
-                                                            chunk_coord,
-                                                            mesh,
-                                                        )))
-                                                        .unwrap();
-                                                } else {
-                                                    chunk_spawn_channel
-                                                        .send(ChunkSpawnResult::ToSpawn((
-                                                            chunk_coord,
-                                                            mesh,
-                                                        )))
-                                                        .unwrap();
-                                                }
-                                                true
-                                            } else {
-                                                false
-                                            };
-                                        has_surface
-                                    }
-                                    LoadStateTransition::ToFullWithCollider => {
-                                        let has_surface =
-                                            if padded_chunk_contains_surface(&density_buffer) {
-                                                let (vertices, normals, material_ids, indices) =
-                                                    mc_mesh_generation(
-                                                        &density_buffer,
-                                                        &material_buffer,
-                                                        SAMPLES_PER_CHUNK_DIM,
-                                                        HALF_CHUNK,
-                                                        true,
-                                                        &density_buffer,
-                                                    );
-                                                let mesh = generate_bevy_mesh(
-                                                    vertices,
-                                                    normals,
-                                                    material_ids,
-                                                    indices,
-                                                );
-                                                let collider = Collider::from_bevy_mesh(
-                                                    &mesh,
-                                                    &ComputedColliderShape::TriMesh(
-                                                        TriMeshFlags::default(),
-                                                    ),
-                                                )
-                                                .unwrap();
-                                                let had_entity_before = request
-                                                    .prev_has_entity
-                                                    .as_ref()
-                                                    .map(|a| a[rolling])
-                                                    .unwrap_or(false);
-                                                if had_entity_before {
-                                                    chunk_spawn_channel
-                                                    .send(ChunkSpawnResult::ToChangeLodAddCollider(
-                                                        (chunk_coord, mesh, collider),
-                                                    ))
-                                                    .unwrap();
-                                                } else {
-                                                    chunk_spawn_channel
-                                                        .send(
-                                                            ChunkSpawnResult::ToSpawnWithCollider(
-                                                                (chunk_coord, collider, mesh),
-                                                            ),
-                                                        )
-                                                        .unwrap();
-                                                }
-                                                true
-                                            } else {
-                                                false
-                                            };
-                                        has_surface
-                                    }
-                                    LoadStateTransition::NoChangeAddCollider => {
-                                        let has_surface =
-                                            if padded_chunk_contains_surface(&density_buffer) {
-                                                let (vertices, normals, material_ids, indices) =
-                                                    mc_mesh_generation(
-                                                        &density_buffer,
-                                                        &material_buffer,
-                                                        SAMPLES_PER_CHUNK_DIM,
-                                                        HALF_CHUNK,
-                                                        true,
-                                                        &density_buffer,
-                                                    );
-                                                let mesh = generate_bevy_mesh(
-                                                    vertices,
-                                                    normals,
-                                                    material_ids,
-                                                    indices,
-                                                );
-                                                let collider = Collider::from_bevy_mesh(
-                                                    &mesh,
-                                                    &ComputedColliderShape::TriMesh(
-                                                        TriMeshFlags::default(),
-                                                    ),
-                                                )
-                                                .unwrap();
-                                                let had_entity_before = request
-                                                    .prev_has_entity
-                                                    .as_ref()
-                                                    .map(|a| a[rolling])
-                                                    .unwrap_or(false);
-                                                if had_entity_before {
-                                                    chunk_spawn_channel
-                                                        .send(ChunkSpawnResult::ToGiveCollider((
-                                                            chunk_coord,
-                                                            collider,
-                                                        )))
-                                                        .unwrap();
-                                                } else {
-                                                    chunk_spawn_channel
-                                                        .send(
-                                                            ChunkSpawnResult::ToSpawnWithCollider(
-                                                                (chunk_coord, collider, mesh),
-                                                            ),
-                                                        )
-                                                        .unwrap();
-                                                }
-                                                true
-                                            } else {
-                                                false
-                                            };
-                                        has_surface
-                                    }
-                                };
-                                has_surface
-                            }
-                        };
-                        //we have determined if a surface exists at the given LOD, sent the requests to spawn the lod, and have all the correct lod buffer loaded
-                        //if simulated store the densities
-                        let in_simulated = matches!(
-                            request.load_state_transition,
-                            LoadStateTransition::ToFullWithCollider
-                                | LoadStateTransition::NoChangeAddCollider
+                        let uniformity = resolve_uniformity(
+                            chunk_coord,
+                            &column_range_map_read_only,
+                            &index_map_read,
+                            &index_map_delta,
+                            &mut chunk_data_file_read,
+                            &mut chunk_buffers,
+                            &fbm,
+                            &write_sender,
                         );
-                        if in_simulated {
-                            match uniformity {
-                                Uniformity::Air => {
-                                    terrain_chunk_map_insert_sender
-                                        .send((chunk_coord, TerrainChunk::UniformAir))
-                                        .unwrap();
-                                }
-                                Uniformity::Dirt => {
-                                    terrain_chunk_map_insert_sender
-                                        .send((chunk_coord, TerrainChunk::UniformDirt))
-                                        .unwrap();
-                                }
-                                Uniformity::NonUniform => {
-                                    terrain_chunk_map_insert_sender
-                                        .send((
-                                            chunk_coord,
-                                            TerrainChunk::NonUniformTerrainChunk(
-                                                NonUniformTerrainChunk {
-                                                    //allocation here
-                                                    densities: Arc::new(density_buffer),
-                                                    materials: Arc::new(material_buffer),
-                                                },
-                                            ),
-                                        ))
-                                        .unwrap();
-                                }
-                            }
-                        }
-                        has_entity_buffer[rolling] = has_surface;
-                        rolling += 1;
-                        #[cfg(feature = "timers")]
-                        {
-                            if has_surface {
-                                chunks_with_entities += 1;
-                            }
-                            chunks_generated += 1;
-                        }
+                        process_chunk(
+                            chunk_coord,
+                            uniformity,
+                            &mut chunk_buffers,
+                            &request,
+                            &chunk_spawn_channel,
+                            &mut rolling,
+                            &terrain_chunk_map_insert_sender,
+                            &mut has_entity_buffer,
+                            &mut lod_buffers,
+                            #[cfg(feature = "timers")]
+                            &mut chunks_with_entities,
+                            #[cfg(feature = "timers")]
+                            &mut chunks_generated,
+                        );
                     }
                 }
             }
@@ -1303,23 +866,310 @@ pub fn chunk_spawn_reciever(
     }
 }
 
-//wait for a chunk to exist with a collider at or below the player
-pub fn validate_player_spawn(
-    chunk_entity_map: Res<ChunkEntityMap>,
-    player_position_query: Query<&Transform, (With<PlayerTag>, Without<ChunkTag>)>,
-    spawned_chunks_query: Query<(), (With<ChunkTag>, With<Collider>)>,
+fn process_lod(
+    density_buffer: &[i16],
+    material_buffer: &[MaterialCode],
+    chunk_spawn_channel: &Sender<ChunkSpawnResult>,
+    chunk_coord: (i16, i16, i16),
+    request: &ClusterRequest,
+    rolling: usize,
+    reduced_density_buffer: &mut [i16],
+    reduced_material_buffer: &mut [MaterialCode],
+    out_samples_per_chunk_dim: usize,
+) -> bool {
+    downscale(
+        density_buffer,
+        material_buffer,
+        reduced_density_buffer,
+        reduced_material_buffer,
+        out_samples_per_chunk_dim,
+    );
+    chunk_contains_surface(reduced_density_buffer) && {
+        let (vertices, normals, material_ids, indices) = mc_mesh_generation(
+            reduced_density_buffer,
+            reduced_material_buffer,
+            out_samples_per_chunk_dim,
+            false,
+            &density_buffer,
+        );
+        let mesh = generate_bevy_mesh(vertices, normals, material_ids, indices);
+        if request.had_entity(rolling) {
+            chunk_spawn_channel
+                .send(ChunkSpawnResult::ToChangeLod((chunk_coord, mesh)))
+                .unwrap();
+        } else {
+            chunk_spawn_channel
+                .send(ChunkSpawnResult::ToSpawn((chunk_coord, mesh)))
+                .unwrap();
+        }
+        true
+    }
+}
+
+fn process_chunk(
+    chunk_coord: (i16, i16, i16),
+    uniformity: Uniformity,
+    chunk_buffers: &mut ChunkBuffers,
+    request: &ClusterRequest,
+    chunk_spawn_channel: &Sender<ChunkSpawnResult>,
+    rolling: &mut usize,
+    terrain_chunk_map_insert_sender: &Sender<((i16, i16, i16), TerrainChunk)>,
+    has_entity_buffer: &mut [bool],
+    lod_buffers: &mut LodBuffers,
+    #[cfg(feature = "timers")] chunks_with_entities: &mut i32,
+    #[cfg(feature = "timers")] chunks_generated: &mut i32,
 ) {
-    let player_position = player_position_query.iter().next().unwrap();
-    let player_chunk = world_pos_to_chunk_coord(&player_position.translation);
-    for chunk_y in (player_chunk.1 - 10..=player_chunk.1).rev() {
-        if let Some(entity) = chunk_entity_map
-            .0
-            .get(&(player_chunk.0, chunk_y, player_chunk.2))
-        {
-            if spawned_chunks_query.get(*entity).is_ok() {
-                INITIAL_CHUNKS_LOADED.store(true, Ordering::Relaxed);
-                break;
+    let has_surface = match uniformity {
+        Uniformity::Air | Uniformity::Dirt => false,
+        Uniformity::NonUniform => match request.load_state_transition {
+            LoadStateTransition::ToLod5 => process_lod(
+                &chunk_buffers.density,
+                &chunk_buffers.material,
+                &chunk_spawn_channel,
+                chunk_coord,
+                &request,
+                *rolling,
+                &mut lod_buffers.density_r5,
+                &mut lod_buffers.material_r5,
+                RF5_SAMPLES_PER_CHUNK_DIM,
+            ),
+            LoadStateTransition::ToLod4 => process_lod(
+                &chunk_buffers.density,
+                &chunk_buffers.material,
+                &chunk_spawn_channel,
+                chunk_coord,
+                &request,
+                *rolling,
+                &mut lod_buffers.density_r4,
+                &mut lod_buffers.material_r4,
+                RF4_SAMPLES_PER_CHUNK_DIM,
+            ),
+            LoadStateTransition::ToLod3 => process_lod(
+                &chunk_buffers.density,
+                &chunk_buffers.material,
+                &chunk_spawn_channel,
+                chunk_coord,
+                &request,
+                *rolling,
+                &mut lod_buffers.density_r3,
+                &mut lod_buffers.material_r3,
+                RF3_SAMPLES_PER_CHUNK_DIM,
+            ),
+            LoadStateTransition::ToLod2 => process_lod(
+                &chunk_buffers.density,
+                &chunk_buffers.material,
+                &chunk_spawn_channel,
+                chunk_coord,
+                &request,
+                *rolling,
+                &mut lod_buffers.density_r2,
+                &mut lod_buffers.material_r2,
+                RF2_SAMPLES_PER_CHUNK_DIM,
+            ),
+            LoadStateTransition::ToLod1 => process_lod(
+                &chunk_buffers.density,
+                &chunk_buffers.material,
+                &chunk_spawn_channel,
+                chunk_coord,
+                &request,
+                *rolling,
+                &mut lod_buffers.density_r1,
+                &mut lod_buffers.material_r1,
+                RF1_SAMPLES_PER_CHUNK_DIM,
+            ),
+            LoadStateTransition::ToFull => build_full_mesh_and_spawn(
+                &chunk_buffers.density,
+                &chunk_buffers.material,
+                chunk_coord,
+                request,
+                *rolling,
+                chunk_spawn_channel,
+                FullLodMode::NoCollider,
+            ),
+            LoadStateTransition::ToFullWithCollider => build_full_mesh_and_spawn(
+                &chunk_buffers.density,
+                &chunk_buffers.material,
+                chunk_coord,
+                request,
+                *rolling,
+                chunk_spawn_channel,
+                FullLodMode::WithCollider,
+            ),
+            LoadStateTransition::NoChangeAddCollider => build_full_mesh_and_spawn(
+                &chunk_buffers.density,
+                &chunk_buffers.material,
+                chunk_coord,
+                request,
+                *rolling,
+                chunk_spawn_channel,
+                FullLodMode::AddColliderToExisting,
+            ),
+        },
+    };
+    //we have determined if a surface exists at the given LOD, sent the requests to spawn the lod, and have all the correct lod buffer loaded
+    //if simulated store the densities
+    let in_simulated = matches!(
+        request.load_state_transition,
+        LoadStateTransition::ToFullWithCollider | LoadStateTransition::NoChangeAddCollider
+    );
+    if in_simulated {
+        match uniformity {
+            Uniformity::Air => {
+                terrain_chunk_map_insert_sender
+                    .send((chunk_coord, TerrainChunk::UniformAir))
+                    .unwrap();
+            }
+            Uniformity::Dirt => {
+                terrain_chunk_map_insert_sender
+                    .send((chunk_coord, TerrainChunk::UniformDirt))
+                    .unwrap();
+            }
+            Uniformity::NonUniform => {
+                terrain_chunk_map_insert_sender
+                    .send((
+                        chunk_coord,
+                        TerrainChunk::NonUniformTerrainChunk(NonUniformTerrainChunk {
+                            //allocation here
+                            densities: Arc::from(&chunk_buffers.density[..]),
+                            materials: Arc::from(&chunk_buffers.material[..]),
+                        }),
+                    ))
+                    .unwrap();
             }
         }
     }
+    has_entity_buffer[*rolling] = has_surface;
+    *rolling += 1;
+    #[cfg(feature = "timers")]
+    {
+        if has_surface {
+            *chunks_with_entities += 1;
+        }
+        *chunks_generated += 1;
+    }
+}
+
+fn build_full_mesh_and_spawn(
+    density_buffer: &[i16],
+    material_buffer: &[MaterialCode],
+    chunk_coord: (i16, i16, i16),
+    request: &ClusterRequest,
+    rolling: usize,
+    chunk_spawn_channel: &Sender<ChunkSpawnResult>,
+    mode: FullLodMode,
+) -> bool {
+    padded_chunk_contains_surface(density_buffer) && {
+        let (vertices, normals, material_ids, indices) = mc_mesh_generation(
+            density_buffer,
+            material_buffer,
+            SAMPLES_PER_CHUNK_DIM,
+            true,
+            density_buffer,
+        );
+        let mesh = generate_bevy_mesh(vertices, normals, material_ids, indices);
+        let had_entity = request.had_entity(rolling);
+        match mode {
+            FullLodMode::NoCollider => {
+                if had_entity {
+                    chunk_spawn_channel
+                        .send(ChunkSpawnResult::ToChangeLod((chunk_coord, mesh)))
+                        .unwrap();
+                } else {
+                    chunk_spawn_channel
+                        .send(ChunkSpawnResult::ToSpawn((chunk_coord, mesh)))
+                        .unwrap();
+                }
+            }
+            FullLodMode::WithCollider => {
+                let collider = Collider::from_bevy_mesh(
+                    &mesh,
+                    &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
+                )
+                .unwrap();
+                if had_entity {
+                    chunk_spawn_channel
+                        .send(ChunkSpawnResult::ToChangeLodAddCollider((
+                            chunk_coord,
+                            mesh,
+                            collider,
+                        )))
+                        .unwrap();
+                } else {
+                    chunk_spawn_channel
+                        .send(ChunkSpawnResult::ToSpawnWithCollider((
+                            chunk_coord,
+                            collider,
+                            mesh,
+                        )))
+                        .unwrap();
+                }
+            }
+            FullLodMode::AddColliderToExisting => {
+                let collider = Collider::from_bevy_mesh(
+                    &mesh,
+                    &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
+                )
+                .unwrap();
+                if had_entity {
+                    chunk_spawn_channel
+                        .send(ChunkSpawnResult::ToGiveCollider((chunk_coord, collider)))
+                        .unwrap();
+                } else {
+                    chunk_spawn_channel
+                        .send(ChunkSpawnResult::ToSpawnWithCollider((
+                            chunk_coord,
+                            collider,
+                            mesh,
+                        )))
+                        .unwrap();
+                }
+            }
+        }
+        true
+    }
+}
+
+fn resolve_uniformity(
+    chunk_coord: (i16, i16, i16),
+    column_range_map: &ColumnRangeMap,
+    index_map_read: &FxHashMap<(i16, i16, i16), u64>,
+    index_map_delta: &RwLock<FxHashMap<(i16, i16, i16), u64>>,
+    chunk_data_file_read: &mut File,
+    chunk_buffers: &mut ChunkBuffers,
+    fbm: &GeneratorWrapper<SafeNode>,
+    write_sender: &Sender<WriteCmd>,
+) -> Uniformity {
+    let uniformity_option = column_range_map.contains(chunk_coord);
+    if let Some(uniformity) = uniformity_option {
+        return uniformity;
+    }
+    let file_offset = index_map_read
+        .get(&chunk_coord)
+        .copied()
+        .or_else(|| index_map_delta.read().get(&chunk_coord).copied());
+    if let Some(offset) = file_offset {
+        load_chunk(
+            chunk_data_file_read,
+            offset,
+            &mut chunk_buffers.density,
+            &mut chunk_buffers.material,
+        );
+        return Uniformity::NonUniform;
+    }
+    let chunk_start = calculate_chunk_start(&chunk_coord);
+    let uniformity = generate_chunk_into_buffers(fbm, chunk_start, chunk_buffers);
+    match uniformity {
+        Uniformity::Air => {
+            write_sender
+                .send(WriteCmd::WriteUniformAir { coord: chunk_coord })
+                .unwrap();
+        }
+        Uniformity::Dirt => {
+            write_sender
+                .send(WriteCmd::WriteUniformDirt { coord: chunk_coord })
+                .unwrap();
+        }
+        Uniformity::NonUniform => {}
+    }
+    uniformity
 }
