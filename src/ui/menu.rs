@@ -28,13 +28,14 @@ const GENERAL_SETTINGS: [SettingsType; 7] = [
     SettingsType::OcclusionCullingToggle,
 ];
 #[cfg(feature = "debug")]
-const DEBUG_SETTINGS: [SettingsType; 6] = [
+const DEBUG_SETTINGS: [SettingsType; 7] = [
     SettingsType::Lod1Toggle,
     SettingsType::Lod2Toggle,
     SettingsType::Lod3Toggle,
     SettingsType::Lod4Toggle,
     SettingsType::Lod5Toggle,
     SettingsType::ShowChunksToggle,
+    SettingsType::ShowVoxelsToggle,
 ];
 
 #[derive(Component)]
@@ -489,7 +490,10 @@ fn spawn_menu(commands: &mut Commands, settings: &ConfigurableSettings) {
                                         .with_children(|parent| {
                                             parent.spawn((
                                                 SettingLabel(SettingsType::OcclusionCullingToggle),
-                                                Text(SettingsType::OcclusionCullingToggle.text(settings)),
+                                                Text(
+                                                    SettingsType::OcclusionCullingToggle
+                                                        .text(settings),
+                                                ),
                                                 TextFont {
                                                     font_size: FONT_SIZE,
                                                     ..default()

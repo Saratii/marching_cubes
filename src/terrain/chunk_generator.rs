@@ -12,7 +12,10 @@ use crate::{
         SAMPLES_PER_CHUNK_2D_PADDED, SAMPLES_PER_CHUNK_DIM, SAMPLES_PER_CHUNK_DIM_PADDED,
         VOXEL_WORLD_SIZE, WORLD_SEED,
     },
-    terrain::terrain::Uniformity,
+    terrain::{
+        // procedural_trees::{place_trees, place_trees_uniform_air},
+        terrain::Uniformity,
+    },
 };
 
 const SCALE: f32 = 32767.0 / 10.0; // Map [-10, 10] to [-32767, 32767]
@@ -54,7 +57,34 @@ pub fn generate_chunk_into_buffers(
         dhdz_buffer,
     );
     let uniformity = if !is_uniform {
+        //place_trees(
+        //     chunk_start,
+        //     density_buffer,
+        //     material_buffer,
+        //     heightmap_buffer,
+        // );
         Uniformity::NonUniform
+        /*} else {
+            if material_buffer[0] == MaterialCode::Dirt {
+                Uniformity::Dirt
+            } else if material_buffer[0] == MaterialCode::Air {
+                let not_uniform = place_trees_uniform_air(
+                    chunk_start,
+                    density_buffer,
+                    material_buffer,
+                    heightmap_buffer,
+                );
+                let uniformity = if not_uniform {
+                    Uniformity::NonUniform
+                } else {
+                    Uniformity::Air
+                };
+                uniformity
+            } else {
+                println!("materials[0]: {:?}", material_buffer[0]);
+                panic!("Generated uniform chunk with unknown material type!");
+            }
+        }; */
     } else {
         if material_buffer[0] == MaterialCode::Dirt {
             Uniformity::Dirt

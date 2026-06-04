@@ -524,28 +524,15 @@ fn chunk_loader_thread(
                             } else {
                                 //not in non uniform file and not in uniform cache, must generate
                                 let chunk_start = calculate_chunk_start(&chunk_coord);
-                                //conservative heuristic, if chunk is way up in the air assume its dirt and skip generation. Other wise generate normally
-                                let chunk_center_sample = fbm.gen_single_2d(
-                                    (chunk_start.x + HALF_CHUNK) * NOISE_FREQUENCY,
-                                    (chunk_start.z + HALF_CHUNK) * NOISE_FREQUENCY,
-                                    WORLD_SEED,
-                                ) * NOISE_AMPLITUDE;
-                                let uniformity = if chunk_center_sample + CHUNK_WORLD_SIZE * 3.0
-                                    < chunk_start.y
-                                {
-                                    Uniformity::Air
-                                } else {
-                                    let uniformity = generate_chunk_into_buffers(
-                                        &fbm,
-                                        chunk_start,
-                                        &mut density_buffer,
-                                        &mut material_buffer,
-                                        &mut heightmap_buffer,
-                                        &mut dhdx_buffer,
-                                        &mut dhdz_buffer,
-                                    );
-                                    uniformity
-                                };
+                                let uniformity = generate_chunk_into_buffers(
+                                    &fbm,
+                                    chunk_start,
+                                    &mut density_buffer,
+                                    &mut material_buffer,
+                                    &mut heightmap_buffer,
+                                    &mut dhdx_buffer,
+                                    &mut dhdz_buffer,
+                                );
                                 //if we find a uniform chunk we send a write command
                                 match uniformity {
                                     Uniformity::Air => {

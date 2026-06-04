@@ -40,7 +40,9 @@ use marching_cubes::ui::configurable_settings::{
 };
 use marching_cubes::ui::crosshair::spawn_crosshair;
 #[cfg(feature = "debug")]
-use marching_cubes::ui::debug_lines::{draw_cluster_debug, draw_collider_debug, draw_lod_debug};
+use marching_cubes::ui::debug_lines::{
+    draw_cluster_debug, draw_collider_debug, draw_lod_debug, draw_voxel_surface_debug,
+};
 use marching_cubes::ui::menu::{SettingsState, menu_toggle, menu_update};
 use marching_cubes::ui::minimap::spawn_minimap;
 
@@ -150,6 +152,8 @@ fn main() {
                 draw_collider_debug,
                 #[cfg(feature = "debug")]
                 draw_lod_debug,
+                #[cfg(feature = "debug")]
+                draw_voxel_surface_debug,
                 menu_toggle,
                 menu_update.after(menu_toggle),
                 handle_focus_change,
@@ -207,3 +211,11 @@ fn count_vertices_on_key(
         println!("=======================");
     }
 }
+
+// fn detect_changes(query: Query<Entity, Or<(Changed<Mesh3d>, Changed<Transform>)>>) {
+//     let mut count = 0;
+//     for entity in &query {
+//         count += 1;
+//     }
+//     println!("Changed Mesh3d or Transform {}", count);
+// }

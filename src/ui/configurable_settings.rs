@@ -116,6 +116,7 @@ pub enum SettingsType {
     Lod4Toggle,
     Lod5Toggle,
     ShowChunksToggle,
+    ShowVoxelsToggle,
     FpsChange,
     ShadowsToggle,
     RenderRadiusChange,
@@ -137,6 +138,7 @@ impl SettingsType {
             SettingsType::Lod4Toggle => format!("LOD 4: {}", on_off(s.debug_lod_4)),
             SettingsType::Lod5Toggle => format!("LOD 5: {}", on_off(s.debug_lod_5)),
             SettingsType::ShowChunksToggle => format!("Show Chunks: {}", on_off(s.show_chunks)),
+            SettingsType::ShowVoxelsToggle => format!("Show Voxels: {}", on_off(s.show_voxels)),
             SettingsType::FpsChange => format!("FPS Limit: {}", s.fps_limit.to_display_string()),
             SettingsType::ShadowsToggle => format!("Shadows: {}", on_off(s.shadows)),
             SettingsType::RenderRadiusChange => format!(
@@ -169,6 +171,7 @@ impl SettingsType {
             SettingsType::Lod4Toggle => settings.debug_lod_4 = !settings.debug_lod_4,
             SettingsType::Lod5Toggle => settings.debug_lod_5 = !settings.debug_lod_5,
             SettingsType::ShowChunksToggle => settings.show_chunks = !settings.show_chunks,
+            SettingsType::ShowVoxelsToggle => settings.show_voxels = !settings.show_voxels,
             SettingsType::ShadowsToggle => settings.shadows = !settings.shadows,
             SettingsType::RenderRadiusChange => {
                 settings.render_radius_squared = if dir_next {
@@ -196,6 +199,7 @@ impl SettingsType {
 #[derive(Serialize, Deserialize, Resource, Debug)]
 pub struct ConfigurableSettings {
     pub show_chunks: bool,
+    pub show_voxels: bool,
     pub fps_limit: FpsLimit,
     pub debug_lod_1: bool,
     pub debug_lod_2: bool,
@@ -221,6 +225,7 @@ impl Default for ConfigurableSettings {
     fn default() -> Self {
         ConfigurableSettings {
             show_chunks: false,
+            show_voxels: false,
             fps_limit: FpsLimit::default(),
             debug_lod_1: false,
             debug_lod_2: false,
