@@ -9,8 +9,8 @@ use bevy_rapier3d::prelude::*;
 
 use crate::{
     constants::{
-        CAMERA_FIRST_PERSON_OFFSET, NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED,
-        PLAYER_CUBOID_SIZE, PLAYER_SPAWN,
+        CAMERA_FIRST_PERSON_OFFSET, NOISE_AMPLITUDE, NOISE_FREQUENCY, PLAYER_CUBOID_SIZE,
+        PLAYER_SPAWN, WORLD_SEED,
     },
     data_loader::{
         driver::{INITIAL_CHUNKS_LOADED, PlayerTranslationMutexHandle},
@@ -143,7 +143,7 @@ pub fn spawn_player(
             fbm.0.gen_single_2d(
                 PLAYER_SPAWN.x * NOISE_FREQUENCY,
                 PLAYER_SPAWN.z * NOISE_FREQUENCY,
-                NOISE_SEED,
+                WORLD_SEED,
             ) * NOISE_AMPLITUDE
                 + 20.0,
             PLAYER_SPAWN.z,

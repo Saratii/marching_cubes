@@ -3,8 +3,8 @@ use std::hint::black_box;
 use criterion::{Criterion, criterion_group, criterion_main};
 use marching_cubes::{
     constants::{
-        CHUNK_WORLD_SIZE, HALF_CHUNK, NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED,
-        SAMPLES_PER_CHUNK_2D, SAMPLES_PER_CHUNK_DIM,
+        CHUNK_WORLD_SIZE, HALF_CHUNK, NOISE_AMPLITUDE, NOISE_FREQUENCY, SAMPLES_PER_CHUNK_2D,
+        SAMPLES_PER_CHUNK_DIM, WORLD_SEED,
     },
     terrain::chunk_generator::get_fbm,
 };
@@ -26,7 +26,7 @@ fn benchmark_full_chunk_noise(c: &mut Criterion) {
                     let height = fbm.gen_single_2d(
                         sample_x * NOISE_FREQUENCY,
                         sample_z * NOISE_FREQUENCY,
-                        NOISE_SEED,
+                        WORLD_SEED,
                     ) * NOISE_AMPLITUDE;
                     heightmap_buffer[roller] = height;
                     roller += 1;
@@ -48,22 +48,22 @@ fn benchmark_corner_lerp_noise(c: &mut Criterion) {
             let top_left = fbm.gen_single_2d(
                 start_x * NOISE_FREQUENCY,
                 start_z * NOISE_FREQUENCY,
-                NOISE_SEED,
+                WORLD_SEED,
             ) * NOISE_AMPLITUDE;
             let top_right = fbm.gen_single_2d(
                 (start_x + CHUNK_WORLD_SIZE as f32) * NOISE_FREQUENCY,
                 start_z * NOISE_FREQUENCY,
-                NOISE_SEED,
+                WORLD_SEED,
             ) * NOISE_AMPLITUDE;
             let bottom_left = fbm.gen_single_2d(
                 start_x * NOISE_FREQUENCY,
                 (start_z + CHUNK_WORLD_SIZE) * NOISE_FREQUENCY,
-                NOISE_SEED,
+                WORLD_SEED,
             ) * NOISE_AMPLITUDE;
             let bottom_right = fbm.gen_single_2d(
                 (start_x + CHUNK_WORLD_SIZE as f32) * NOISE_FREQUENCY,
                 (start_z + CHUNK_WORLD_SIZE as f32) * NOISE_FREQUENCY,
-                NOISE_SEED,
+                WORLD_SEED,
             ) * NOISE_AMPLITUDE;
             let inv_samples = 1.0 / (SAMPLES_PER_CHUNK_DIM - 1) as f32;
             let mut roller = 0;
@@ -96,51 +96,51 @@ fn benchmark_grid_3x3_noise(c: &mut Criterion) {
                     fbm.gen_single_2d(
                         start_x * NOISE_FREQUENCY,
                         start_z * NOISE_FREQUENCY,
-                        NOISE_SEED,
+                        WORLD_SEED,
                     ) * NOISE_AMPLITUDE,
                     fbm.gen_single_2d(
                         (start_x + HALF_CHUNK) * NOISE_FREQUENCY,
                         start_z * NOISE_FREQUENCY,
-                        NOISE_SEED,
+                        WORLD_SEED,
                     ) * NOISE_AMPLITUDE,
                     fbm.gen_single_2d(
                         (start_x + CHUNK_WORLD_SIZE as f32) * NOISE_FREQUENCY,
                         start_z * NOISE_FREQUENCY,
-                        NOISE_SEED,
+                        WORLD_SEED,
                     ) * NOISE_AMPLITUDE,
                 ],
                 [
                     fbm.gen_single_2d(
                         start_x * NOISE_FREQUENCY,
                         (start_z + HALF_CHUNK) * NOISE_FREQUENCY,
-                        NOISE_SEED,
+                        WORLD_SEED,
                     ) * NOISE_AMPLITUDE,
                     fbm.gen_single_2d(
                         (start_x + HALF_CHUNK) * NOISE_FREQUENCY,
                         (start_z + HALF_CHUNK) * NOISE_FREQUENCY,
-                        NOISE_SEED,
+                        WORLD_SEED,
                     ) * NOISE_AMPLITUDE,
                     fbm.gen_single_2d(
                         (start_x + CHUNK_WORLD_SIZE as f32) * NOISE_FREQUENCY,
                         (start_z + HALF_CHUNK) * NOISE_FREQUENCY,
-                        NOISE_SEED,
+                        WORLD_SEED,
                     ) * NOISE_AMPLITUDE,
                 ],
                 [
                     fbm.gen_single_2d(
                         start_x * NOISE_FREQUENCY,
                         (start_z + CHUNK_WORLD_SIZE as f32) * NOISE_FREQUENCY,
-                        NOISE_SEED,
+                        WORLD_SEED,
                     ) * NOISE_AMPLITUDE,
                     fbm.gen_single_2d(
                         (start_x + HALF_CHUNK) * NOISE_FREQUENCY,
                         (start_z + CHUNK_WORLD_SIZE as f32) * NOISE_FREQUENCY,
-                        NOISE_SEED,
+                        WORLD_SEED,
                     ) * NOISE_AMPLITUDE,
                     fbm.gen_single_2d(
                         (start_x + CHUNK_WORLD_SIZE as f32) * NOISE_FREQUENCY,
                         (start_z + CHUNK_WORLD_SIZE as f32) * NOISE_FREQUENCY,
-                        NOISE_SEED,
+                        WORLD_SEED,
                     ) * NOISE_AMPLITUDE,
                 ],
             ];
@@ -195,7 +195,7 @@ fn benchmark_corner_bicubic_noise(c: &mut Criterion) {
                     grid[gz][gx] = fbm.gen_single_2d(
                         sample_x * NOISE_FREQUENCY,
                         sample_z * NOISE_FREQUENCY,
-                        NOISE_SEED,
+                        WORLD_SEED,
                     ) * NOISE_AMPLITUDE;
                 }
             }
@@ -234,7 +234,7 @@ fn benchmark_grid_bicubic_noise(c: &mut Criterion) {
                     grid[gz][gx] = fbm.gen_single_2d(
                         sample_x * NOISE_FREQUENCY,
                         sample_z * NOISE_FREQUENCY,
-                        NOISE_SEED,
+                        WORLD_SEED,
                     ) * NOISE_AMPLITUDE;
                 }
             }

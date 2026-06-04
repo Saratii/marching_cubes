@@ -3,8 +3,8 @@ use crate::terrain::chunk_generator::padded_chunk_contains_surface;
 use crate::{
     constants::{
         CHUNK_WORLD_SIZE, CHUNKS_PER_CLUSTER, CHUNKS_PER_CLUSTER_DIM, HALF_CHUNK, NOISE_AMPLITUDE,
-        NOISE_FREQUENCY, NOISE_SEED, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_2D_PADDED,
-        SAMPLES_PER_CHUNK_DIM, SIMULATION_RADIUS_SQUARED,
+        NOISE_FREQUENCY, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_2D_PADDED, SAMPLES_PER_CHUNK_DIM,
+        SIMULATION_RADIUS_SQUARED, WORLD_SEED,
     },
     conversions::cluster_coord_to_min_chunk_coord,
     data_loader::{
@@ -528,7 +528,7 @@ fn chunk_loader_thread(
                                 let chunk_center_sample = fbm.gen_single_2d(
                                     (chunk_start.x + HALF_CHUNK) * NOISE_FREQUENCY,
                                     (chunk_start.z + HALF_CHUNK) * NOISE_FREQUENCY,
-                                    NOISE_SEED,
+                                    WORLD_SEED,
                                 ) * NOISE_AMPLITUDE;
                                 let uniformity = if chunk_center_sample + CHUNK_WORLD_SIZE * 3.0
                                     < chunk_start.y
