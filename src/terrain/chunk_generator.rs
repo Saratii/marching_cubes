@@ -8,9 +8,9 @@ use std::f32;
 
 use crate::{
     constants::{
-        CHUNK_WORLD_SIZE, HALF_CHUNK, NOISE_AMPLITUDE, NOISE_FREQUENCY, NOISE_SEED,
-        SAMPLES_PER_CHUNK_2D, SAMPLES_PER_CHUNK_2D_PADDED, SAMPLES_PER_CHUNK_DIM,
-        SAMPLES_PER_CHUNK_DIM_PADDED, VOXEL_WORLD_SIZE,
+        CHUNK_WORLD_SIZE, HALF_CHUNK, NOISE_AMPLITUDE, NOISE_FREQUENCY, SAMPLES_PER_CHUNK_2D,
+        SAMPLES_PER_CHUNK_2D_PADDED, SAMPLES_PER_CHUNK_DIM, SAMPLES_PER_CHUNK_DIM_PADDED,
+        VOXEL_WORLD_SIZE, WORLD_SEED,
     },
     terrain::terrain::Uniformity,
 };
@@ -83,7 +83,7 @@ pub fn generate_noise_height_samples(
         5,
         5,
         NOISE_FREQUENCY * HALF_CHUNK,
-        NOISE_SEED,
+        WORLD_SEED,
     );
     for v in &mut noise_grid {
         *v *= NOISE_AMPLITUDE;
