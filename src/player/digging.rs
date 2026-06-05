@@ -84,7 +84,7 @@ pub fn handle_digging_input(
                     &mut terrain_io.terrain_chunk_map,
                 );
                 for (chunk_coord, densities, materials, uniformity) in modified_chunks {
-                    let entity = terrain_io.chunk_entity_map.0.get(&chunk_coord);
+                    let entity = terrain_io.chunk_entity_map.get_option(chunk_coord);
                     let (vertices, normals, material_ids, indices) = mc_mesh_generation(
                         &densities,
                         &materials,
@@ -157,10 +157,7 @@ pub fn handle_digging_input(
                                         )),
                                     ))
                                     .id();
-                                terrain_io
-                                    .chunk_entity_map
-                                    .0
-                                    .insert(chunk_coord, new_entity);
+                                terrain_io.chunk_entity_map.insert(chunk_coord, new_entity);
                             }
                         }
                     } else {
@@ -168,7 +165,7 @@ pub fn handle_digging_input(
                         if let Some(entity) = entity {
                             commands.entity(*entity).despawn();
                         }
-                        terrain_io.chunk_entity_map.0.remove(&chunk_coord);
+                        terrain_io.chunk_entity_map.remove(chunk_coord);
                     }
                     //replace chunks in chunk map
                     let mut terrain_chunk_map_lock = terrain_io.terrain_chunk_map.0.lock().unwrap();

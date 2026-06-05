@@ -523,10 +523,10 @@ fn chunk_loader_thread(
             internal_queue.push(req);
         }
         drop(heap);
-        for request in internal_queue.drain(..) {
+        for cluster_request in internal_queue.drain(..) {
             let mut has_entity_buffer = [false; CHUNKS_PER_CLUSTER];
             let mut rolling = 0;
-            let min_chunk = cluster_coord_to_min_chunk_coord(&request.position);
+            let min_chunk = cluster_coord_to_min_chunk_coord(&cluster_request.position);
             for chunk_x in min_chunk.0..min_chunk.0 + CHUNKS_PER_CLUSTER_DIM as i16 {
                 for chunk_y in min_chunk.1..min_chunk.1 + CHUNKS_PER_CLUSTER_DIM as i16 {
                     for chunk_z in min_chunk.2..min_chunk.2 + CHUNKS_PER_CLUSTER_DIM as i16 {
@@ -541,16 +541,24 @@ fn chunk_loader_thread(
                             &fbm,
                             &write_sender,
                         );
+                        let has_surface = resolve_has_surface(
+                            uniformity,
+                            &cluster_request,
+                            &chunk_buffers,
+                            &mut lod_buffers,
+                            chunk_coord,
+                            &rolling,
+                            &chunk_spawn_channel,
+                        );
                         process_chunk(
                             chunk_coord,
                             uniformity,
-                            &mut chunk_buffers,
-                            &request,
-                            &chunk_spawn_channel,
+                            &chunk_buffers,
+                            &cluster_request,
                             &mut rolling,
                             &terrain_chunk_map_insert_sender,
                             &mut has_entity_buffer,
-                            &mut lod_buffers,
+                            has_surface,
                             #[cfg(feature = "timers")]
                             &mut chunks_with_entities,
                             #[cfg(feature = "timers")]
@@ -559,10 +567,10 @@ fn chunk_loader_thread(
                     }
                 }
             }
-            let new_state = request.load_state_transition.to_state();
+            let new_state = cluster_request.load_state_transition.to_state();
             let _ = res_tx.send(ChunkResult {
                 has_entity: has_entity_buffer,
-                cluster_coord: request.position,
+                cluster_coord: cluster_request.position,
                 load_state: new_state,
             });
             #[cfg(feature = "timers")]
@@ -793,33 +801,33 @@ pub fn chunk_spawn_reciever(
                         MeshMaterial3d(standard_material.0.clone()),
                     ))
                     .id();
-                chunk_entity_map.0.insert(chunk_coord, entity);
+                chunk_entity_map.insert(chunk_coord, entity);
             }
             ChunkSpawnResult::ToGiveCollider((chunk_coord, collider)) => {
-                let entity = chunk_entity_map.0.get(&chunk_coord).unwrap();
-                commands.entity(*entity).insert(collider);
+                let entity = chunk_entity_map.get(chunk_coord);
+                commands.entity(entity).insert(collider);
             }
             ChunkSpawnResult::ToDespawn(chunk_coord) => {
-                let entity = chunk_entity_map.0.remove(&chunk_coord).unwrap();
+                let entity = chunk_entity_map.remove(chunk_coord);
                 if let Ok(mesh_ref) = mesh_handles_query.get(entity) {
                     mesh_handles.remove(&mesh_ref.0);
                 }
                 commands.entity(entity).despawn();
             }
             ChunkSpawnResult::ToChangeLodAddCollider((chunk_coord, new_mesh, new_collider)) => {
-                let entity = chunk_entity_map.0.get(&chunk_coord).unwrap();
-                let mesh_ref = mesh_handles_query.get(*entity).unwrap();
+                let entity = chunk_entity_map.get(chunk_coord);
+                let mesh_ref = mesh_handles_query.get(entity).unwrap();
                 if let Some(aabb) = new_mesh.compute_aabb() {
-                    commands.entity(*entity).insert(aabb);
+                    commands.entity(entity).insert(aabb);
                 }
                 mesh_handles.insert(&mesh_ref.0, new_mesh).unwrap();
-                commands.entity(*entity).insert(new_collider);
+                commands.entity(entity).insert(new_collider);
             }
             ChunkSpawnResult::ToChangeLod((chunk_coord, new_mesh)) => {
-                let entity = chunk_entity_map.0.get(&chunk_coord).unwrap();
-                let mesh_ref = mesh_handles_query.get(*entity).unwrap();
+                let entity = chunk_entity_map.get(chunk_coord);
+                let mesh_ref = mesh_handles_query.get(entity).unwrap();
                 if let Some(aabb) = new_mesh.compute_aabb() {
-                    commands.entity(*entity).insert(aabb);
+                    commands.entity(entity).insert(aabb);
                 }
                 mesh_handles.insert(&mesh_ref.0, new_mesh).unwrap();
             }
@@ -833,12 +841,11 @@ pub fn chunk_spawn_reciever(
                         MeshMaterial3d(standard_material.0.clone()),
                     ))
                     .id();
-                chunk_entity_map.0.insert(chunk_coord, entity);
+                chunk_entity_map.insert(chunk_coord, entity);
             }
         }
         if frame_start.0.elapsed() >= TARGET_FRAME_TIME {
-            //if this fn would cause fps to drop below a certain threshold, wait until next frame to continue processing requests
-            return;
+            return; //if this fn would cause fps to drop below a certain threshold, wait until next frame to continue processing requests
         }
         #[cfg(feature = "timers")]
         {
@@ -850,12 +857,16 @@ pub fn chunk_spawn_reciever(
     }
 }
 
+//downscales to new resolution from full resolution
+//searches downscaled densities for surface
+//if has surface runs marching cubes, generates mesh, and sends either a spawn command or a change lod command based on if it was previously loaded or not
+//returns if the reduced chunk contains a surface
 fn process_lod(
     density_buffer: &[i16],
     material_buffer: &[MaterialCode],
     chunk_spawn_channel: &Sender<ChunkSpawnResult>,
     chunk_coord: (i16, i16, i16),
-    request: &ClusterRequest,
+    cluster_request: &ClusterRequest,
     rolling: usize,
     reduced_density_buffer: &mut [i16],
     reduced_material_buffer: &mut [MaterialCode],
@@ -877,7 +888,7 @@ fn process_lod(
             &density_buffer,
         );
         let mesh = generate_bevy_mesh(vertices, normals, material_ids, indices);
-        if request.had_entity(rolling) {
+        if cluster_request.had_entity(rolling) {
             chunk_spawn_channel
                 .send(ChunkSpawnResult::ToChangeLod((chunk_coord, mesh)))
                 .unwrap();
@@ -890,110 +901,26 @@ fn process_lod(
     }
 }
 
+//if in simulated radius
+//send terrain_chunk_map insertion command based on uniformity
+//allocates densities and materials if non unifoirm
+//updates the has_entity_buffer
+//increments rolling
 fn process_chunk(
     chunk_coord: (i16, i16, i16),
     uniformity: Uniformity,
-    chunk_buffers: &mut ChunkBuffers,
-    request: &ClusterRequest,
-    chunk_spawn_channel: &Sender<ChunkSpawnResult>,
+    chunk_buffers: &ChunkBuffers,
+    cluster_request: &ClusterRequest,
     rolling: &mut usize,
     terrain_chunk_map_insert_sender: &Sender<((i16, i16, i16), TerrainChunk)>,
     has_entity_buffer: &mut [bool],
-    lod_buffers: &mut LodBuffers,
+    has_surface: bool,
     #[cfg(feature = "timers")] chunks_with_entities: &mut i32,
     #[cfg(feature = "timers")] chunks_generated: &mut i32,
 ) {
-    let has_surface = match uniformity {
-        Uniformity::Air | Uniformity::Dirt => false,
-        Uniformity::NonUniform => match request.load_state_transition {
-            LoadStateTransition::ToLod5 => process_lod(
-                &chunk_buffers.density,
-                &chunk_buffers.material,
-                &chunk_spawn_channel,
-                chunk_coord,
-                &request,
-                *rolling,
-                &mut lod_buffers.density_r5,
-                &mut lod_buffers.material_r5,
-                RF5_SAMPLES_PER_CHUNK_DIM,
-            ),
-            LoadStateTransition::ToLod4 => process_lod(
-                &chunk_buffers.density,
-                &chunk_buffers.material,
-                &chunk_spawn_channel,
-                chunk_coord,
-                &request,
-                *rolling,
-                &mut lod_buffers.density_r4,
-                &mut lod_buffers.material_r4,
-                RF4_SAMPLES_PER_CHUNK_DIM,
-            ),
-            LoadStateTransition::ToLod3 => process_lod(
-                &chunk_buffers.density,
-                &chunk_buffers.material,
-                &chunk_spawn_channel,
-                chunk_coord,
-                &request,
-                *rolling,
-                &mut lod_buffers.density_r3,
-                &mut lod_buffers.material_r3,
-                RF3_SAMPLES_PER_CHUNK_DIM,
-            ),
-            LoadStateTransition::ToLod2 => process_lod(
-                &chunk_buffers.density,
-                &chunk_buffers.material,
-                &chunk_spawn_channel,
-                chunk_coord,
-                &request,
-                *rolling,
-                &mut lod_buffers.density_r2,
-                &mut lod_buffers.material_r2,
-                RF2_SAMPLES_PER_CHUNK_DIM,
-            ),
-            LoadStateTransition::ToLod1 => process_lod(
-                &chunk_buffers.density,
-                &chunk_buffers.material,
-                &chunk_spawn_channel,
-                chunk_coord,
-                &request,
-                *rolling,
-                &mut lod_buffers.density_r1,
-                &mut lod_buffers.material_r1,
-                RF1_SAMPLES_PER_CHUNK_DIM,
-            ),
-            LoadStateTransition::ToFull => build_full_mesh_and_spawn(
-                &chunk_buffers.density,
-                &chunk_buffers.material,
-                chunk_coord,
-                request,
-                *rolling,
-                chunk_spawn_channel,
-                FullLodMode::NoCollider,
-            ),
-            LoadStateTransition::ToFullWithCollider => build_full_mesh_and_spawn(
-                &chunk_buffers.density,
-                &chunk_buffers.material,
-                chunk_coord,
-                request,
-                *rolling,
-                chunk_spawn_channel,
-                FullLodMode::WithCollider,
-            ),
-            LoadStateTransition::NoChangeAddCollider => build_full_mesh_and_spawn(
-                &chunk_buffers.density,
-                &chunk_buffers.material,
-                chunk_coord,
-                request,
-                *rolling,
-                chunk_spawn_channel,
-                FullLodMode::AddColliderToExisting,
-            ),
-        },
-    };
-    //we have determined if a surface exists at the given LOD, sent the requests to spawn the lod, and have all the correct lod buffer loaded
     //if simulated store the densities
     let in_simulated = matches!(
-        request.load_state_transition,
+        cluster_request.load_state_transition,
         LoadStateTransition::ToFullWithCollider | LoadStateTransition::NoChangeAddCollider
     );
     if in_simulated {
@@ -1033,6 +960,161 @@ fn process_chunk(
     }
 }
 
+fn resolve_uniformity(
+    chunk_coord: (i16, i16, i16),
+    column_range_map: &ColumnRangeMap,
+    index_map_read: &FxHashMap<(i16, i16, i16), u64>,
+    index_map_delta: &RwLock<FxHashMap<(i16, i16, i16), u64>>,
+    chunk_data_file_read: &mut File,
+    chunk_buffers: &mut ChunkBuffers,
+    fbm: &GeneratorWrapper<SafeNode>,
+    write_sender: &Sender<WriteCmd>,
+) -> Uniformity {
+    let uniformity_option = column_range_map.contains(chunk_coord);
+    if let Some(uniformity) = uniformity_option {
+        return uniformity;
+    }
+    let file_offset = index_map_read
+        .get(&chunk_coord)
+        .copied()
+        .or_else(|| index_map_delta.read().get(&chunk_coord).copied());
+    if let Some(offset) = file_offset {
+        load_chunk(
+            chunk_data_file_read,
+            offset,
+            &mut chunk_buffers.density,
+            &mut chunk_buffers.material,
+        );
+        return Uniformity::NonUniform;
+    }
+    let chunk_start = calculate_chunk_start(&chunk_coord);
+    let uniformity = generate_chunk_into_buffers(fbm, chunk_start, chunk_buffers);
+    match uniformity {
+        Uniformity::Air => {
+            write_sender
+                .send(WriteCmd::WriteUniformAir { coord: chunk_coord })
+                .unwrap();
+        }
+        Uniformity::Dirt => {
+            write_sender
+                .send(WriteCmd::WriteUniformDirt { coord: chunk_coord })
+                .unwrap();
+        }
+        Uniformity::NonUniform => {}
+    }
+    uniformity
+}
+
+//match on uniformity
+//if uniform air or dirt it does not have surface
+//else process lod or process full to determine if has surface
+//potentially builds mesh and submits spawn chunk command
+fn resolve_has_surface(
+    uniformity: Uniformity,
+    cluster_request: &ClusterRequest,
+    chunk_buffers: &ChunkBuffers,
+    lod_buffers: &mut LodBuffers,
+    chunk_coord: (i16, i16, i16),
+    rolling: &usize,
+    chunk_spawn_channel: &Sender<ChunkSpawnResult>,
+) -> bool {
+    match uniformity {
+        Uniformity::Air | Uniformity::Dirt => false,
+        Uniformity::NonUniform => match cluster_request.load_state_transition {
+            LoadStateTransition::ToLod5 => process_lod(
+                &chunk_buffers.density,
+                &chunk_buffers.material,
+                &chunk_spawn_channel,
+                chunk_coord,
+                &cluster_request,
+                *rolling,
+                &mut lod_buffers.density_r5,
+                &mut lod_buffers.material_r5,
+                RF5_SAMPLES_PER_CHUNK_DIM,
+            ),
+            LoadStateTransition::ToLod4 => process_lod(
+                &chunk_buffers.density,
+                &chunk_buffers.material,
+                &chunk_spawn_channel,
+                chunk_coord,
+                &cluster_request,
+                *rolling,
+                &mut lod_buffers.density_r4,
+                &mut lod_buffers.material_r4,
+                RF4_SAMPLES_PER_CHUNK_DIM,
+            ),
+            LoadStateTransition::ToLod3 => process_lod(
+                &chunk_buffers.density,
+                &chunk_buffers.material,
+                &chunk_spawn_channel,
+                chunk_coord,
+                &cluster_request,
+                *rolling,
+                &mut lod_buffers.density_r3,
+                &mut lod_buffers.material_r3,
+                RF3_SAMPLES_PER_CHUNK_DIM,
+            ),
+            LoadStateTransition::ToLod2 => process_lod(
+                &chunk_buffers.density,
+                &chunk_buffers.material,
+                &chunk_spawn_channel,
+                chunk_coord,
+                &cluster_request,
+                *rolling,
+                &mut lod_buffers.density_r2,
+                &mut lod_buffers.material_r2,
+                RF2_SAMPLES_PER_CHUNK_DIM,
+            ),
+            LoadStateTransition::ToLod1 => process_lod(
+                &chunk_buffers.density,
+                &chunk_buffers.material,
+                &chunk_spawn_channel,
+                chunk_coord,
+                &cluster_request,
+                *rolling,
+                &mut lod_buffers.density_r1,
+                &mut lod_buffers.material_r1,
+                RF1_SAMPLES_PER_CHUNK_DIM,
+            ),
+            LoadStateTransition::ToFull => build_full_mesh_and_spawn(
+                &chunk_buffers.density,
+                &chunk_buffers.material,
+                chunk_coord,
+                cluster_request,
+                *rolling,
+                chunk_spawn_channel,
+                FullLodMode::NoCollider,
+            ),
+            LoadStateTransition::ToFullWithCollider => build_full_mesh_and_spawn(
+                &chunk_buffers.density,
+                &chunk_buffers.material,
+                chunk_coord,
+                cluster_request,
+                *rolling,
+                chunk_spawn_channel,
+                FullLodMode::WithCollider,
+            ),
+            LoadStateTransition::NoChangeAddCollider => build_full_mesh_and_spawn(
+                &chunk_buffers.density,
+                &chunk_buffers.material,
+                chunk_coord,
+                cluster_request,
+                *rolling,
+                chunk_spawn_channel,
+                FullLodMode::AddColliderToExisting,
+            ),
+        },
+    }
+}
+
+//searches for if the chunk contains a surface
+//if it has a surface:
+//run marching cubes
+//generate a mesh
+//check if the chunk previously had an entity
+//match on the needed collider mode
+//send proper chunk spawn command with or without collider
+//return if the chunk contains a surface
 fn build_full_mesh_and_spawn(
     density_buffer: &[i16],
     material_buffer: &[MaterialCode],
@@ -1111,49 +1193,4 @@ fn build_full_mesh_and_spawn(
         }
         true
     }
-}
-
-fn resolve_uniformity(
-    chunk_coord: (i16, i16, i16),
-    column_range_map: &ColumnRangeMap,
-    index_map_read: &FxHashMap<(i16, i16, i16), u64>,
-    index_map_delta: &RwLock<FxHashMap<(i16, i16, i16), u64>>,
-    chunk_data_file_read: &mut File,
-    chunk_buffers: &mut ChunkBuffers,
-    fbm: &GeneratorWrapper<SafeNode>,
-    write_sender: &Sender<WriteCmd>,
-) -> Uniformity {
-    let uniformity_option = column_range_map.contains(chunk_coord);
-    if let Some(uniformity) = uniformity_option {
-        return uniformity;
-    }
-    let file_offset = index_map_read
-        .get(&chunk_coord)
-        .copied()
-        .or_else(|| index_map_delta.read().get(&chunk_coord).copied());
-    if let Some(offset) = file_offset {
-        load_chunk(
-            chunk_data_file_read,
-            offset,
-            &mut chunk_buffers.density,
-            &mut chunk_buffers.material,
-        );
-        return Uniformity::NonUniform;
-    }
-    let chunk_start = calculate_chunk_start(&chunk_coord);
-    let uniformity = generate_chunk_into_buffers(fbm, chunk_start, chunk_buffers);
-    match uniformity {
-        Uniformity::Air => {
-            write_sender
-                .send(WriteCmd::WriteUniformAir { coord: chunk_coord })
-                .unwrap();
-        }
-        Uniformity::Dirt => {
-            write_sender
-                .send(WriteCmd::WriteUniformDirt { coord: chunk_coord })
-                .unwrap();
-        }
-        Uniformity::NonUniform => {}
-    }
-    uniformity
 }

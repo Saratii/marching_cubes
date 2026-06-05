@@ -24,7 +24,59 @@ pub struct PlayerDataFile(pub File);
 pub struct StaleCompressionFile(pub Arc<Mutex<File>>);
 
 #[derive(Resource)]
-pub struct ChunkEntityMap(pub FxHashMap<(i16, i16, i16), Entity>);
+pub struct ChunkEntityMap(FxHashMap<(i16, i16, i16), Entity>);
+
+impl ChunkEntityMap {
+    pub fn insert(&mut self, chunk_coord: (i16, i16, i16), entity: Entity) {
+        #[cfg(feature = "debug")]
+        {
+            assert!(
+                self.0.insert(chunk_coord, entity).is_none(),
+                "ChunkEntityMap::insert: chunk coord {chunk_coord:?} already had an entity"
+            );
+        }
+        #[cfg(not(feature = "debug"))]
+        {
+            self.0.insert(chunk_coord, entity);
+        }
+    }
+
+    pub fn get(&self, chunk_coord: (i16, i16, i16)) -> Entity {
+        #[cfg(feature = "debug")]
+        {
+            let result = self.0.get(&chunk_coord);
+            assert!(
+                result.is_some(),
+                "ChunkEntityMap::get: chunk coord {chunk_coord:?} had no entity"
+            );
+            *result.unwrap()
+        }
+        #[cfg(not(feature = "debug"))]
+        {
+            *self.0.get(&chunk_coord).unwrap()
+        }
+    }
+
+    pub fn get_option(&self, chunk_coord: (i16, i16, i16)) -> Option<&Entity> {
+        self.0.get(&chunk_coord)
+    }
+
+    pub fn remove(&mut self, chunk_coord: (i16, i16, i16)) -> Entity {
+        #[cfg(feature = "debug")]
+        {
+            let result = self.0.remove(&chunk_coord);
+            assert!(
+                result.is_some(),
+                "ChunkEntityMap::remove: chunk coord {chunk_coord:?} had no entity"
+            );
+            result.unwrap()
+        }
+        #[cfg(not(feature = "debug"))]
+        {
+            self.0.remove(&chunk_coord).unwrap()
+        }
+    }
+}
 
 // Binary format layout:
 // - SDF values: num_voxels * i16 (2 bytes each)
