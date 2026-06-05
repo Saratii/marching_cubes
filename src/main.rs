@@ -28,7 +28,7 @@ use marching_cubes::player::digging::handle_digging_input;
 use marching_cubes::player::player::{
     CameraController, KeyBindings, camera_look, camera_zoom, free_cam_movement, grab_on_click,
     handle_focus_change, initial_grab_cursor, player_movement, spawn_free_cam_root, spawn_player,
-    sync_player_mutex, toggle_first_person, toggle_fly_mode, toggle_free_cam,
+    sync_player_mutex, sync_player_rotation, toggle_first_person, toggle_fly_mode, toggle_free_cam,
     validate_player_spawn,
 };
 use marching_cubes::settings::settings_driver::{load_settings, save_monitor_on_move};
@@ -163,7 +163,10 @@ fn main() {
                 apply_settings_changes,
             ),
         )
-        .add_systems(Update, (toggle_free_cam, free_cam_movement))
+        .add_systems(
+            Update,
+            (toggle_free_cam, free_cam_movement, sync_player_rotation),
+        )
         .run();
 }
 

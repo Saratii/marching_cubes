@@ -5,7 +5,6 @@ use std::fs::{File, OpenOptions, create_dir_all};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::mem::transmute;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 
 use crate::constants::{SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_PADDED};
 use crate::data_loader::column_range_map::ColumnRangeMap;
@@ -19,9 +18,11 @@ const TOMBSTONE_BYTES: [u8; 6] = [0xFF; 6];
 #[derive(Resource)]
 pub struct PlayerDataFile(pub File);
 
-//when a non-uniform chunk becomes uniform and is removed from the main data file, mark its spot as available to be reused
-#[derive(Resource)]
-pub struct StaleCompressionFile(pub Arc<Mutex<File>>);
+pub struct PlayerSaveData {
+    pub position: Vec3,
+    pub yaw: f32,
+    pub pitch: f32,
+}
 
 #[derive(Resource)]
 pub struct ChunkEntityMap(FxHashMap<(i16, i16, i16), Entity>);
@@ -203,13 +204,6 @@ pub fn setup_chunk_loading(mut commands: Commands) {
         .open(root.join("data/player_data.txt"))
         .unwrap();
     commands.insert_resource(PlayerDataFile(player_data_file));
-    #[allow(unused)]
-    let stale_chunks_file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .open(root.join("data/stale_chunks.txt"))
-        .unwrap();
 }
 
 // Load all chunk coords and track empty slots
@@ -284,15 +278,18 @@ pub fn remove_uniform_chunk(
     f.flush().unwrap();
 }
 
-pub fn write_player_position(f: &mut File, pos: Vec3) {
+pub fn write_player_data(f: &mut File, data: &PlayerSaveData) {
     f.set_len(0).unwrap();
     f.seek(SeekFrom::Start(0)).unwrap();
-    let s = format!("{} {} {}", pos.x, pos.y, pos.z);
+    let s = format!(
+        "{} {} {} {} {}",
+        data.position.x, data.position.y, data.position.z, data.yaw, data.pitch
+    );
     f.write_all(s.as_bytes()).unwrap();
     f.flush().unwrap();
 }
 
-pub fn read_player_position(f: &mut File) -> Option<Vec3> {
+pub fn read_player_data(f: &mut File) -> Option<PlayerSaveData> {
     f.seek(SeekFrom::Start(0)).unwrap();
     let mut buf = String::new();
     if f.read_to_string(&mut buf).is_err() {
@@ -302,5 +299,11 @@ pub fn read_player_position(f: &mut File) -> Option<Vec3> {
     let x = it.next()?.parse::<f32>().ok()?;
     let y = it.next()?.parse::<f32>().ok()?;
     let z = it.next()?.parse::<f32>().ok()?;
-    Some(Vec3::new(x, y, z))
+    let yaw = it.next()?.parse::<f32>().ok()?;
+    let pitch = it.next()?.parse::<f32>().ok()?;
+    Some(PlayerSaveData {
+        position: Vec3::new(x, y, z),
+        yaw,
+        pitch,
+    })
 }

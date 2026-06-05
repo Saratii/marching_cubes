@@ -16,7 +16,7 @@ use crate::{
     data_loader::{
         driver::{INITIAL_CHUNKS_LOADED, PlayerTranslationMutexHandle},
         file_loader::{
-            ChunkEntityMap, PlayerDataFile, read_player_position, write_player_position,
+            ChunkEntityMap, PlayerDataFile, PlayerSaveData, read_player_data, write_player_data,
         },
     },
     terrain::terrain::{ChunkTag, NoiseFunction},
@@ -53,6 +53,9 @@ pub struct FreeCamRoot(pub Entity);
 pub struct PlayerTag;
 
 #[derive(Component)]
+pub struct PlayerMeshTag;
+
+#[derive(Component)]
 pub struct VerticalVelocity {
     pub y: f32,
 }
@@ -67,6 +70,8 @@ pub struct CameraController {
     pub distance: f32,
     pub is_first_person: bool,
     pub is_cursor_grabbed: bool,
+    pub player_yaw: f32,
+    pub player_pitch: f32,
 }
 
 impl Default for CameraController {
@@ -77,6 +82,8 @@ impl Default for CameraController {
             distance: CAMERA_3RD_PERSON_OFFSET.length(),
             is_first_person: true,
             is_cursor_grabbed: false,
+            player_yaw: 0.0,
+            player_pitch: 0.2,
         }
     }
 }
@@ -136,11 +143,18 @@ pub fn spawn_player(
     mut player_data_file: ResMut<PlayerDataFile>,
     fbm: Res<NoiseFunction>,
     main_camera: Query<Entity, With<MainCameraTag>>,
-    camera_controller: Res<CameraController>,
+    mut camera_controller: ResMut<CameraController>,
     mut camera_transform: Query<&mut Transform, With<MainCameraTag>>,
 ) {
-    let player_spawn = match read_player_position(&mut player_data_file.0) {
-        Some(pos) => pos,
+    let save_data = read_player_data(&mut player_data_file.0);
+    let player_spawn = match &save_data {
+        Some(data) => {
+            camera_controller.yaw = data.yaw;
+            camera_controller.pitch = data.pitch;
+            camera_controller.player_yaw = data.yaw;
+            camera_controller.player_pitch = data.pitch;
+            data.position
+        }
         None => Vec3::new(
             PLAYER_SPAWN.x,
             fbm.0.gen_single_2d(
@@ -179,14 +193,21 @@ pub fn spawn_player(
                 ..default()
             },
             Transform::from_translation(player_spawn),
-            Mesh3d(player_mesh_handle),
-            MeshMaterial3d(material),
             PlayerTag,
             VerticalVelocity { y: 0.0 },
-            Visibility::Hidden,
             FlyMode { active: false },
         ))
         .id();
+    let player_mesh_entity = commands
+        .spawn((
+            Mesh3d(player_mesh_handle),
+            MeshMaterial3d(material),
+            Transform::default(),
+            Visibility::Hidden,
+            PlayerMeshTag,
+        ))
+        .id();
+    commands.entity(player).add_child(player_mesh_entity);
     commands
         .entity(player)
         .add_child(main_camera.iter().next().unwrap());
@@ -212,7 +233,7 @@ pub fn toggle_first_person(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut camera_transform: Query<&mut Transform, With<MainCameraTag>>,
     mut camera_controller: ResMut<CameraController>,
-    mut player_visibility: Query<&mut Visibility, With<PlayerTag>>,
+    mut player_visibility: Query<&mut Visibility, With<PlayerMeshTag>>,
     key_bindings: Res<KeyBindings>,
     free_cam: Res<FreeCamMode>,
 ) {
@@ -281,6 +302,10 @@ pub fn camera_look(
             camera_controller.yaw -= event.delta.x * MOUSE_SENSITIVITY;
             camera_controller.pitch -= event.delta.y * MOUSE_SENSITIVITY;
             camera_controller.pitch = camera_controller.pitch.clamp(MIN_PITCH, MAX_PITCH);
+            if !free_cam.is_active {
+                camera_controller.player_yaw = camera_controller.yaw;
+                camera_controller.player_pitch = camera_controller.pitch;
+            }
             if camera_controller.yaw != old_yaw || camera_controller.pitch != old_pitch {
                 angles_changed = true;
             }
@@ -417,12 +442,29 @@ pub fn sync_player_mutex(
     player_transform_mutex_handle: ResMut<PlayerTranslationMutexHandle>,
     player_transform_query: Query<&Transform, With<PlayerTag>>,
     mut player_data_file: ResMut<PlayerDataFile>,
+    camera_controller: Res<CameraController>,
+    mut last_saved_yaw: Local<f32>,
+    mut last_saved_pitch: Local<f32>,
 ) {
     let mut player_transform_lock = player_transform_mutex_handle.0.lock().unwrap();
     let player_translation = player_transform_query.iter().next().unwrap().translation;
-    if *player_transform_lock != player_translation {
-        *player_transform_lock = player_translation;
-        write_player_position(&mut player_data_file.0, *player_transform_lock);
+    let translation_changed = *player_transform_lock != player_translation;
+    let angles_changed = *last_saved_yaw != camera_controller.player_yaw
+        || *last_saved_pitch != camera_controller.player_pitch;
+    if translation_changed || angles_changed {
+        if translation_changed {
+            *player_transform_lock = player_translation;
+        }
+        *last_saved_yaw = camera_controller.player_yaw;
+        *last_saved_pitch = camera_controller.player_pitch;
+        write_player_data(
+            &mut player_data_file.0,
+            &PlayerSaveData {
+                position: player_translation,
+                yaw: camera_controller.player_yaw,
+                pitch: camera_controller.player_pitch,
+            },
+        );
     }
 }
 
@@ -490,7 +532,7 @@ pub fn toggle_free_cam(
     player_entity_query: Query<Entity, With<PlayerTag>>,
     free_cam_root: Res<FreeCamRoot>,
     key_bindings: Res<KeyBindings>,
-    mut player_visibility_query: Query<&mut Visibility, With<PlayerTag>>,
+    mut player_visibility_query: Query<&mut Visibility, With<PlayerMeshTag>>,
 ) {
     if !keyboard.just_pressed(key_bindings.toggle_free_cam) {
         return;
@@ -609,4 +651,18 @@ pub fn validate_player_spawn(
             }
         }
     }
+}
+
+pub fn sync_player_rotation(
+    mut mesh_query: Query<&mut Transform, With<PlayerMeshTag>>,
+    camera_controller: Res<CameraController>,
+    free_cam: Res<FreeCamMode>,
+) {
+    if free_cam.is_active {
+        return;
+    }
+    let Ok(mut mesh_transform) = mesh_query.single_mut() else {
+        return;
+    };
+    mesh_transform.rotation = Quat::from_rotation_y(camera_controller.player_yaw);
 }
