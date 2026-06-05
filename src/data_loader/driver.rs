@@ -80,14 +80,9 @@ pub struct ChunkBuffers {
 }
 
 impl ChunkBuffers {
-    pub fn new() -> Self {
-        Self {
-            density: [0; SAMPLES_PER_CHUNK_PADDED],
-            material: [MaterialCode::Air; SAMPLES_PER_CHUNK],
-            heightmap: [0.0; SAMPLES_PER_CHUNK_2D_PADDED],
-            dhdx: [0.0; SAMPLES_PER_CHUNK_2D_PADDED],
-            dhdz: [0.0; SAMPLES_PER_CHUNK_2D_PADDED],
-        }
+    pub fn new() -> Box<Self> {
+        //boxed at the struct level for better cache locality
+        unsafe { Box::new_zeroed().assume_init() } //unsafe to avoid stack overflow on debug builds 
     }
 }
 
@@ -105,19 +100,9 @@ struct LodBuffers {
 }
 
 impl LodBuffers {
-    fn new() -> Self {
-        Self {
-            density_r1: [0; SAMPLES_PER_CHUNK / RF1.pow(3)],
-            material_r1: [MaterialCode::Air; SAMPLES_PER_CHUNK / RF1.pow(3)],
-            density_r2: [0; SAMPLES_PER_CHUNK / RF2.pow(3)],
-            material_r2: [MaterialCode::Air; SAMPLES_PER_CHUNK / RF2.pow(3)],
-            density_r3: [0; SAMPLES_PER_CHUNK / RF3.pow(3)],
-            material_r3: [MaterialCode::Air; SAMPLES_PER_CHUNK / RF3.pow(3)],
-            density_r4: [0; SAMPLES_PER_CHUNK / RF4.pow(3)],
-            material_r4: [MaterialCode::Air; SAMPLES_PER_CHUNK / RF4.pow(3)],
-            density_r5: [0; SAMPLES_PER_CHUNK / RF5.pow(3)],
-            material_r5: [MaterialCode::Air; SAMPLES_PER_CHUNK / RF5.pow(3)],
-        }
+    pub fn new() -> Box<Self> {
+        //boxed at the struct level for better cache locality
+        unsafe { Box::new_zeroed().assume_init() } //unsafe to avoid stack overflow on debug builds 
     }
 }
 
@@ -365,7 +350,6 @@ pub fn setup_chunk_driver(
         let terrain_chunk_map_insert_sender_clone = terrain_chunk_map_insert_sender.clone();
         let _handle = thread::Builder::new()
             .name(format!("chunk_loader_{thread_idx}"))
-            .stack_size(32 * 1024 * 1024)
             .spawn(move || {
                 chunk_loader_thread(
                     thread_idx,

@@ -2,7 +2,7 @@ use bevy::math::Vec3;
 use criterion::{Criterion, criterion_group, criterion_main};
 
 use marching_cubes::{
-    constants::{CHUNKS_PER_CLUSTER_DIM, SAMPLES_PER_CHUNK_2D, SAMPLES_PER_CHUNK_DIM},
+    constants::{CHUNKS_PER_CLUSTER_DIM, SAMPLES_PER_CHUNK_2D_PADDED, SAMPLES_PER_CHUNK_DIM},
     conversions::{chunk_coord_to_cluster_coord, world_pos_to_chunk_coord},
     data_loader::driver::ChunkBuffers,
     marching_cubes::mc::mc_mesh_generation,
@@ -83,7 +83,7 @@ fn benchmark_marching_cubes(c: &mut Criterion) {
 fn benchmark_heightmap_single_chunk_cpu(c: &mut Criterion) {
     let chunk_coord = find_chunk_with_surface();
     let fbm = get_fbm();
-    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
+    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D_PADDED];
     let chunk_start = calculate_chunk_start(&chunk_coord);
     c.bench_function("heightmap_single_cpu", |b| {
         b.iter(|| {
@@ -114,7 +114,7 @@ fn benchmark_cluster_heightmap_cpu(c: &mut Criterion) {
     let fbm = get_fbm();
     let chunk = world_pos_to_chunk_coord(&Vec3::ZERO);
     let cluster = chunk_coord_to_cluster_coord(&chunk);
-    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
+    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D_PADDED];
     c.bench_function("cluster_heightmap_cpu", |b| {
         b.iter(|| {
             let mut results = HashMap::new();
@@ -187,8 +187,8 @@ fn benchmark_compute_heightmap_gradients(c: &mut Criterion) {
     let fbm = get_fbm();
     let chunk_start = calculate_chunk_start(&chunk_coord);
     let height_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
-    let mut dhdx_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
-    let mut dhdz_buffer = [0.0; SAMPLES_PER_CHUNK_2D];
+    let mut dhdx_buffer = [0.0; SAMPLES_PER_CHUNK_2D_PADDED];
+    let mut dhdz_buffer = [0.0; SAMPLES_PER_CHUNK_2D_PADDED];
     c.bench_function("compute_heightmap_gradients", |b| {
         b.iter(|| {
             black_box(compute_heightmap_gradients(

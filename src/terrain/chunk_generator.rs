@@ -168,6 +168,11 @@ pub fn generate_terrain_heights(
     heightmap_buffer: &mut [f32], // (SAMPLES_PER_CHUNK_DIM + 2) * (SAMPLES_PER_CHUNK_DIM + 2)
     noise_samples: &[f32],
 ) {
+    #[cfg(feature = "debug")]
+    assert_eq!(
+        heightmap_buffer.len(),
+        SAMPLES_PER_CHUNK_DIM_PADDED * SAMPLES_PER_CHUNK_DIM_PADDED,
+    );
     let inv_samples = 1.0 / (SAMPLES_PER_CHUNK_DIM - 1) as f32;
     let mut roller = 0;
     for z in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
@@ -556,6 +561,16 @@ pub fn compute_heightmap_gradients(
     dhdz: &mut [f32], //(SAMPLES_PER_CHUNK_DIM + 2) * (SAMPLES_PER_CHUNK_DIM + 2)
     noise_height_samples: &[f32],
 ) {
+    #[cfg(feature = "debug")]
+    assert_eq!(
+        dhdx.len(),
+        SAMPLES_PER_CHUNK_DIM_PADDED * SAMPLES_PER_CHUNK_DIM_PADDED,
+    );
+    #[cfg(feature = "debug")]
+    assert_eq!(
+        dhdz.len(),
+        SAMPLES_PER_CHUNK_DIM_PADDED * SAMPLES_PER_CHUNK_DIM_PADDED,
+    );
     const INV_CHUNK_SIZE: f32 = 1.0 / CHUNK_WORLD_SIZE;
     let mut gx = [0.0; 25];
     let mut gz = [0.0; 25];
