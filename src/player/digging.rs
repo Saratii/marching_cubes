@@ -164,8 +164,8 @@ pub fn handle_digging_input(
                         //no geometry, remove existing entity if it exists
                         if let Some(entity) = entity {
                             commands.entity(*entity).despawn();
+                            terrain_io.chunk_entity_map.remove(chunk_coord);
                         }
-                        terrain_io.chunk_entity_map.remove(chunk_coord);
                     }
                     //replace chunks in chunk map
                     let mut terrain_chunk_map_lock = terrain_io.terrain_chunk_map.0.lock().unwrap();
