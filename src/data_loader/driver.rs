@@ -541,15 +541,18 @@ fn chunk_loader_thread(
                             &fbm,
                             &write_sender,
                         );
-                        let has_surface = resolve_has_surface(
-                            uniformity,
-                            &cluster_request,
-                            &chunk_buffers,
-                            &mut lod_buffers,
-                            chunk_coord,
-                            &rolling,
-                            &chunk_spawn_channel,
-                        );
+                        let has_surface = if matches!(uniformity, Uniformity::NonUniform) {
+                            resolve_has_surface(
+                                &cluster_request,
+                                &chunk_buffers,
+                                &mut lod_buffers,
+                                chunk_coord,
+                                &rolling,
+                                &chunk_spawn_channel,
+                            )
+                        } else {
+                            false
+                        };
                         process_chunk(
                             chunk_coord,
                             uniformity,
@@ -879,6 +882,7 @@ fn process_lod(
         reduced_material_buffer,
         out_samples_per_chunk_dim,
     );
+    //must recheck surface incase the reduction eliminated the surface. Additionally filters out the false positive state from calling chunk_contains_surface on a padded buffer preventing empty geometry.
     chunk_contains_surface(reduced_density_buffer) && {
         let (vertices, normals, material_ids, indices) = mc_mesh_generation(
             reduced_density_buffer,
@@ -1011,12 +1015,10 @@ pub fn resolve_uniformity(
     uniformity
 }
 
-//match on uniformity
-//if uniform air or dirt it does not have surface
-//else process lod or process full to determine if has surface
+//run fast surface check for early exit
+//else process lod or process full both eventually double checking that it has a surface before submitting spawn chunk command
 //potentially builds mesh and submits spawn chunk command
 pub fn resolve_has_surface(
-    uniformity: Uniformity,
     cluster_request: &ClusterRequest,
     chunk_buffers: &ChunkBuffers,
     lod_buffers: &mut LodBuffers,
@@ -1024,92 +1026,93 @@ pub fn resolve_has_surface(
     rolling: &usize,
     chunk_spawn_channel: &Sender<ChunkSpawnResult>,
 ) -> bool {
-    match uniformity {
-        Uniformity::Air | Uniformity::Dirt => false,
-        Uniformity::NonUniform => match cluster_request.load_state_transition {
-            LoadStateTransition::ToLod5 => process_lod(
-                &chunk_buffers.density,
-                &chunk_buffers.material,
-                &chunk_spawn_channel,
-                chunk_coord,
-                &cluster_request,
-                *rolling,
-                &mut lod_buffers.density_r5,
-                &mut lod_buffers.material_r5,
-                RF5_SAMPLES_PER_CHUNK_DIM,
-            ),
-            LoadStateTransition::ToLod4 => process_lod(
-                &chunk_buffers.density,
-                &chunk_buffers.material,
-                &chunk_spawn_channel,
-                chunk_coord,
-                &cluster_request,
-                *rolling,
-                &mut lod_buffers.density_r4,
-                &mut lod_buffers.material_r4,
-                RF4_SAMPLES_PER_CHUNK_DIM,
-            ),
-            LoadStateTransition::ToLod3 => process_lod(
-                &chunk_buffers.density,
-                &chunk_buffers.material,
-                &chunk_spawn_channel,
-                chunk_coord,
-                &cluster_request,
-                *rolling,
-                &mut lod_buffers.density_r3,
-                &mut lod_buffers.material_r3,
-                RF3_SAMPLES_PER_CHUNK_DIM,
-            ),
-            LoadStateTransition::ToLod2 => process_lod(
-                &chunk_buffers.density,
-                &chunk_buffers.material,
-                &chunk_spawn_channel,
-                chunk_coord,
-                &cluster_request,
-                *rolling,
-                &mut lod_buffers.density_r2,
-                &mut lod_buffers.material_r2,
-                RF2_SAMPLES_PER_CHUNK_DIM,
-            ),
-            LoadStateTransition::ToLod1 => process_lod(
-                &chunk_buffers.density,
-                &chunk_buffers.material,
-                &chunk_spawn_channel,
-                chunk_coord,
-                &cluster_request,
-                *rolling,
-                &mut lod_buffers.density_r1,
-                &mut lod_buffers.material_r1,
-                RF1_SAMPLES_PER_CHUNK_DIM,
-            ),
-            LoadStateTransition::ToFull => build_full_mesh_and_spawn(
-                &chunk_buffers.density,
-                &chunk_buffers.material,
-                chunk_coord,
-                cluster_request,
-                *rolling,
-                chunk_spawn_channel,
-                FullLodMode::NoCollider,
-            ),
-            LoadStateTransition::ToFullWithCollider => build_full_mesh_and_spawn(
-                &chunk_buffers.density,
-                &chunk_buffers.material,
-                chunk_coord,
-                cluster_request,
-                *rolling,
-                chunk_spawn_channel,
-                FullLodMode::WithCollider,
-            ),
-            LoadStateTransition::NoChangeAddCollider => build_full_mesh_and_spawn(
-                &chunk_buffers.density,
-                &chunk_buffers.material,
-                chunk_coord,
-                cluster_request,
-                *rolling,
-                chunk_spawn_channel,
-                FullLodMode::AddColliderToExisting,
-            ),
-        },
+    if !chunk_contains_surface(&chunk_buffers.density) {
+        return false; //surface scan is faster than downscaling and early exit will apply to the majority of chunks. Produces false positives handled later. 
+    }
+    //must be non-uniform (including false positive state caused by padding)
+    match cluster_request.load_state_transition {
+        LoadStateTransition::ToLod5 => process_lod(
+            &chunk_buffers.density,
+            &chunk_buffers.material,
+            &chunk_spawn_channel,
+            chunk_coord,
+            &cluster_request,
+            *rolling,
+            &mut lod_buffers.density_r5,
+            &mut lod_buffers.material_r5,
+            RF5_SAMPLES_PER_CHUNK_DIM,
+        ),
+        LoadStateTransition::ToLod4 => process_lod(
+            &chunk_buffers.density,
+            &chunk_buffers.material,
+            &chunk_spawn_channel,
+            chunk_coord,
+            &cluster_request,
+            *rolling,
+            &mut lod_buffers.density_r4,
+            &mut lod_buffers.material_r4,
+            RF4_SAMPLES_PER_CHUNK_DIM,
+        ),
+        LoadStateTransition::ToLod3 => process_lod(
+            &chunk_buffers.density,
+            &chunk_buffers.material,
+            &chunk_spawn_channel,
+            chunk_coord,
+            &cluster_request,
+            *rolling,
+            &mut lod_buffers.density_r3,
+            &mut lod_buffers.material_r3,
+            RF3_SAMPLES_PER_CHUNK_DIM,
+        ),
+        LoadStateTransition::ToLod2 => process_lod(
+            &chunk_buffers.density,
+            &chunk_buffers.material,
+            &chunk_spawn_channel,
+            chunk_coord,
+            &cluster_request,
+            *rolling,
+            &mut lod_buffers.density_r2,
+            &mut lod_buffers.material_r2,
+            RF2_SAMPLES_PER_CHUNK_DIM,
+        ),
+        LoadStateTransition::ToLod1 => process_lod(
+            &chunk_buffers.density,
+            &chunk_buffers.material,
+            &chunk_spawn_channel,
+            chunk_coord,
+            &cluster_request,
+            *rolling,
+            &mut lod_buffers.density_r1,
+            &mut lod_buffers.material_r1,
+            RF1_SAMPLES_PER_CHUNK_DIM,
+        ),
+        LoadStateTransition::ToFull => build_full_mesh_and_spawn(
+            &chunk_buffers.density,
+            &chunk_buffers.material,
+            chunk_coord,
+            cluster_request,
+            *rolling,
+            chunk_spawn_channel,
+            FullLodMode::NoCollider,
+        ),
+        LoadStateTransition::ToFullWithCollider => build_full_mesh_and_spawn(
+            &chunk_buffers.density,
+            &chunk_buffers.material,
+            chunk_coord,
+            cluster_request,
+            *rolling,
+            chunk_spawn_channel,
+            FullLodMode::WithCollider,
+        ),
+        LoadStateTransition::NoChangeAddCollider => build_full_mesh_and_spawn(
+            &chunk_buffers.density,
+            &chunk_buffers.material,
+            chunk_coord,
+            cluster_request,
+            *rolling,
+            chunk_spawn_channel,
+            FullLodMode::AddColliderToExisting,
+        ),
     }
 }
 
@@ -1130,6 +1133,7 @@ pub fn build_full_mesh_and_spawn(
     chunk_spawn_channel: &Sender<ChunkSpawnResult>,
     mode: FullLodMode,
 ) -> bool {
+    //slower surface check to eliminate false possitive state to prevent empty geometry.
     padded_chunk_contains_surface(density_buffer) && {
         let (vertices, normals, material_ids, indices) = mc_mesh_generation(
             density_buffer,

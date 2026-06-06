@@ -106,7 +106,6 @@ fn bench_resolve_has_surface_lod5(c: &mut Criterion) {
     c.bench_function("resolve_has_surface_lod5", |b| {
         b.iter(|| {
             black_box(resolve_has_surface(
-                black_box(Uniformity::NonUniform),
                 black_box(&cluster_request),
                 black_box(&chunk_buffers),
                 black_box(&mut lod_buffers),
@@ -135,7 +134,6 @@ fn bench_resolve_has_surface_lod1(c: &mut Criterion) {
     c.bench_function("resolve_has_surface_lod1", |b| {
         b.iter(|| {
             black_box(resolve_has_surface(
-                black_box(Uniformity::NonUniform),
                 black_box(&cluster_request),
                 black_box(&chunk_buffers),
                 black_box(&mut lod_buffers),
@@ -164,7 +162,6 @@ fn bench_resolve_has_surface_full_collider(c: &mut Criterion) {
     c.bench_function("resolve_has_surface_full_collider", |b| {
         b.iter(|| {
             black_box(resolve_has_surface(
-                black_box(Uniformity::NonUniform),
                 black_box(&cluster_request),
                 black_box(&chunk_buffers),
                 black_box(&mut lod_buffers),

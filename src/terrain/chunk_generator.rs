@@ -147,6 +147,8 @@ pub fn padded_chunk_contains_surface(
 }
 
 //ignore padding
+//when called on padded buffer, a false positive is unlikely but possible
+//a false positive is non-fatal
 pub fn chunk_contains_surface(density_buffer: &[i16]) -> bool {
     unsafe { chunk_contains_surface_avx2(density_buffer) }
 }
