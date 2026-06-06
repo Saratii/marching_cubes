@@ -148,19 +148,37 @@ pub fn padded_chunk_contains_surface(
 
 //ignore padding
 pub fn chunk_contains_surface(density_buffer: &[i16]) -> bool {
-    let mut has_positive = false;
-    let mut has_negative = false;
-    for &density in density_buffer {
-        if density > 0 {
-            has_positive = true;
-        } else if density < 0 {
-            has_negative = true;
+    unsafe { chunk_contains_surface_avx2(density_buffer) }
+}
+
+//for whatever reason llvm fails at vectorizing the non intrinsics version
+//beats early exit by 4000% in worst case
+#[target_feature(enable = "avx2")]
+unsafe fn chunk_contains_surface_avx2(density_buffer: &[i16]) -> bool {
+    unsafe {
+        let zero = _mm256_setzero_si256();
+        let mut has_neg = zero;
+        let mut has_pos = zero;
+        let chunks = density_buffer.chunks_exact(16);
+        let remainder = chunks.remainder();
+        for chunk in chunks {
+            let v = _mm256_loadu_si256(chunk.as_ptr() as *const __m256i);
+            has_pos = _mm256_or_si256(has_pos, _mm256_cmpgt_epi16(v, zero));
+            has_neg = _mm256_or_si256(has_neg, _mm256_cmpgt_epi16(zero, v));
         }
-        if has_positive && has_negative {
+        let pos = _mm256_movemask_epi8(has_pos) != 0;
+        let neg = _mm256_movemask_epi8(has_neg) != 0;
+        if pos && neg {
             return true;
         }
+        let mut rem_pos = false;
+        let mut rem_neg = false;
+        for &d in remainder {
+            rem_pos |= d > 0;
+            rem_neg |= d < 0;
+        }
+        (pos || rem_pos) && (neg || rem_neg)
     }
-    false
 }
 
 //Sample the fbm noise at a higher resolution and then bilinearly interpolate to get smooth terrain heights

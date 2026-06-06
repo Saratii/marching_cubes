@@ -51,11 +51,11 @@ use crate::{
     },
 };
 
-const RF1: usize = 2;
-const RF2: usize = 4;
-const RF3: usize = 8;
-const RF4: usize = 16;
-const RF5: usize = 32;
+pub const RF1: usize = 2;
+pub const RF2: usize = 4;
+pub const RF3: usize = 8;
+pub const RF4: usize = 16;
+pub const RF5: usize = 32;
 pub const RF1_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF1;
 pub const RF2_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF2;
 pub const RF3_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF3;

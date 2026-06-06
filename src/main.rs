@@ -44,7 +44,6 @@ use marching_cubes::ui::debug_lines::{
     draw_cluster_debug, draw_collider_debug, draw_lod_debug, draw_voxel_surface_debug,
 };
 use marching_cubes::ui::menu::{SettingsState, menu_toggle, menu_update};
-use marching_cubes::ui::minimap::spawn_minimap;
 
 fn main() {
     println!("fma: {}", std::is_x86_feature_detected!("fma"));

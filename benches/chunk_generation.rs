@@ -5,9 +5,12 @@ use bevy::math::Vec3;
 use criterion::{Criterion, criterion_group, criterion_main};
 
 use marching_cubes::{
-    constants::{CHUNKS_PER_CLUSTER_DIM, SAMPLES_PER_CHUNK_2D_PADDED, SAMPLES_PER_CHUNK_DIM},
+    constants::{
+        CHUNKS_PER_CLUSTER_DIM, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_2D_PADDED,
+        SAMPLES_PER_CHUNK_DIM, SAMPLES_PER_CHUNK_PADDED,
+    },
     conversions::{chunk_coord_to_cluster_coord, world_pos_to_chunk_coord},
-    data_loader::driver::{ChunkBuffers, LodBuffers, RF1_SAMPLES_PER_CHUNK_DIM},
+    data_loader::driver::{ChunkBuffers, LodBuffers, RF1, RF1_SAMPLES_PER_CHUNK_DIM, RF5},
     marching_cubes::mc::mc_mesh_generation,
     terrain::{
         chunk_compute_pipeline::GpuTerrainGenerator,
@@ -216,6 +219,33 @@ fn bench_downscale(c: &mut Criterion) {
         });
 }
 
+fn bench_chunk_contains_surface_full(c: &mut Criterion) {
+    let density_buffer = [-10; SAMPLES_PER_CHUNK_PADDED]; //no surface is the common and worst case
+    c.bench_function("chunk_contains_surface_full", |b| {
+        b.iter(|| {
+            black_box(chunk_contains_surface(black_box(&density_buffer)));
+        })
+    });
+}
+
+fn bench_chunk_contains_surface_r1(c: &mut Criterion) {
+    let density_r1 = [-10; SAMPLES_PER_CHUNK / RF1.pow(3)]; //no surface is the common and worst case
+    c.bench_function("chunk_contains_surface_r1", |b| {
+        b.iter(|| {
+            black_box(chunk_contains_surface(black_box(&density_r1)));
+        })
+    });
+}
+
+fn bench_chunk_contains_surface_r5(c: &mut Criterion) {
+    let density_r5 = [-10; SAMPLES_PER_CHUNK / RF5.pow(3)]; //no surface is the common and worst case
+    c.bench_function("chunk_contains_surface_r5", |b| {
+        b.iter(|| {
+            black_box(chunk_contains_surface(black_box(&density_r5)));
+        })
+    });
+}
+
 criterion_group!(
     benches,
     benchmark_generate_densities_cpu,
@@ -229,6 +259,9 @@ criterion_group!(
     benchmark_batch_cluster_heightmaps_gpu,
     benchmark_compute_heightmap_gradients,
     bench_downscale,
+    bench_chunk_contains_surface_full,
+    bench_chunk_contains_surface_r1,
+    bench_chunk_contains_surface_r5,
 );
 criterion_main!(benches);
 
