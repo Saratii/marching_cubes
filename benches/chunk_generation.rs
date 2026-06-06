@@ -1,22 +1,28 @@
+#[path = "bench_util.rs"]
+mod bench_util;
+
 use bevy::math::Vec3;
 use criterion::{Criterion, criterion_group, criterion_main};
 
 use marching_cubes::{
     constants::{CHUNKS_PER_CLUSTER_DIM, SAMPLES_PER_CHUNK_2D_PADDED, SAMPLES_PER_CHUNK_DIM},
     conversions::{chunk_coord_to_cluster_coord, world_pos_to_chunk_coord},
-    data_loader::driver::ChunkBuffers,
+    data_loader::driver::{ChunkBuffers, LodBuffers, RF1_SAMPLES_PER_CHUNK_DIM},
     marching_cubes::mc::mc_mesh_generation,
     terrain::{
         chunk_compute_pipeline::GpuTerrainGenerator,
         chunk_generator::{
-            calculate_chunk_start, chunk_contains_surface, compute_heightmap_gradients,
+            calculate_chunk_start, chunk_contains_surface, compute_heightmap_gradients, downscale,
             generate_chunk_into_buffers, generate_noise_height_samples, generate_terrain_heights,
             get_fbm,
         },
         heightmap_compute_pipeline::GpuHeightmapGenerator,
+        terrain::Uniformity,
     },
 };
-use std::{collections::HashMap, hint::black_box};
+use std::{collections::HashMap, hint::black_box, time::Duration};
+
+use crate::bench_util::find_chunk_with_surface;
 
 fn benchmark_generate_densities_cpu(c: &mut Criterion) {
     let chunk_coord = find_chunk_with_surface();
@@ -168,20 +174,6 @@ fn benchmark_batch_cluster_heightmaps_gpu(c: &mut Criterion) {
     });
 }
 
-fn find_chunk_with_surface() -> (i16, i16, i16) {
-    let mut chunk_buffers = ChunkBuffers::new();
-    let fbm = get_fbm();
-    for chunk_y in -100..100 {
-        let chunk_coord = (0, chunk_y, 0);
-        let chunk_start = calculate_chunk_start(&chunk_coord);
-        generate_chunk_into_buffers(&fbm, chunk_start, &mut chunk_buffers);
-        if chunk_contains_surface(&chunk_buffers.density) {
-            return chunk_coord;
-        }
-    }
-    panic!("No chunk with surface found in the tested range");
-}
-
 fn benchmark_compute_heightmap_gradients(c: &mut Criterion) {
     let chunk_coord = find_chunk_with_surface();
     let fbm = get_fbm();
@@ -200,6 +192,30 @@ fn benchmark_compute_heightmap_gradients(c: &mut Criterion) {
     });
 }
 
+fn bench_downscale(c: &mut Criterion) {
+    let chunk_coord = find_chunk_with_surface();
+    let mut chunk_buffers = ChunkBuffers::new();
+    let mut lod_buffers = LodBuffers::new();
+    let chunk_start = calculate_chunk_start(&chunk_coord);
+    let fbm = get_fbm();
+    let uniformity = generate_chunk_into_buffers(&fbm, chunk_start, &mut chunk_buffers);
+    assert_eq!(uniformity, Uniformity::NonUniform);
+    assert!(chunk_contains_surface(&chunk_buffers.density));
+    c.benchmark_group("downscale")
+        .measurement_time(Duration::from_secs(10))
+        .bench_function("downscale", |b| {
+            b.iter(|| {
+                black_box(downscale(
+                    black_box(&chunk_buffers.density),
+                    black_box(&chunk_buffers.material),
+                    black_box(&mut lod_buffers.density_r1),
+                    black_box(&mut lod_buffers.material_r1),
+                    black_box(RF1_SAMPLES_PER_CHUNK_DIM),
+                ));
+            })
+        });
+}
+
 criterion_group!(
     benches,
     benchmark_generate_densities_cpu,
@@ -212,6 +228,7 @@ criterion_group!(
     benchmark_generate_uniform_densities_cpu,
     benchmark_batch_cluster_heightmaps_gpu,
     benchmark_compute_heightmap_gradients,
+    bench_downscale,
 );
 criterion_main!(benches);
 

@@ -40,6 +40,10 @@ harness = false
 name = "noise_bench"
 harness = false
 
+[[bench]]
+name = "driver_bench"
+harness = false
+
 #cargo bench --bench chunk_generation -- deserialize_chunk_data
 
 [profile.release]

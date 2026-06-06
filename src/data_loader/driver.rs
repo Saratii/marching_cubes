@@ -56,16 +56,16 @@ const RF2: usize = 4;
 const RF3: usize = 8;
 const RF4: usize = 16;
 const RF5: usize = 32;
-const RF1_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF1;
-const RF2_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF2;
-const RF3_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF3;
-const RF4_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF4;
-const RF5_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF5;
+pub const RF1_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF1;
+pub const RF2_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF2;
+pub const RF3_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF3;
+pub const RF4_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF4;
+pub const RF5_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF5;
 
 //I dont like this but, block player movement until first chunk load happens
 pub static INITIAL_CHUNKS_LOADED: AtomicBool = AtomicBool::new(false);
 
-enum FullLodMode {
+pub enum FullLodMode {
     NoCollider,
     WithCollider,
     AddColliderToExisting,
@@ -86,17 +86,17 @@ impl ChunkBuffers {
     }
 }
 
-struct LodBuffers {
-    density_r1: [i16; SAMPLES_PER_CHUNK / RF1.pow(3)],
-    material_r1: [MaterialCode; SAMPLES_PER_CHUNK / RF1.pow(3)],
-    density_r2: [i16; SAMPLES_PER_CHUNK / RF2.pow(3)],
-    material_r2: [MaterialCode; SAMPLES_PER_CHUNK / RF2.pow(3)],
-    density_r3: [i16; SAMPLES_PER_CHUNK / RF3.pow(3)],
-    material_r3: [MaterialCode; SAMPLES_PER_CHUNK / RF3.pow(3)],
-    density_r4: [i16; SAMPLES_PER_CHUNK / RF4.pow(3)],
-    material_r4: [MaterialCode; SAMPLES_PER_CHUNK / RF4.pow(3)],
-    density_r5: [i16; SAMPLES_PER_CHUNK / RF5.pow(3)],
-    material_r5: [MaterialCode; SAMPLES_PER_CHUNK / RF5.pow(3)],
+pub struct LodBuffers {
+    pub density_r1: [i16; SAMPLES_PER_CHUNK / RF1.pow(3)],
+    pub material_r1: [MaterialCode; SAMPLES_PER_CHUNK / RF1.pow(3)],
+    pub density_r2: [i16; SAMPLES_PER_CHUNK / RF2.pow(3)],
+    pub material_r2: [MaterialCode; SAMPLES_PER_CHUNK / RF2.pow(3)],
+    pub density_r3: [i16; SAMPLES_PER_CHUNK / RF3.pow(3)],
+    pub material_r3: [MaterialCode; SAMPLES_PER_CHUNK / RF3.pow(3)],
+    pub density_r4: [i16; SAMPLES_PER_CHUNK / RF4.pow(3)],
+    pub material_r4: [MaterialCode; SAMPLES_PER_CHUNK / RF4.pow(3)],
+    pub density_r5: [i16; SAMPLES_PER_CHUNK / RF5.pow(3)],
+    pub material_r5: [MaterialCode; SAMPLES_PER_CHUNK / RF5.pow(3)],
 }
 
 impl LodBuffers {
@@ -960,7 +960,13 @@ fn process_chunk(
     }
 }
 
-fn resolve_uniformity(
+//early return uniformity if found in column_range_map
+//else get file offset from index map or index map delta (delta requiring read lock)
+//if offset found, load chunk from file and return
+//else generate chunk
+//if generated chunk is uniform send a write command for the uniform cache files
+//return uniformity
+pub fn resolve_uniformity(
     chunk_coord: (i16, i16, i16),
     column_range_map: &ColumnRangeMap,
     index_map_read: &FxHashMap<(i16, i16, i16), u64>,
@@ -1009,7 +1015,7 @@ fn resolve_uniformity(
 //if uniform air or dirt it does not have surface
 //else process lod or process full to determine if has surface
 //potentially builds mesh and submits spawn chunk command
-fn resolve_has_surface(
+pub fn resolve_has_surface(
     uniformity: Uniformity,
     cluster_request: &ClusterRequest,
     chunk_buffers: &ChunkBuffers,
@@ -1115,11 +1121,11 @@ fn resolve_has_surface(
 //match on the needed collider mode
 //send proper chunk spawn command with or without collider
 //return if the chunk contains a surface
-fn build_full_mesh_and_spawn(
+pub fn build_full_mesh_and_spawn(
     density_buffer: &[i16],
     material_buffer: &[MaterialCode],
     chunk_coord: (i16, i16, i16),
-    request: &ClusterRequest,
+    cluster_request: &ClusterRequest,
     rolling: usize,
     chunk_spawn_channel: &Sender<ChunkSpawnResult>,
     mode: FullLodMode,
@@ -1133,7 +1139,7 @@ fn build_full_mesh_and_spawn(
             density_buffer,
         );
         let mesh = generate_bevy_mesh(vertices, normals, material_ids, indices);
-        let had_entity = request.had_entity(rolling);
+        let had_entity = cluster_request.had_entity(rolling);
         match mode {
             FullLodMode::NoCollider => {
                 if had_entity {
