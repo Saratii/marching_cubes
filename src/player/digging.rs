@@ -99,18 +99,18 @@ pub fn handle_digging_input(
                                 .send(WriteCmd::UpdateNonUniform {
                                     densities: Arc::clone(&densities),
                                     materials: Arc::clone(&materials),
-                                    coord: chunk_coord,
+                                    chunk_coord,
                                 })
                                 .unwrap();
                             if uniformity == Uniformity::Air {
                                 write_cmd_sender
                                     .0
-                                    .send(WriteCmd::RemoveUniformAir { coord: chunk_coord })
+                                    .send(WriteCmd::RemoveUniformAir { chunk_coord })
                                     .unwrap();
                             } else {
                                 write_cmd_sender
                                     .0
-                                    .send(WriteCmd::RemoveUniformDirt { coord: chunk_coord })
+                                    .send(WriteCmd::RemoveUniformDirt { chunk_coord })
                                     .unwrap();
                             }
                         }
@@ -120,10 +120,11 @@ pub fn handle_digging_input(
                                 .send(WriteCmd::UpdateNonUniform {
                                     densities: Arc::clone(&densities),
                                     materials: Arc::clone(&materials),
-                                    coord: chunk_coord,
+                                    chunk_coord,
                                 })
                                 .unwrap();
                         }
+                        Uniformity::Unknown => unreachable!(),
                     }
                     let new_mesh = generate_bevy_mesh(vertices, normals, material_ids, indices);
                     if new_mesh.count_vertices() > 0 {

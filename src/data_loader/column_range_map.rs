@@ -17,11 +17,15 @@ impl ColumnRangeMap {
 
     //given a chunk coordinate, return whether it is contained in any of the column ranges and if so its uniformity
     #[inline(always)]
-    pub fn contains(&self, chunk_coord: (i16, i16, i16)) -> Option<Uniformity> {
+    pub fn contains(&self, chunk_coord: (i16, i16, i16)) -> Uniformity {
         self.map
-            .get(&pack_xz(chunk_coord.0, chunk_coord.2))?
-            .iter()
-            .find_map(|r| r.contains(chunk_coord.1).then_some(r.uniformity))
+            .get(&pack_xz(chunk_coord.0, chunk_coord.2))
+            .and_then(|ranges| {
+                ranges
+                    .iter()
+                    .find_map(|r| r.contains(chunk_coord.1).then_some(r.uniformity))
+            })
+            .unwrap_or(Uniformity::Unknown)
     }
 
     //pack xz
@@ -142,9 +146,9 @@ mod tests {
         m.insert((0, 1, 0), Uniformity::Air);
         m.insert((0, 2, 0), Uniformity::Air);
         for y in 0..=2 {
-            assert_eq!(m.contains((0, y, 0)), Some(Uniformity::Air));
+            assert_eq!(m.contains((0, y, 0)), Uniformity::Air);
         }
-        assert_eq!(m.contains((0, 3, 0)), None);
+        assert_eq!(m.contains((0, 3, 0)), Uniformity::Unknown);
     }
 
     #[test]
@@ -152,9 +156,9 @@ mod tests {
         let mut m = ColumnRangeMap::new();
         m.insert((0, 0, 0), Uniformity::Air);
         m.insert((0, 2, 0), Uniformity::Air);
-        assert_eq!(m.contains((0, 0, 0)), Some(Uniformity::Air));
-        assert_eq!(m.contains((0, 1, 0)), None);
-        assert_eq!(m.contains((0, 2, 0)), Some(Uniformity::Air));
+        assert_eq!(m.contains((0, 0, 0)), Uniformity::Air);
+        assert_eq!(m.contains((0, 1, 0)), Uniformity::Unknown);
+        assert_eq!(m.contains((0, 2, 0)), Uniformity::Air);
     }
 
     #[test]
@@ -164,7 +168,7 @@ mod tests {
         m.insert((0, 2, 0), Uniformity::Air);
         m.insert((0, 1, 0), Uniformity::Air);
         for y in 0..=2 {
-            assert_eq!(m.contains((0, y, 0)), Some(Uniformity::Air));
+            assert_eq!(m.contains((0, y, 0)), Uniformity::Air);
         }
     }
 
@@ -175,10 +179,10 @@ mod tests {
         m.insert((0, 0, 0), Uniformity::Dirt);
         m.insert((0, 1, 0), Uniformity::Air);
         m.insert((0, 2, 0), Uniformity::Air);
-        assert_eq!(m.contains((0, -1, 0)), Some(Uniformity::Dirt));
-        assert_eq!(m.contains((0, 0, 0)), Some(Uniformity::Dirt));
-        assert_eq!(m.contains((0, 1, 0)), Some(Uniformity::Air));
-        assert_eq!(m.contains((0, 2, 0)), Some(Uniformity::Air));
+        assert_eq!(m.contains((0, -1, 0)), Uniformity::Dirt);
+        assert_eq!(m.contains((0, 0, 0)), Uniformity::Dirt);
+        assert_eq!(m.contains((0, 1, 0)), Uniformity::Air);
+        assert_eq!(m.contains((0, 2, 0)), Uniformity::Air);
     }
 
     #[test]
@@ -194,7 +198,7 @@ mod tests {
         for x in -4..=4 {
             for z in -4..=4 {
                 for y in -2..=2 {
-                    assert_eq!(m.contains((x, y, z)), Some(Uniformity::Air));
+                    assert_eq!(m.contains((x, y, z)), Uniformity::Air);
                 }
             }
         }
@@ -211,15 +215,10 @@ mod tests {
             m.insert((0, y, 0), Uniformity::Air);
         }
         for y in -12..=12 {
-            assert_eq!(
-                m.contains((0, y, 0)),
-                Some(Uniformity::Air),
-                "missing y={}",
-                y
-            );
+            assert_eq!(m.contains((0, y, 0)), Uniformity::Air, "missing y={}", y);
         }
-        assert_eq!(m.contains((0, -13, 0)), None);
-        assert_eq!(m.contains((0, 13, 0)), None);
+        assert_eq!(m.contains((0, -13, 0)), Uniformity::Unknown);
+        assert_eq!(m.contains((0, 13, 0)), Uniformity::Unknown);
     }
 
     #[test]
@@ -234,7 +233,7 @@ mod tests {
         for y in -10..=-1 {
             assert_eq!(
                 m.contains((0, y, 0)),
-                Some(Uniformity::Dirt),
+                Uniformity::Dirt,
                 "missing dirt y={}",
                 y
             );
@@ -242,12 +241,12 @@ mod tests {
         for y in 1..=10 {
             assert_eq!(
                 m.contains((0, y, 0)),
-                Some(Uniformity::Air),
+                Uniformity::Air,
                 "missing air y={}",
                 y
             );
         }
-        assert_eq!(m.contains((0, 0, 0)), None);
+        assert_eq!(m.contains((0, 0, 0)), Uniformity::Unknown);
     }
 
     #[test]
@@ -260,12 +259,7 @@ mod tests {
             m.insert((0, y, 0), Uniformity::Air);
         }
         for y in -40..=40 {
-            assert_eq!(
-                m.contains((0, y, 0)),
-                Some(Uniformity::Air),
-                "missing y={}",
-                y
-            );
+            assert_eq!(m.contains((0, y, 0)), Uniformity::Air, "missing y={}", y);
         }
     }
 
@@ -278,7 +272,7 @@ mod tests {
         for &y in &[6, 1, 5, 2, 4, 3] {
             m.insert((0, y, 0), Uniformity::Air);
         }
-        assert_eq!(m.contains((0, 1, 0)), Some(Uniformity::Air));
+        assert_eq!(m.contains((0, 1, 0)), Uniformity::Air);
     }
 
     #[test]
@@ -286,7 +280,7 @@ mod tests {
         let mut m = ColumnRangeMap::new();
         m.insert((0, 0, 0), Uniformity::Air);
         m.remove((0, 0, 0), Uniformity::Air);
-        assert_eq!(m.contains((0, 0, 0)), None);
+        assert_eq!(m.contains((0, 0, 0)), Uniformity::Unknown);
     }
 
     #[test]
@@ -296,9 +290,9 @@ mod tests {
         m.insert((0, 1, 0), Uniformity::Air);
         m.insert((0, 2, 0), Uniformity::Air);
         m.remove((0, 1, 0), Uniformity::Air);
-        assert_eq!(m.contains((0, 0, 0)), Some(Uniformity::Air));
-        assert_eq!(m.contains((0, 1, 0)), None);
-        assert_eq!(m.contains((0, 2, 0)), Some(Uniformity::Air));
+        assert_eq!(m.contains((0, 0, 0)), Uniformity::Air);
+        assert_eq!(m.contains((0, 1, 0)), Uniformity::Unknown);
+        assert_eq!(m.contains((0, 2, 0)), Uniformity::Air);
     }
 
     #[test]
@@ -308,9 +302,9 @@ mod tests {
         m.insert((0, 1, 0), Uniformity::Air);
         m.insert((0, 2, 0), Uniformity::Air);
         m.remove((0, 0, 0), Uniformity::Air);
-        assert_eq!(m.contains((0, 0, 0)), None);
-        assert_eq!(m.contains((0, 1, 0)), Some(Uniformity::Air));
-        assert_eq!(m.contains((0, 2, 0)), Some(Uniformity::Air));
+        assert_eq!(m.contains((0, 0, 0)), Uniformity::Unknown);
+        assert_eq!(m.contains((0, 1, 0)), Uniformity::Air);
+        assert_eq!(m.contains((0, 2, 0)), Uniformity::Air);
     }
 
     #[test]
@@ -320,9 +314,9 @@ mod tests {
         m.insert((0, 1, 0), Uniformity::Air);
         m.insert((0, 2, 0), Uniformity::Air);
         m.remove((0, 2, 0), Uniformity::Air);
-        assert_eq!(m.contains((0, 0, 0)), Some(Uniformity::Air));
-        assert_eq!(m.contains((0, 1, 0)), Some(Uniformity::Air));
-        assert_eq!(m.contains((0, 2, 0)), None);
+        assert_eq!(m.contains((0, 0, 0)), Uniformity::Air);
+        assert_eq!(m.contains((0, 1, 0)), Uniformity::Air);
+        assert_eq!(m.contains((0, 2, 0)), Uniformity::Unknown);
     }
 
     #[test]

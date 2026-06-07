@@ -186,7 +186,6 @@ fn bench_resolve_uniformity_from_generation(c: &mut Criterion) {
     let mut chunk_data_file_read = File::open("NUL").unwrap();
     #[cfg(not(windows))]
     let mut chunk_data_file_read = File::open("/dev/null").unwrap();
-    let (write_sender, _write_reciever) = crossbeam_channel::unbounded();
     assert_eq!(uniformity, Uniformity::NonUniform);
     assert!(chunk_contains_surface(&chunk_buffers.density));
     c.bench_function("resolve_uniformity_from_generation", |b| {
@@ -198,8 +197,6 @@ fn bench_resolve_uniformity_from_generation(c: &mut Criterion) {
                 black_box(&index_map_delta),
                 black_box(&mut chunk_data_file_read),
                 black_box(&mut chunk_buffers),
-                black_box(&fbm),
-                black_box(&write_sender),
             ));
         })
     });
@@ -221,7 +218,6 @@ fn bench_resolve_uniformity_from_load(c: &mut Criterion) {
         .unwrap();
     let index_map_read = load_chunk_index_map(&mut chunk_index_file);
     let mut chunk_data_file_read = File::open("benches/bench_data/chunk_data.txt").unwrap();
-    let (write_sender, _write_reciever) = crossbeam_channel::unbounded();
     assert_eq!(uniformity, Uniformity::NonUniform);
     assert!(chunk_contains_surface(&chunk_buffers.density));
     c.bench_function("resolve_uniformity_from_load", |b| {
@@ -233,8 +229,6 @@ fn bench_resolve_uniformity_from_load(c: &mut Criterion) {
                 black_box(&index_map_delta),
                 black_box(&mut chunk_data_file_read),
                 black_box(&mut chunk_buffers),
-                black_box(&fbm),
-                black_box(&write_sender),
             ));
         })
     });

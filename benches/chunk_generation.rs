@@ -6,8 +6,8 @@ use criterion::{Criterion, criterion_group, criterion_main};
 
 use marching_cubes::{
     constants::{
-        CHUNKS_PER_CLUSTER_DIM, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_2D_PADDED,
-        SAMPLES_PER_CHUNK_DIM, SAMPLES_PER_CHUNK_PADDED,
+        SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_2D_PADDED, SAMPLES_PER_CHUNK_DIM,
+        SAMPLES_PER_CHUNK_PADDED,
     },
     conversions::{chunk_coord_to_cluster_coord, world_pos_to_chunk_coord},
     data_loader::driver::{ChunkBuffers, LodBuffers, RF1, RF1_SAMPLES_PER_CHUNK_DIM, RF5},
@@ -16,24 +16,27 @@ use marching_cubes::{
         chunk_compute_pipeline::GpuTerrainGenerator,
         chunk_generator::{
             calculate_chunk_start, chunk_contains_surface, compute_heightmap_gradients, downscale,
-            generate_chunk_into_buffers, generate_noise_height_samples, generate_terrain_heights,
-            get_fbm,
+            fill_voxel_densities, generate_chunk_into_buffers, generate_noise_height_samples,
+            generate_terrain_heights, get_fbm,
         },
         heightmap_compute_pipeline::GpuHeightmapGenerator,
         terrain::Uniformity,
     },
 };
-use std::{collections::HashMap, hint::black_box, time::Duration};
+use std::{hint::black_box, time::Duration};
 
 use crate::bench_util::find_chunk_with_surface;
 
-fn benchmark_generate_densities_cpu(c: &mut Criterion) {
+fn benchmark_generate_chunk_into_buffers(c: &mut Criterion) {
     let chunk_coord = find_chunk_with_surface();
     let fbm = get_fbm();
     let mut chunk_buffers = ChunkBuffers::new();
-    c.bench_function("generate_densities_cpu", |b| {
+    let chunk_start = calculate_chunk_start(&chunk_coord);
+    let uniformity = generate_chunk_into_buffers(&fbm, chunk_start, &mut chunk_buffers);
+    assert_eq!(uniformity, Uniformity::NonUniform);
+    assert!(chunk_contains_surface(&chunk_buffers.density));
+    c.bench_function("generate_chunk_into_buffers", |b| {
         b.iter(|| {
-            let chunk_start = calculate_chunk_start(&chunk_coord);
             black_box(generate_chunk_into_buffers(
                 black_box(&fbm),
                 black_box(chunk_start),
@@ -89,61 +92,12 @@ fn benchmark_marching_cubes(c: &mut Criterion) {
     });
 }
 
-fn benchmark_heightmap_single_chunk_cpu(c: &mut Criterion) {
-    let chunk_coord = find_chunk_with_surface();
-    let fbm = get_fbm();
-    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D_PADDED];
-    let chunk_start = calculate_chunk_start(&chunk_coord);
-    c.bench_function("heightmap_single_cpu", |b| {
-        b.iter(|| {
-            let height_samples = generate_noise_height_samples(
-                black_box(chunk_start.x),
-                black_box(chunk_start.z),
-                black_box(&fbm),
-            );
-            black_box(generate_terrain_heights(
-                black_box(&mut heightmap_buffer),
-                black_box(&height_samples),
-            ));
-        })
-    });
-}
-
 fn benchmark_heightmap_single_chunk_gpu(c: &mut Criterion) {
     let chunk_coord = (0, 0, 0);
     let gpu_generator = GpuHeightmapGenerator::new();
     c.bench_function("heightmap_single_gpu", |b| {
         b.iter(|| {
             black_box(gpu_generator.generate_heightmap(black_box(&chunk_coord)));
-        })
-    });
-}
-
-fn benchmark_cluster_heightmap_cpu(c: &mut Criterion) {
-    let fbm = get_fbm();
-    let chunk = world_pos_to_chunk_coord(&Vec3::ZERO);
-    let cluster = chunk_coord_to_cluster_coord(&chunk);
-    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D_PADDED];
-    c.bench_function("cluster_heightmap_cpu", |b| {
-        b.iter(|| {
-            let mut results = HashMap::new();
-            for x in cluster.0..cluster.0 + CHUNKS_PER_CLUSTER_DIM as i16 {
-                for z in cluster.2..cluster.2 + CHUNKS_PER_CLUSTER_DIM as i16 {
-                    let chunk_coord = (x, cluster.1, z);
-                    let chunk_start = calculate_chunk_start(&chunk_coord);
-                    let height_samples = generate_noise_height_samples(
-                        black_box(chunk_start.x),
-                        black_box(chunk_start.z),
-                        black_box(&fbm),
-                    );
-                    let heights = generate_terrain_heights(
-                        black_box(&mut heightmap_buffer),
-                        black_box(&height_samples),
-                    );
-                    results.insert((chunk_coord.0, chunk_coord.1), heights);
-                }
-            }
-            black_box(results);
         })
     });
 }
@@ -246,14 +200,58 @@ fn bench_chunk_contains_surface_r5(c: &mut Criterion) {
     });
 }
 
+fn bench_generate_noise_height_samples(c: &mut Criterion) {
+    let chunk_start_x = -894.;
+    let chunk_start_z = 1242.;
+    let fbm: fastnoise2::generator::GeneratorWrapper<fastnoise2::SafeNode> = get_fbm();
+    c.bench_function("generate_noise_height_samples", |b| {
+        b.iter(|| {
+            black_box(generate_noise_height_samples(
+                black_box(chunk_start_x),
+                black_box(chunk_start_z),
+                black_box(&fbm),
+            ));
+        })
+    });
+}
+
+fn bench_generate_terrain_heights(c: &mut Criterion) {
+    let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D_PADDED];
+    let chunk_start_x = -894.;
+    let chunk_start_z = 1242.;
+    let fbm: fastnoise2::generator::GeneratorWrapper<fastnoise2::SafeNode> = get_fbm();
+    let noise_samples = generate_noise_height_samples(chunk_start_x, chunk_start_z, &fbm);
+    c.bench_function("generate_terrain_heights", |b| {
+        b.iter(|| {
+            black_box(generate_terrain_heights(
+                black_box(&mut heightmap_buffer),
+                black_box(&noise_samples),
+            ));
+        })
+    });
+}
+
+fn bench_fill_voxel_densities(c: &mut Criterion) {
+    let chunk_coord = find_chunk_with_surface();
+    let fbm = get_fbm();
+    let mut chunk_buffers = ChunkBuffers::new();
+    let chunk_start = calculate_chunk_start(&chunk_coord);
+    let uniformity = generate_chunk_into_buffers(&fbm, chunk_start, &mut chunk_buffers);
+    assert_eq!(uniformity, Uniformity::NonUniform);
+    assert!(chunk_contains_surface(&chunk_buffers.density));
+    c.bench_function("fill_voxel_densities", |b| {
+        b.iter(|| {
+            black_box(fill_voxel_densities(&mut chunk_buffers, &chunk_start));
+        })
+    });
+}
+
 criterion_group!(
     benches,
-    benchmark_generate_densities_cpu,
+    benchmark_generate_chunk_into_buffers,
     benchmark_marching_cubes,
     benchmark_generate_densities_gpu,
-    benchmark_heightmap_single_chunk_cpu,
     benchmark_heightmap_single_chunk_gpu,
-    benchmark_cluster_heightmap_cpu,
     benchmark_cluster_heightmap_gpu,
     benchmark_generate_uniform_densities_cpu,
     benchmark_batch_cluster_heightmaps_gpu,
@@ -262,6 +260,9 @@ criterion_group!(
     bench_chunk_contains_surface_full,
     bench_chunk_contains_surface_r1,
     bench_chunk_contains_surface_r5,
+    bench_generate_noise_height_samples,
+    bench_generate_terrain_heights,
+    bench_fill_voxel_densities,
 );
 criterion_main!(benches);
 

@@ -35,11 +35,13 @@ pub struct TerrainMaterialHandle(
 #[derive(Resource)]
 pub struct TextureArrayHandle(pub Handle<Image>);
 
+#[repr(u8)]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy)]
 pub enum Uniformity {
     NonUniform,
     Dirt,
     Air,
+    Unknown,
 }
 
 #[derive(Clone)]
