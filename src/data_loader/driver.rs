@@ -480,7 +480,7 @@ fn chunk_loader_thread(
     let mut lod_buffers = LodBuffers::new();
     let mut chunk_buffers = ChunkBuffers::new();
     const PROCESS_BATCH_SIZE: usize = 64;
-    let mut internal_queue = Vec::with_capacity(32);
+    let mut internal_queue = Vec::with_capacity(PROCESS_BATCH_SIZE);
     #[cfg(feature = "timers")]
     let mut chunks_generated = 0;
     #[cfg(feature = "timers")]
@@ -883,26 +883,33 @@ fn process_lod(
         out_samples_per_chunk_dim,
     );
     //must recheck surface incase the reduction eliminated the surface. Additionally filters out the false positive state from calling chunk_contains_surface on a padded buffer preventing empty geometry.
-    chunk_contains_surface(reduced_density_buffer) && {
-        let (vertices, normals, material_ids, indices) = mc_mesh_generation(
-            reduced_density_buffer,
-            reduced_material_buffer,
-            out_samples_per_chunk_dim,
-            false,
-            &density_buffer,
-        );
-        let mesh = generate_bevy_mesh(vertices, normals, material_ids, indices);
-        if cluster_request.had_entity(rolling) {
+    let had_entity = cluster_request.had_entity(rolling);
+    if !chunk_contains_surface(reduced_density_buffer) {
+        if had_entity {
             chunk_spawn_channel
-                .send(ChunkSpawnResult::ToChangeLod((chunk_coord, mesh)))
-                .unwrap();
-        } else {
-            chunk_spawn_channel
-                .send(ChunkSpawnResult::ToSpawn((chunk_coord, mesh)))
+                .send(ChunkSpawnResult::ToDespawn(chunk_coord))
                 .unwrap();
         }
-        true
+        return false;
     }
+    let (vertices, normals, material_ids, indices) = mc_mesh_generation(
+        reduced_density_buffer,
+        reduced_material_buffer,
+        out_samples_per_chunk_dim,
+        false,
+        &density_buffer,
+    );
+    let mesh = generate_bevy_mesh(vertices, normals, material_ids, indices);
+    if had_entity {
+        chunk_spawn_channel
+            .send(ChunkSpawnResult::ToChangeLod((chunk_coord, mesh)))
+            .unwrap();
+    } else {
+        chunk_spawn_channel
+            .send(ChunkSpawnResult::ToSpawn((chunk_coord, mesh)))
+            .unwrap();
+    }
+    true
 }
 
 //if in simulated radius
@@ -1135,72 +1142,84 @@ pub fn build_full_mesh_and_spawn(
 ) -> bool {
     //slower surface check to eliminate false possitive state to prevent empty geometry.
     padded_chunk_contains_surface(density_buffer) && {
-        let (vertices, normals, material_ids, indices) = mc_mesh_generation(
-            density_buffer,
-            material_buffer,
-            SAMPLES_PER_CHUNK_DIM,
-            true,
-            density_buffer,
-        );
-        let mesh = generate_bevy_mesh(vertices, normals, material_ids, indices);
+    let (vertices, normals, material_ids, indices) = mc_mesh_generation(
+        density_buffer,
+        material_buffer,
+        SAMPLES_PER_CHUNK_DIM,
+        true,
+        density_buffer,
+    );
+    #[cfg(feature = "debug")]
+    assert!(
+        !vertices.is_empty(),
+        "padded_chunk_contains_surface returned true but MC produced no geometry for {:?}",
+        chunk_coord
+    );
+    #[cfg(feature = "debug")]
+    assert!(
+        !indices.is_empty(),
+        "MC produced vertices but empty indices for {:?}",
+        chunk_coord
+    );
+    let mesh = generate_bevy_mesh(vertices, normals, material_ids, indices);
         let had_entity = cluster_request.had_entity(rolling);
-        match mode {
-            FullLodMode::NoCollider => {
-                if had_entity {
-                    chunk_spawn_channel
-                        .send(ChunkSpawnResult::ToChangeLod((chunk_coord, mesh)))
-                        .unwrap();
-                } else {
-                    chunk_spawn_channel
-                        .send(ChunkSpawnResult::ToSpawn((chunk_coord, mesh)))
-                        .unwrap();
-                }
-            }
-            FullLodMode::WithCollider => {
-                let collider = Collider::from_bevy_mesh(
-                    &mesh,
-                    &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
-                )
-                .unwrap();
-                if had_entity {
-                    chunk_spawn_channel
-                        .send(ChunkSpawnResult::ToChangeLodAddCollider((
-                            chunk_coord,
-                            mesh,
-                            collider,
-                        )))
-                        .unwrap();
-                } else {
-                    chunk_spawn_channel
-                        .send(ChunkSpawnResult::ToSpawnWithCollider((
-                            chunk_coord,
-                            collider,
-                            mesh,
-                        )))
-                        .unwrap();
-                }
-            }
-            FullLodMode::AddColliderToExisting => {
-                let collider = Collider::from_bevy_mesh(
-                    &mesh,
-                    &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
-                )
-                .unwrap();
-                if had_entity {
-                    chunk_spawn_channel
-                        .send(ChunkSpawnResult::ToGiveCollider((chunk_coord, collider)))
-                        .unwrap();
-                } else {
-                    chunk_spawn_channel
-                        .send(ChunkSpawnResult::ToSpawnWithCollider((
-                            chunk_coord,
-                            collider,
-                            mesh,
-                        )))
-                        .unwrap();
-                }
+    match mode {
+        FullLodMode::NoCollider => {
+            if had_entity {
+                chunk_spawn_channel
+                    .send(ChunkSpawnResult::ToChangeLod((chunk_coord, mesh)))
+                    .unwrap();
+            } else {
+                chunk_spawn_channel
+                    .send(ChunkSpawnResult::ToSpawn((chunk_coord, mesh)))
+                    .unwrap();
             }
         }
-        true
+        FullLodMode::WithCollider => {
+            let collider = Collider::from_bevy_mesh(
+                &mesh,
+                &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
+            )
+            .unwrap();
+            if had_entity {
+                chunk_spawn_channel
+                    .send(ChunkSpawnResult::ToChangeLodAddCollider((
+                        chunk_coord,
+                        mesh,
+                        collider,
+                    )))
+                    .unwrap();
+            } else {
+                chunk_spawn_channel
+                    .send(ChunkSpawnResult::ToSpawnWithCollider((
+                        chunk_coord,
+                        collider,
+                        mesh,
+                    )))
+                    .unwrap();
+            }
+        }
+        FullLodMode::AddColliderToExisting => {
+            let collider = Collider::from_bevy_mesh(
+                &mesh,
+                &ComputedColliderShape::TriMesh(TriMeshFlags::default()),
+            )
+            .unwrap();
+            if had_entity {
+                chunk_spawn_channel
+                    .send(ChunkSpawnResult::ToGiveCollider((chunk_coord, collider)))
+                    .unwrap();
+            } else {
+                chunk_spawn_channel
+                    .send(ChunkSpawnResult::ToSpawnWithCollider((
+                        chunk_coord,
+                        collider,
+                        mesh,
+                    )))
+                    .unwrap();
+            }
+        }
+    }
+    true
     }
 }

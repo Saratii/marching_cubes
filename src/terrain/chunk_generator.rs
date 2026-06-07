@@ -4,7 +4,6 @@ use fastnoise2::{
     SafeNode,
     generator::{Generator, GeneratorWrapper, simplex::opensimplex2},
 };
-use std::f32;
 
 use crate::{
     constants::{
@@ -48,39 +47,30 @@ pub fn generate_chunk_into_buffers(
     );
     let is_uniform = fill_voxel_densities(chunk_buffers, &chunk_start);
     let uniformity = if !is_uniform {
-        //place_trees(
+        // place_trees(
         //     chunk_start,
-        //     density_buffer,
-        //     material_buffer,
-        //     heightmap_buffer,
+        //     &mut chunk_buffers.density,
+        //     &mut chunk_buffers.material,
+        //     &chunk_buffers.heightmap,
         // );
         Uniformity::NonUniform
-        /*} else {
-            if material_buffer[0] == MaterialCode::Dirt {
-                Uniformity::Dirt
-            } else if material_buffer[0] == MaterialCode::Air {
-                let not_uniform = place_trees_uniform_air(
-                    chunk_start,
-                    density_buffer,
-                    material_buffer,
-                    heightmap_buffer,
-                );
-                let uniformity = if not_uniform {
-                    Uniformity::NonUniform
-                } else {
-                    Uniformity::Air
-                };
-                uniformity
-            } else {
-                println!("materials[0]: {:?}", material_buffer[0]);
-                panic!("Generated uniform chunk with unknown material type!");
-            }
-        }; */
     } else {
         if chunk_buffers.material[0] == MaterialCode::Dirt {
             Uniformity::Dirt
         } else if chunk_buffers.material[0] == MaterialCode::Air {
-            Uniformity::Air
+            // let not_uniform = place_trees_uniform_air(
+            //     chunk_start,
+            //     &mut chunk_buffers.density,
+            //     &mut chunk_buffers.material,
+            //     &chunk_buffers.heightmap,
+            // );
+            let not_uniform = false; //delete
+            let uniformity = if not_uniform {
+                Uniformity::NonUniform
+            } else {
+                Uniformity::Air
+            };
+            uniformity
         } else {
             println!("materials[0]: {:?}", chunk_buffers.material[0]);
             panic!("Generated uniform chunk with unknown material type!");
@@ -199,9 +189,9 @@ pub fn generate_terrain_heights(
         let t_z = (z as f32 - 1.0) * inv_samples;
         let grid_z = 1.0 + t_z * 2.0;
         let grid_z_idx = grid_z as usize;
-        let gz0 = grid_z_idx.saturating_sub(1).min(4);
-        let gz1 = grid_z_idx.min(4);
-        let gz2 = (grid_z_idx + 1).min(4);
+        let gz0 = grid_z_idx.saturating_sub(1);
+        let gz1 = grid_z_idx;
+        let gz2 = grid_z_idx + 1;
         let gz3 = (grid_z_idx + 2).min(4);
         let local_t_z = grid_z - grid_z_idx as f32;
         let b0 = gz0 * 5;
@@ -212,9 +202,9 @@ pub fn generate_terrain_heights(
             let t_x = (x as f32 - 1.0) * inv_samples;
             let grid_x = 1.0 + t_x * 2.0;
             let grid_x_idx = grid_x as usize;
-            let gx0 = grid_x_idx.saturating_sub(1).min(4);
-            let gx1 = grid_x_idx.min(4);
-            let gx2 = (grid_x_idx + 1).min(4);
+            let gx0 = grid_x_idx.saturating_sub(1);
+            let gx1 = grid_x_idx;
+            let gx2 = grid_x_idx + 1;
             let gx3 = (grid_x_idx + 2).min(4);
             let local_t_x = grid_x - grid_x_idx as f32;
             let g = [
