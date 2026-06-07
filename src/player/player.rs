@@ -526,7 +526,7 @@ pub fn toggle_free_cam(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut free_cam: ResMut<FreeCamMode>,
     mut camera_controller: ResMut<CameraController>,
-    camera_global_transform: Query<&GlobalTransform, With<MainCameraTag>>,
+    player_global_transform: Query<&GlobalTransform, With<PlayerTag>>,
     mut commands: Commands,
     camera_entity_query: Query<Entity, With<MainCameraTag>>,
     player_entity_query: Query<Entity, With<PlayerTag>>,
@@ -544,8 +544,8 @@ pub fn toggle_free_cam(
         return;
     };
     if !free_cam.is_active {
-        if let Ok(global) = camera_global_transform.get(camera_entity) {
-            free_cam.world_position = global.translation();
+        if let Ok(global) = player_global_transform.get(player_entity) {
+            free_cam.world_position = global.translation() + CAMERA_FIRST_PERSON_OFFSET;
         }
         commands.entity(free_cam_root.0).add_child(camera_entity);
         commands.entity(camera_entity).insert(
