@@ -43,6 +43,8 @@ use marching_cubes::ui::crosshair::spawn_crosshair;
 use marching_cubes::ui::debug_lines::{
     draw_cluster_debug, draw_collider_debug, draw_lod_debug, draw_voxel_surface_debug,
 };
+#[cfg(feature = "debug")]
+use marching_cubes::ui::driver_debug_ui::{spawn_debug_texts, update_debug_texts};
 use marching_cubes::ui::menu::{SettingsState, menu_toggle, menu_update};
 
 fn main() {
@@ -126,6 +128,8 @@ fn main() {
                 setup_lighting,
                 setup_camera,
                 spawn_free_cam_root,
+                #[cfg(feature = "debug")]
+                spawn_debug_texts,
             ),
         )
         .add_systems(First, record_frame_start)
@@ -164,7 +168,13 @@ fn main() {
         )
         .add_systems(
             Update,
-            (toggle_free_cam, free_cam_movement, sync_player_rotation),
+            (
+                toggle_free_cam,
+                free_cam_movement,
+                sync_player_rotation,
+                #[cfg(feature = "debug")]
+                update_debug_texts,
+            ),
         )
         .run();
 }

@@ -65,7 +65,7 @@ pub fn world_pos_to_cluster_coord(world_pos: &Vec3) -> (i16, i16, i16) {
     (cluster_x, cluster_y, cluster_z)
 }
 
-pub fn cluster_coord_to_min_chunk_coord(cluster_coord: &(i16, i16, i16)) -> (i16, i16, i16) {
+pub fn cluster_coord_to_min_chunk_coord(cluster_coord: (i16, i16, i16)) -> (i16, i16, i16) {
     (
         cluster_coord.0 * CHUNKS_PER_CLUSTER_DIM as i16,
         cluster_coord.1 * CHUNKS_PER_CLUSTER_DIM as i16,

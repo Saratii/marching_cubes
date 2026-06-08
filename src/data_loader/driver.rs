@@ -1,5 +1,9 @@
 use crate::constants::SAMPLES_PER_CHUNK_PADDED;
 use crate::terrain::chunk_generator::padded_chunk_contains_surface;
+#[cfg(feature = "debug")]
+use crate::ui::driver_debug_ui::{
+    CHUNK_SPAWN_RECEIVER_QUEUE_SIZE, INTERNAL_QUEUE_SIZES, QUEUE_SIZE,
+};
 use crate::{
     constants::{
         CHUNKS_PER_CLUSTER, CHUNKS_PER_CLUSTER_DIM, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_2D_PADDED,
@@ -29,6 +33,8 @@ use parking_lot::RwLock;
 use rustc_hash::{FxHashMap, FxHashSet};
 #[cfg(feature = "timers")]
 use std::io::Write;
+#[cfg(feature = "debug")]
+use std::sync::atomic::AtomicUsize;
 use std::{
     collections::{BinaryHeap, VecDeque},
     fs::{File, OpenOptions},
@@ -44,7 +50,7 @@ use crate::{
     conversions::chunk_coord_to_world_pos,
     data_loader::file_loader::{ChunkEntityMap, write_uniform_chunk},
     marching_cubes::mc::mc_mesh_generation,
-    sparse_voxel_octree::ChunkSvo,
+    sparse_voxel_octree::SvoNode,
     terrain::{
         chunk_generator::chunk_contains_surface,
         terrain::{ChunkTag, TerrainChunk, TerrainMaterialHandle, Uniformity, generate_bevy_mesh},
@@ -254,11 +260,17 @@ pub fn setup_chunk_driver(
     let num_processors = thread::available_parallelism().unwrap().get();
     info!("Number of Available Processors: {}", num_processors);
     commands.insert_resource(LogicalProcesors(num_processors));
+    #[cfg(feature = "debug")]
+    INTERNAL_QUEUE_SIZES.get_or_init(|| {
+        (0..num_processors.saturating_sub(4))
+            .map(|_| AtomicUsize::new(0))
+            .collect()
+    });
     let player_translation_arc = Arc::clone(&player_translation_mutex_handle.0);
     let (chunk_spawn_sender, chunk_spawn_reciever) = unbounded::<ChunkSpawnResult>();
     let terrain_chunk_map = Arc::new(Mutex::new(FxHashMap::default()));
     let (res_tx, res_rx) = unbounded::<ChunkResult>();
-    let svo = ChunkSvo::new();
+    let svo = SvoNode::world_root();
     commands.insert_resource(ChunkSpawnReciever(chunk_spawn_reciever));
     let root = get_project_root();
     let mut air_compression_file = OpenOptions::new()
@@ -461,9 +473,8 @@ fn dedicated_write_thread(
     }
 }
 
-//compute thread for loading chunks from disk
+//compute thread for loading or generating chunks
 //recieves chunk load requests from svo_manager_thread and returns the data
-// - no uniform clusters should enter this thread
 fn chunk_loader_thread(
     #[cfg_attr(not(feature = "timers"), allow(unused_variables))] thread_idx: usize,
     res_tx: Sender<ChunkResult>,
@@ -504,46 +515,45 @@ fn chunk_loader_thread(
     #[cfg(feature = "timers")]
     writeln!(queue_size_file, "time_seconds,queue_size").unwrap();
     loop {
-        let (lock, cv) = &*priority_queue;
-        let mut heap = lock.lock().unwrap();
-        while heap.is_empty() {
-            heap = cv.wait(heap).unwrap();
+        let (binary_heap_lock, condvar) = &*priority_queue;
+        let mut binary_heap = binary_heap_lock.lock().unwrap();
+        while binary_heap.is_empty() {
+            binary_heap = condvar.wait(binary_heap).unwrap();
         }
-        let bound = heap.len().min(PROCESS_BATCH_SIZE);
-        for _ in 0..bound {
-            let req = heap.pop().unwrap();
-            #[cfg(feature = "debug")]
-            assert!(
-                !internal_queue
-                    .iter()
-                    .any(|r: &ClusterRequest| r.position == req.position),
-                "Duplicate popped from heap: {:?}",
-                req.position
-            );
-            internal_queue.push(req);
+        let num_to_pop = binary_heap.len().min(PROCESS_BATCH_SIZE);
+        for _ in 0..num_to_pop {
+            internal_queue.push(binary_heap.pop().unwrap());
         }
-        drop(heap);
+        #[cfg(feature = "debug")]
+        QUEUE_SIZE.store(binary_heap.len(), Ordering::Relaxed);
+        drop(binary_heap);
+        #[cfg(feature = "debug")]
+        INTERNAL_QUEUE_SIZES.get().unwrap()[thread_idx]
+            .store(internal_queue.len(), Ordering::Relaxed);
         for cluster_request in internal_queue.drain(..) {
+            #[cfg(feature = "debug")]
+            INTERNAL_QUEUE_SIZES.get().unwrap()[thread_idx].fetch_sub(1, Ordering::Relaxed);
             let mut has_entity_buffer = [false; CHUNKS_PER_CLUSTER];
             let mut rolling = 0;
-            let min_chunk = cluster_coord_to_min_chunk_coord(&cluster_request.position);
+            let in_simulation_range = matches!(
+                cluster_request.load_state_transition,
+                LoadStateTransition::ToFullWithCollider | LoadStateTransition::NoChangeAddCollider
+            );
+            let min_chunk = cluster_coord_to_min_chunk_coord(cluster_request.position);
             for chunk_x in min_chunk.0..min_chunk.0 + CHUNKS_PER_CLUSTER_DIM as i16 {
                 for chunk_y in min_chunk.1..min_chunk.1 + CHUNKS_PER_CLUSTER_DIM as i16 {
                     for chunk_z in min_chunk.2..min_chunk.2 + CHUNKS_PER_CLUSTER_DIM as i16 {
                         let chunk_coord = (chunk_x, chunk_y, chunk_z);
-                        let in_simulation_range = matches!(
-                            cluster_request.load_state_transition,
-                            LoadStateTransition::ToFullWithCollider
-                                | LoadStateTransition::NoChangeAddCollider
-                        );
-                        let mut uniformity = resolve_uniformity(
-                            chunk_coord,
-                            &column_range_map_read_only,
-                            &index_map_read,
-                            &index_map_delta,
-                            &mut chunk_data_file_read,
-                            &mut chunk_buffers,
-                        );
+                        let mut uniformity = column_range_map_read_only.contains(chunk_coord);
+                        if uniformity == Uniformity::Unknown {
+                            uniformity = try_load_chunk(
+                                chunk_coord,
+                                &index_map_read,
+                                &index_map_delta,
+                                &mut chunk_data_file_read,
+                                &mut chunk_buffers,
+                            );
+                        }
                         if uniformity == Uniformity::Unknown {
                             let chunk_start = calculate_chunk_start(&chunk_coord);
                             uniformity =
@@ -576,7 +586,7 @@ fn chunk_loader_thread(
                                     &chunk_buffers,
                                     &mut lod_buffers,
                                     chunk_coord,
-                                    &rolling,
+                                    rolling,
                                     &chunk_spawn_channel,
                                 );
                                 if in_simulation_range {
@@ -630,8 +640,8 @@ fn chunk_loader_thread(
                     let entity_chunks_per_second =
                         chunks_with_entities as f64 / elapsed.as_secs_f64();
                     let queue_size = {
-                        let (lock, _cv) = &*priority_queue;
-                        lock.lock().unwrap().len()
+                        let (binary_heap_lock, _condvar) = &*priority_queue;
+                        binary_heap_lock.lock().unwrap().len()
                     };
                     writeln!(
                         &mut throughput_file,
@@ -657,7 +667,7 @@ fn svo_manager_thread(
     results_channel: Receiver<ChunkResult>,
     player_translation: Arc<Mutex<Vec3>>,
     chunk_spawn_channel: Sender<ChunkSpawnResult>,
-    mut svo: ChunkSvo,
+    mut svo: SvoNode,
     priority_queue: Arc<(Mutex<BinaryHeap<ClusterRequest>>, Condvar)>,
     terrain_chunk_map: Arc<Mutex<FxHashMap<(i16, i16, i16), TerrainChunk>>>,
     terrain_chunk_map_insert_reciever: Receiver<((i16, i16, i16), TerrainChunk)>,
@@ -667,112 +677,50 @@ fn svo_manager_thread(
     #[cfg(feature = "timers")]
     let mut first_completion_printed = false;
     let mut request_buffer = Vec::new();
-    //do initial z0 load so player can start moving
     let mut chunks_being_loaded = FxHashSet::default();
     let player_translation_lock = player_translation.lock().unwrap();
     let initial_player_translation = *player_translation_lock;
     drop(player_translation_lock);
-    svo.root.fill_missing_chunks_in_radius(
+    svo.fill_missing_chunks_in_radius(
         &initial_player_translation,
         SIMULATION_RADIUS_SQUARED,
-        &mut chunks_being_loaded,
+        &chunks_being_loaded,
         &mut request_buffer,
     );
-    #[cfg(feature = "debug")]
-    for req in &request_buffer {
-        assert!(
-            chunks_being_loaded.contains(&req.position),
-            "fill_missing produced {:?} but it's not in chunks_being_loaded — it was already in-flight or in SVO",
-            req.position,
-        );
+    for request in &request_buffer {
+        chunks_being_loaded.insert(request.position);
     }
-    let (lock, cv) = &*priority_queue;
+    let (binary_heap_lock, condvar) = &*priority_queue;
     {
-        let mut heap = lock.lock().unwrap();
-        for req in request_buffer.drain(..) {
-            #[cfg(feature = "debug")]
-            assert!(
-                !heap
-                    .iter()
-                    .any(|r: &ClusterRequest| r.position == req.position),
-                "Duplicate request queued for {:?}",
-                req.position
-            );
-            heap.push(req);
+        let mut binary_heap = binary_heap_lock.lock().unwrap();
+        for request in request_buffer.drain(..) {
+            binary_heap.push(request);
         }
+        #[cfg(feature = "debug")]
+        QUEUE_SIZE.store(binary_heap.len(), Ordering::Relaxed);
     }
-    cv.notify_all();
+    condvar.notify_all();
+    let mut clusters_to_deallocate = Vec::new();
     loop {
-        //get z0 chunk allocations from loader threads and insert them
         let mut terrain_map_lock = terrain_chunk_map.lock().unwrap();
         while let Ok((chunk_coord, terrain_chunk)) = terrain_chunk_map_insert_reciever.try_recv() {
             terrain_map_lock.insert(chunk_coord, terrain_chunk);
         }
         drop(terrain_map_lock);
-        #[cfg(feature = "debug")]
-        let mut seen_this_drain = FxHashSet::default();
         while let Ok(result) = results_channel.try_recv() {
-            #[cfg(feature = "debug")]
-            assert!(
-                chunks_being_loaded.contains(&result.cluster_coord),
-                "Result arrived for cluster {:?} NOT in chunks_being_loaded. load_state: {:?}",
-                result.cluster_coord,
-                result.load_state,
-            );
-            #[cfg(feature = "debug")]
-            assert!(
-                seen_this_drain.insert(result.cluster_coord),
-                "Two results for {:?} in same drain. load_state: {:?}",
-                result.cluster_coord,
-                result.load_state,
-            );
-            #[cfg(feature = "debug")]
-            assert!(
-                chunks_being_loaded.contains(&result.cluster_coord),
-                "Result arrived for cluster {:?} that was NOT in chunks_being_loaded. load_state: {:?}",
-                result.cluster_coord,
-                result.load_state,
-            );
-            #[cfg(feature = "debug")]
-            assert!(
-                !svo.root.contains(&result.cluster_coord),
-                "About to overwrite {:?}, existing: {:?}, incoming: {:?}, in_flight: {}",
-                result.cluster_coord,
-                svo.root.get(result.cluster_coord).unwrap().1,
-                result.load_state,
-                chunks_being_loaded.contains(&result.cluster_coord),
-            );
-            svo.root
-                .insert(result.cluster_coord, result.has_entity, result.load_state);
-            #[cfg(feature = "debug")]
-            assert!(
-                chunks_being_loaded.remove(&result.cluster_coord),
-                "Failed to remove {:?}",
-                result.cluster_coord
-            );
-            #[cfg(not(feature = "debug"))]
+            svo.insert(result.cluster_coord, result.has_entity, result.load_state);
             chunks_being_loaded.remove(&result.cluster_coord);
         }
         let player_translation_lock = player_translation.lock().unwrap();
         let player_translation = *player_translation_lock;
         drop(player_translation_lock);
-        let mut chunks_to_deallocate = Vec::new();
-        svo.root
-            .query_chunks_outside_sphere(&player_translation, &mut chunks_to_deallocate);
-        #[cfg(feature = "debug")]
-        for (cluster_coord, _) in &chunks_to_deallocate {
-            assert!(
-                !chunks_being_loaded.contains(cluster_coord),
-                "Trying to deallocate cluster {:?} that is still in-flight",
-                cluster_coord
-            );
-        }
-        for (chunk_coord, _) in &chunks_to_deallocate {
-            svo.root.delete(*chunk_coord);
+        svo.query_chunks_outside_sphere(&player_translation, &mut clusters_to_deallocate);
+        for (chunk_coord, _) in &clusters_to_deallocate {
+            svo.delete(*chunk_coord);
         }
         let mut roller = 0;
         let mut terrain_map_lock = terrain_chunk_map.lock().unwrap();
-        for (cluster_coord, has_entity) in &chunks_to_deallocate {
+        for (cluster_coord, has_entity) in clusters_to_deallocate.drain(..) {
             let min_chunk = cluster_coord_to_min_chunk_coord(cluster_coord);
             for chunk_x in min_chunk.0..min_chunk.0 + CHUNKS_PER_CLUSTER_DIM as i16 {
                 for chunk_y in min_chunk.1..min_chunk.1 + CHUNKS_PER_CLUSTER_DIM as i16 {
@@ -788,32 +736,29 @@ fn svo_manager_thread(
                     }
                 }
             }
-            chunks_being_loaded.remove(cluster_coord);
+            chunks_being_loaded.remove(&cluster_coord);
             roller = 0;
         }
         drop(terrain_map_lock);
-        svo.root.fill_missing_chunks_in_radius(
+        svo.fill_missing_chunks_in_radius(
             &player_translation,
             f32::from_bits(RENDER_RADIUS_SQUARED.load(Ordering::Relaxed)),
-            &mut chunks_being_loaded,
+            &chunks_being_loaded,
             &mut request_buffer,
         );
-        #[cfg(feature = "debug")]
-        for req in &request_buffer {
-            assert!(
-                chunks_being_loaded.contains(&req.position),
-                "fill_missing produced {:?} but it's not in chunks_being_loaded — it was already in-flight or in SVO",
-                req.position,
-            );
+        for request in &request_buffer {
+            chunks_being_loaded.insert(request.position);
         }
-        let (lock, cv) = &*priority_queue;
+        let (binary_heap_lock, condvar) = &*priority_queue;
         {
-            let mut heap = lock.lock().unwrap();
-            for req in request_buffer.drain(..) {
-                heap.push(req);
+            let mut binary_heap = binary_heap_lock.lock().unwrap();
+            for request in request_buffer.drain(..) {
+                binary_heap.push(request);
             }
+            #[cfg(feature = "debug")]
+            QUEUE_SIZE.store(binary_heap.len(), Ordering::Relaxed);
         }
-        cv.notify_all();
+        condvar.notify_all();
         #[cfg(feature = "timers")]
         {
             if !first_completion_printed && chunks_being_loaded.is_empty() {
@@ -836,10 +781,12 @@ pub fn chunk_spawn_reciever(
     frame_start: Res<FrameStart>,
 ) {
     const TARGET_FRAME_TIME: Duration = Duration::from_nanos(1_000_000_000 / 90);
-    while let Ok(req) = req_rx.0.try_recv() {
+    #[cfg(feature = "debug")]
+    let mut spawned_this_frame: FxHashSet<(i16, i16, i16)> = FxHashSet::default();
+    while let Ok(request) = req_rx.0.try_recv() {
         #[cfg(feature = "timers")]
         let t0 = Instant::now();
-        match req {
+        match request {
             ChunkSpawnResult::ToSpawn((chunk_coord, mesh)) => {
                 let entity = commands
                     .spawn((
@@ -849,6 +796,7 @@ pub fn chunk_spawn_reciever(
                         MeshMaterial3d(standard_material.0.clone()),
                     ))
                     .id();
+                spawned_this_frame.insert(chunk_coord);
                 chunk_entity_map.insert(chunk_coord, entity);
             }
             ChunkSpawnResult::ToGiveCollider((chunk_coord, collider)) => {
@@ -872,6 +820,13 @@ pub fn chunk_spawn_reciever(
                 commands.entity(entity).insert(new_collider);
             }
             ChunkSpawnResult::ToChangeLod((chunk_coord, new_mesh)) => {
+                #[cfg(feature = "debug")]
+                if spawned_this_frame.contains(&chunk_coord) {
+                    println!(
+                        "ToChangeLod for {:?} which was spawned this frame",
+                        chunk_coord
+                    );
+                }
                 let entity = chunk_entity_map.get(chunk_coord);
                 let mesh_ref = mesh_handles_query.get(entity).unwrap();
                 if let Some(aabb) = new_mesh.compute_aabb() {
@@ -903,6 +858,8 @@ pub fn chunk_spawn_reciever(
             }
         }
     }
+    #[cfg(feature = "debug")]
+    CHUNK_SPAWN_RECEIVER_QUEUE_SIZE.store(req_rx.0.len(), Ordering::Relaxed);
 }
 
 //downscales to new resolution from full resolution
@@ -955,23 +912,15 @@ fn process_lod(
     true
 }
 
-//early return uniformity if found in column_range_map
-//else get file offset from index map or index map delta (delta requiring read lock)
-//if offset found, load chunk from file and return
-//else generate chunk
-//return uniformity
-pub fn resolve_uniformity(
+//try to get file offset from index map or index map delta (delta requiring read lock)
+//if offset found, load chunk from file and return uniformity
+pub fn try_load_chunk(
     chunk_coord: (i16, i16, i16),
-    column_range_map: &ColumnRangeMap,
     index_map_read: &FxHashMap<(i16, i16, i16), u64>,
     index_map_delta: &RwLock<FxHashMap<(i16, i16, i16), u64>>,
     chunk_data_file_read: &mut File,
     chunk_buffers: &mut ChunkBuffers,
 ) -> Uniformity {
-    let uniformity = column_range_map.contains(chunk_coord);
-    if uniformity != Uniformity::Unknown {
-        return uniformity;
-    }
     let file_offset = index_map_read
         .get(&chunk_coord)
         .copied()
@@ -996,7 +945,7 @@ pub fn resolve_has_surface(
     chunk_buffers: &ChunkBuffers,
     lod_buffers: &mut LodBuffers,
     chunk_coord: (i16, i16, i16),
-    rolling: &usize,
+    rolling: usize,
     chunk_spawn_channel: &Sender<ChunkSpawnResult>,
 ) -> bool {
     if !chunk_contains_surface(&chunk_buffers.density) {
@@ -1005,7 +954,7 @@ pub fn resolve_has_surface(
     //must be non-uniform (including false positive state caused by padding)
     match cluster_request.load_state_transition {
         LoadStateTransition::ToLod5 => {
-            let had_entity = cluster_request.had_entity(*rolling);
+            let had_entity = cluster_request.had_entity(rolling);
             process_lod(
                 &chunk_buffers.density,
                 &chunk_buffers.material,
@@ -1018,7 +967,7 @@ pub fn resolve_has_surface(
             )
         }
         LoadStateTransition::ToLod4 => {
-            let had_entity = cluster_request.had_entity(*rolling);
+            let had_entity = cluster_request.had_entity(rolling);
             process_lod(
                 &chunk_buffers.density,
                 &chunk_buffers.material,
@@ -1031,7 +980,7 @@ pub fn resolve_has_surface(
             )
         }
         LoadStateTransition::ToLod3 => {
-            let had_entity = cluster_request.had_entity(*rolling);
+            let had_entity = cluster_request.had_entity(rolling);
             process_lod(
                 &chunk_buffers.density,
                 &chunk_buffers.material,
@@ -1044,7 +993,7 @@ pub fn resolve_has_surface(
             )
         }
         LoadStateTransition::ToLod2 => {
-            let had_entity = cluster_request.had_entity(*rolling);
+            let had_entity = cluster_request.had_entity(rolling);
             process_lod(
                 &chunk_buffers.density,
                 &chunk_buffers.material,
@@ -1057,7 +1006,7 @@ pub fn resolve_has_surface(
             )
         }
         LoadStateTransition::ToLod1 => {
-            let had_entity = cluster_request.had_entity(*rolling);
+            let had_entity = cluster_request.had_entity(rolling);
             process_lod(
                 &chunk_buffers.density,
                 &chunk_buffers.material,
@@ -1074,7 +1023,7 @@ pub fn resolve_has_surface(
             &chunk_buffers.material,
             chunk_coord,
             cluster_request,
-            *rolling,
+            rolling,
             chunk_spawn_channel,
             FullLodMode::NoCollider,
         ),
@@ -1083,7 +1032,7 @@ pub fn resolve_has_surface(
             &chunk_buffers.material,
             chunk_coord,
             cluster_request,
-            *rolling,
+            rolling,
             chunk_spawn_channel,
             FullLodMode::WithCollider,
         ),
@@ -1092,7 +1041,7 @@ pub fn resolve_has_surface(
             &chunk_buffers.material,
             chunk_coord,
             cluster_request,
-            *rolling,
+            rolling,
             chunk_spawn_channel,
             FullLodMode::AddColliderToExisting,
         ),

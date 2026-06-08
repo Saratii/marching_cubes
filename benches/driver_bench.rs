@@ -11,7 +11,7 @@ use marching_cubes::{
         column_range_map::ColumnRangeMap,
         driver::{
             ChunkBuffers, ChunkSpawnResult, ClusterRequest, FullLodMode, LoadStateTransition,
-            LodBuffers, build_full_mesh_and_spawn, resolve_has_surface, resolve_uniformity,
+            LodBuffers, build_full_mesh_and_spawn, resolve_has_surface, try_load_chunk,
         },
     },
     terrain::{
@@ -110,7 +110,7 @@ fn bench_resolve_has_surface_lod5(c: &mut Criterion) {
                 black_box(&chunk_buffers),
                 black_box(&mut lod_buffers),
                 black_box((0, 0, 0)),
-                black_box(&0),
+                black_box(0),
                 black_box(&chunk_spawn_sender),
             ));
         })
@@ -138,7 +138,7 @@ fn bench_resolve_has_surface_lod1(c: &mut Criterion) {
                 black_box(&chunk_buffers),
                 black_box(&mut lod_buffers),
                 black_box((0, 0, 0)),
-                black_box(&0),
+                black_box(0),
                 black_box(&chunk_spawn_sender),
             ));
         })
@@ -166,20 +166,19 @@ fn bench_resolve_has_surface_full_collider(c: &mut Criterion) {
                 black_box(&chunk_buffers),
                 black_box(&mut lod_buffers),
                 black_box((0, 0, 0)),
-                black_box(&0),
+                black_box(0),
                 black_box(&chunk_spawn_sender),
             ));
         })
     });
 }
 
-fn bench_resolve_uniformity_from_generation(c: &mut Criterion) {
+fn bench_try_load_chunk_fail(c: &mut Criterion) {
     let chunk_coord = find_chunk_with_surface();
     let mut chunk_buffers = ChunkBuffers::new();
     let chunk_start = calculate_chunk_start(&chunk_coord);
     let fbm = get_fbm();
     let uniformity = generate_chunk_into_buffers(&fbm, chunk_start, &mut chunk_buffers);
-    let column_range_map = ColumnRangeMap::new();
     let index_map_delta = RwLock::new(FxHashMap::default());
     let index_map_read = FxHashMap::default();
     #[cfg(windows)]
@@ -188,11 +187,10 @@ fn bench_resolve_uniformity_from_generation(c: &mut Criterion) {
     let mut chunk_data_file_read = File::open("/dev/null").unwrap();
     assert_eq!(uniformity, Uniformity::NonUniform);
     assert!(chunk_contains_surface(&chunk_buffers.density));
-    c.bench_function("resolve_uniformity_from_generation", |b| {
+    c.bench_function("try_load_chunk_fail", |b| {
         b.iter(|| {
-            black_box(resolve_uniformity(
+            black_box(try_load_chunk(
                 black_box(chunk_coord),
-                black_box(&column_range_map),
                 black_box(&index_map_read),
                 black_box(&index_map_delta),
                 black_box(&mut chunk_data_file_read),
@@ -202,13 +200,12 @@ fn bench_resolve_uniformity_from_generation(c: &mut Criterion) {
     });
 }
 
-fn bench_resolve_uniformity_from_load(c: &mut Criterion) {
+fn bench_try_load_chunk_success(c: &mut Criterion) {
     let chunk_coord = find_chunk_with_surface();
     let mut chunk_buffers = ChunkBuffers::new();
     let chunk_start = calculate_chunk_start(&chunk_coord);
     let fbm = get_fbm();
     let uniformity = generate_chunk_into_buffers(&fbm, chunk_start, &mut chunk_buffers);
-    let column_range_map = ColumnRangeMap::new();
     let index_map_delta = RwLock::new(FxHashMap::default());
     let mut chunk_index_file = OpenOptions::new()
         .read(true)
@@ -220,11 +217,10 @@ fn bench_resolve_uniformity_from_load(c: &mut Criterion) {
     let mut chunk_data_file_read = File::open("benches/bench_data/chunk_data.txt").unwrap();
     assert_eq!(uniformity, Uniformity::NonUniform);
     assert!(chunk_contains_surface(&chunk_buffers.density));
-    c.bench_function("resolve_uniformity_from_load", |b| {
+    c.bench_function("try_load_chunk_success", |b| {
         b.iter(|| {
-            black_box(resolve_uniformity(
+            black_box(try_load_chunk(
                 black_box(chunk_coord),
-                black_box(&column_range_map),
                 black_box(&index_map_read),
                 black_box(&index_map_delta),
                 black_box(&mut chunk_data_file_read),
@@ -241,8 +237,8 @@ criterion_group!(
     bench_resolve_has_surface_lod5,
     bench_resolve_has_surface_lod1,
     bench_resolve_has_surface_full_collider,
-    bench_resolve_uniformity_from_generation,
-    bench_resolve_uniformity_from_load,
+    bench_try_load_chunk_fail,
+    bench_try_load_chunk_success,
 );
 criterion_main!(benches);
 

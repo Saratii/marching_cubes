@@ -16,21 +16,6 @@ use crate::{
 
 const MAX_WORLD_SIZE: i16 = 512; //in chunks
 
-pub struct ChunkSvo {
-    pub root: SvoNode,
-}
-
-impl ChunkSvo {
-    pub fn new() -> Self {
-        Self {
-            root: SvoNode::new(
-                (-MAX_WORLD_SIZE, -MAX_WORLD_SIZE, -MAX_WORLD_SIZE),
-                2 * MAX_WORLD_SIZE,
-            ),
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct SvoNode {
     pub lower_cluster_coord: (i16, i16, i16), // cluster coord of lower corner (RENAMED)
@@ -42,7 +27,14 @@ pub struct SvoNode {
 }
 
 impl SvoNode {
-    pub fn new(lower_cluster_coord: (i16, i16, i16), size: i16) -> Self {
+    pub fn world_root() -> Self {
+        SvoNode::new(
+            (-MAX_WORLD_SIZE, -MAX_WORLD_SIZE, -MAX_WORLD_SIZE),
+            2 * MAX_WORLD_SIZE,
+        )
+    }
+
+    fn new(lower_cluster_coord: (i16, i16, i16), size: i16) -> Self {
         let node_min = cluster_coord_to_world_pos(&lower_cluster_coord);
         let node_max = node_min + Vec3::splat(size as f32 * CLUSTER_WORLD_LENGTH);
         Self {
@@ -202,7 +194,7 @@ impl SvoNode {
         &mut self,
         center: &Vec3,
         radius_squared: f32,
-        chunks_being_loaded: &mut FxHashSet<(i16, i16, i16)>,
+        chunks_being_loaded: &FxHashSet<(i16, i16, i16)>,
         request_buffer: &mut Vec<ClusterRequest>,
     ) {
         if !sphere_intersects_aabb(center, radius_squared, &self.node_min, &self.node_max) {
@@ -220,7 +212,6 @@ impl SvoNode {
                     {
                         return; //skip chunks where the sphere intersects but chunk center is outside max radius
                     }
-                    chunks_being_loaded.insert(self.lower_cluster_coord);
                     let load_state_transition = get_load_state_transition_first(distance_squared);
                     request_buffer.push(ClusterRequest {
                         position: self.lower_cluster_coord,
@@ -241,7 +232,6 @@ impl SvoNode {
                         );
                         let prev_has_entity = self.chunk.as_ref().unwrap().0;
                         self.chunk = None;
-                        chunks_being_loaded.insert(self.lower_cluster_coord);
                         request_buffer.push(ClusterRequest {
                             position: self.lower_cluster_coord,
                             distance_squared,
