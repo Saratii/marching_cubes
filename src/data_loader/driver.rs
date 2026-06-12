@@ -547,9 +547,10 @@ fn chunk_loader_thread(
             for chunk_x in min_chunk.0..min_chunk.0 + CHUNKS_PER_CLUSTER_DIM as i16 {
                 for chunk_z in min_chunk.2..min_chunk.2 + CHUNKS_PER_CLUSTER_DIM as i16 {
                     let mut has_heightmap_been_calculated = false;
+                    let column_cache = column_range_map_read_only.get_column(chunk_x, chunk_z);
                     for chunk_y in min_chunk.1..min_chunk.1 + CHUNKS_PER_CLUSTER_DIM as i16 {
                         let chunk_coord = (chunk_x, chunk_y, chunk_z);
-                        let mut uniformity = column_range_map_read_only.contains(chunk_coord);
+                        let mut uniformity = column_cache.uniformity_at_y(chunk_y);
                         if uniformity == Uniformity::Unknown {
                             uniformity = try_load_chunk(
                                 chunk_coord,

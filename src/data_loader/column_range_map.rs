@@ -28,6 +28,16 @@ impl ColumnRangeMap {
             .unwrap_or(Uniformity::Unknown)
     }
 
+    #[inline(always)]
+    pub fn get_column(&self, x: i16, z: i16) -> ColumnRanges<'_> {
+        ColumnRanges(
+            self.map
+                .get(&pack_xz(x, z))
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+        )
+    }
+
     //pack xz
     //search column ranges for either a containing range or the two ranges who could potentially combine
     //check if the range neighbors the new chunk and has the same uniformity, if so combine them
@@ -125,6 +135,18 @@ impl ColumnRange {
     #[inline(always)]
     fn is_adjacent(&self, y: i16) -> bool {
         y == self.high + 1 || y == self.low - 1
+    }
+}
+
+pub struct ColumnRanges<'a>(&'a [ColumnRange]);
+
+impl<'a> ColumnRanges<'a> {
+    #[inline(always)]
+    pub fn uniformity_at_y(&self, y: i16) -> Uniformity {
+        self.0
+            .iter()
+            .find_map(|r| r.contains(y).then_some(r.uniformity))
+            .unwrap_or(Uniformity::Unknown)
     }
 }
 
