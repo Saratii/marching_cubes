@@ -37,37 +37,8 @@ pub fn generate_chunk_into_buffers(
     chunk_start: Vec3,
     chunk_buffers: &mut ChunkBuffers,
 ) -> Uniformity {
-    let is_uniform = fill_voxel_densities(chunk_buffers, &chunk_start);
-    let uniformity = if !is_uniform {
-        // place_trees(
-        //     chunk_start,
-        //     &mut chunk_buffers.density,
-        //     &mut chunk_buffers.material,
-        //     &chunk_buffers.heightmap,
-        // );
-        Uniformity::NonUniform
-    } else {
-        if chunk_buffers.material[0] == MaterialCode::Dirt {
-            Uniformity::Dirt
-        } else if chunk_buffers.material[0] == MaterialCode::Air {
-            // let not_uniform = place_trees_uniform_air(
-            //     chunk_start,
-            //     &mut chunk_buffers.density,
-            //     &mut chunk_buffers.material,
-            //     &chunk_buffers.heightmap,
-            // );
-            let not_uniform = false; //delete
-            let uniformity = if not_uniform {
-                Uniformity::NonUniform
-            } else {
-                Uniformity::Air
-            };
-            uniformity
-        } else {
-            println!("materials[0]: {:?}", chunk_buffers.material[0]);
-            panic!("Generated uniform chunk with unknown material type!");
-        }
-    };
+    let uniformity = fill_voxel_densities(chunk_buffers, &chunk_start);
+    //place trees
     uniformity
 }
 
@@ -229,18 +200,19 @@ pub fn generate_terrain_heights(
 //will break if a "cave" is fully enclosed within the chunk
 //only called on full res chunk buffers
 //padding is not considered for uniformity.
-pub fn fill_voxel_densities(chunk_buffers: &mut ChunkBuffers, chunk_start: &Vec3) -> bool {
+pub fn fill_voxel_densities(chunk_buffers: &mut ChunkBuffers, chunk_start: &Vec3) -> Uniformity {
     let solid_threshold = quantize_f32_to_i16(-1.0);
     let mut is_uniform = true;
     let mut init_distance = 0;
     let mut init_material = MaterialCode::Air;
     let mut has_init = false;
-    for z in [1, SAMPLES_PER_CHUNK_DIM_PADDED - 2] {
+    'outer: for z in [1, SAMPLES_PER_CHUNK_DIM_PADDED - 2] {
         let height_base = z * SAMPLES_PER_CHUNK_DIM_PADDED;
         let z_base = z * SAMPLES_PER_CHUNK_2D_PADDED;
         let mat_z_base = (z - 1) * SAMPLES_PER_CHUNK_2D;
+        let mut world_y = chunk_start.y - VOXEL_WORLD_SIZE;
         for y in 1..SAMPLES_PER_CHUNK_DIM_PADDED - 1 {
-            let world_y = chunk_start.y + (y as f32 - 1.0) * VOXEL_WORLD_SIZE;
+            world_y += VOXEL_WORLD_SIZE;
             let below_sea = world_y < 0.0;
             let base_rolling_voxel_index = z_base + y * SAMPLES_PER_CHUNK_DIM_PADDED;
             let mat_base = mat_z_base + (y - 1) * SAMPLES_PER_CHUNK_DIM;
@@ -248,13 +220,12 @@ pub fn fill_voxel_densities(chunk_buffers: &mut ChunkBuffers, chunk_start: &Vec3
                 let rolling_voxel_index = base_rolling_voxel_index + x;
                 let mat_index = mat_base + (x - 1);
                 let terrain_height = chunk_buffers.heightmap[height_base + x];
-                let distance_to_surface = {
-                    let vertical_dist = world_y - terrain_height;
-                    let gidx = z * SAMPLES_PER_CHUNK_DIM_PADDED + x;
-                    let gx = chunk_buffers.dhdx[gidx];
-                    let gz = chunk_buffers.dhdz[gidx];
-                    (vertical_dist / (1.0 + gx * gx + gz * gz).sqrt()).clamp(-10.0, 10.0)
-                };
+                let vertical_dist = world_y - terrain_height;
+                let gidx = height_base + x;
+                let gx = chunk_buffers.dhdx[gidx];
+                let gz = chunk_buffers.dhdz[gidx];
+                let distance_to_surface =
+                    (vertical_dist / (1.0 + gx * gx + gz * gz).sqrt()).clamp(-10.0, 10.0);
                 let quantized_distance_to_surface = quantize_f32_to_i16(distance_to_surface);
                 chunk_buffers.density[rolling_voxel_index] = quantized_distance_to_surface;
                 let mat = if quantized_distance_to_surface >= 0 {
@@ -275,12 +246,13 @@ pub fn fill_voxel_densities(chunk_buffers: &mut ChunkBuffers, chunk_start: &Vec3
                     } else if init_distance != quantized_distance_to_surface || init_material != mat
                     {
                         is_uniform = false;
+                        break 'outer;
                     }
                 }
             }
         }
     }
-    for z in 1..SAMPLES_PER_CHUNK_DIM_PADDED - 1 {
+    'outer: for z in 1..SAMPLES_PER_CHUNK_DIM_PADDED - 1 {
         let height_base = z * SAMPLES_PER_CHUNK_DIM_PADDED;
         let z_base = z * SAMPLES_PER_CHUNK_2D_PADDED;
         let mat_z_base = (z - 1) * SAMPLES_PER_CHUNK_2D;
@@ -293,13 +265,12 @@ pub fn fill_voxel_densities(chunk_buffers: &mut ChunkBuffers, chunk_start: &Vec3
                 let rolling_voxel_index = base_rolling_voxel_index + x;
                 let mat_index = mat_base + (x - 1);
                 let terrain_height = chunk_buffers.heightmap[height_base + x];
-                let distance_to_surface = {
-                    let vertical_dist = world_y - terrain_height;
-                    let gidx = z * SAMPLES_PER_CHUNK_DIM_PADDED + x;
-                    let gx = chunk_buffers.dhdx[gidx];
-                    let gz = chunk_buffers.dhdz[gidx];
-                    (vertical_dist / (1.0 + gx * gx + gz * gz).sqrt()).clamp(-10.0, 10.0)
-                };
+                let vertical_dist = world_y - terrain_height;
+                let gidx = height_base + x;
+                let gx = chunk_buffers.dhdx[gidx];
+                let gz = chunk_buffers.dhdz[gidx];
+                let distance_to_surface =
+                    (vertical_dist / (1.0 + gx * gx + gz * gz).sqrt()).clamp(-10.0, 10.0);
                 let quantized_distance_to_surface = quantize_f32_to_i16(distance_to_surface);
                 chunk_buffers.density[rolling_voxel_index] = quantized_distance_to_surface;
                 let mat = if quantized_distance_to_surface >= 0 {
@@ -320,17 +291,19 @@ pub fn fill_voxel_densities(chunk_buffers: &mut ChunkBuffers, chunk_start: &Vec3
                     } else if init_distance != quantized_distance_to_surface || init_material != mat
                     {
                         is_uniform = false;
+                        break 'outer;
                     }
                 }
             }
         }
     }
-    for z in 1..SAMPLES_PER_CHUNK_DIM_PADDED - 1 {
+    'outer: for z in 1..SAMPLES_PER_CHUNK_DIM_PADDED - 1 {
         let height_base = z * SAMPLES_PER_CHUNK_DIM_PADDED;
         let z_base = z * SAMPLES_PER_CHUNK_2D_PADDED;
         let mat_z_base = (z - 1) * SAMPLES_PER_CHUNK_2D;
+        let mut world_y = chunk_start.y - VOXEL_WORLD_SIZE;
         for y in 1..SAMPLES_PER_CHUNK_DIM_PADDED - 1 {
-            let world_y = chunk_start.y + (y as f32 - 1.0) * VOXEL_WORLD_SIZE;
+            world_y += VOXEL_WORLD_SIZE;
             let below_sea = world_y < 0.0;
             let base_rolling_voxel_index = z_base + y * SAMPLES_PER_CHUNK_DIM_PADDED;
             let mat_base = mat_z_base + (y - 1) * SAMPLES_PER_CHUNK_DIM;
@@ -338,13 +311,12 @@ pub fn fill_voxel_densities(chunk_buffers: &mut ChunkBuffers, chunk_start: &Vec3
                 let rolling_voxel_index = base_rolling_voxel_index + x;
                 let mat_index = mat_base + (x - 1);
                 let terrain_height = chunk_buffers.heightmap[height_base + x];
-                let distance_to_surface = {
-                    let vertical_dist = world_y - terrain_height;
-                    let gidx = z * SAMPLES_PER_CHUNK_DIM_PADDED + x;
-                    let gx = chunk_buffers.dhdx[gidx];
-                    let gz = chunk_buffers.dhdz[gidx];
-                    (vertical_dist / (1.0 + gx * gx + gz * gz).sqrt()).clamp(-10.0, 10.0)
-                };
+                let vertical_dist = world_y - terrain_height;
+                let gidx = height_base + x;
+                let gx = chunk_buffers.dhdx[gidx];
+                let gz = chunk_buffers.dhdz[gidx];
+                let distance_to_surface =
+                    (vertical_dist / (1.0 + gx * gx + gz * gz).sqrt()).clamp(-10.0, 10.0);
                 let quantized_distance_to_surface = quantize_f32_to_i16(distance_to_surface);
                 chunk_buffers.density[rolling_voxel_index] = quantized_distance_to_surface;
                 let mat = if quantized_distance_to_surface >= 0 {
@@ -365,58 +337,96 @@ pub fn fill_voxel_densities(chunk_buffers: &mut ChunkBuffers, chunk_start: &Vec3
                     } else if init_distance != quantized_distance_to_surface || init_material != mat
                     {
                         is_uniform = false;
+                        break 'outer;
                     }
                 }
             }
         }
     }
     if is_uniform {
-        return is_uniform;
+        return match init_material {
+            MaterialCode::Dirt => Uniformity::Dirt,
+            MaterialCode::Air => Uniformity::Air,
+            _ => unreachable!(),
+        };
     }
-    for z in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
+    for z in [0, SAMPLES_PER_CHUNK_DIM_PADDED - 1] {
         let height_base = z * SAMPLES_PER_CHUNK_DIM_PADDED;
         let z_base = z * SAMPLES_PER_CHUNK_2D_PADDED;
+        let mut world_y = chunk_start.y - 2.0 * VOXEL_WORLD_SIZE;
         for y in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
-            let world_y = chunk_start.y + (y as f32 - 1.0) * VOXEL_WORLD_SIZE;
-            let below_sea = world_y < 0.0;
-            let base_rolling_voxel_index = z_base + y * SAMPLES_PER_CHUNK_DIM_PADDED;
+            world_y += VOXEL_WORLD_SIZE;
+            let base_rolling = z_base + y * SAMPLES_PER_CHUNK_DIM_PADDED;
             for x in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
-                let rolling_voxel_index = base_rolling_voxel_index + x;
                 let terrain_height = chunk_buffers.heightmap[height_base + x];
-                let distance_to_surface = {
-                    let vertical_dist = world_y - terrain_height;
-                    let gidx = z * SAMPLES_PER_CHUNK_DIM_PADDED + x;
-                    let gx = chunk_buffers.dhdx[gidx];
-                    let gz = chunk_buffers.dhdz[gidx];
-                    (vertical_dist / (1.0 + gx * gx + gz * gz).sqrt()).clamp(-10.0, 10.0)
-                };
-                let quantized_distance_to_surface = quantize_f32_to_i16(distance_to_surface);
-                chunk_buffers.density[rolling_voxel_index] = quantized_distance_to_surface;
-                let interior = x >= 1
-                    && x <= SAMPLES_PER_CHUNK_DIM
-                    && y >= 1
-                    && y <= SAMPLES_PER_CHUNK_DIM
-                    && z >= 1
-                    && z <= SAMPLES_PER_CHUNK_DIM;
-                if interior {
-                    let mat_z_base = (z - 1) * SAMPLES_PER_CHUNK_2D;
-                    let mat_base = mat_z_base + (y - 1) * SAMPLES_PER_CHUNK_DIM;
-                    let mat_index = mat_base + (x - 1);
-                    let mat = if quantized_distance_to_surface >= 0 {
-                        MaterialCode::Air
-                    } else if quantized_distance_to_surface < solid_threshold {
-                        MaterialCode::Dirt
-                    } else if below_sea {
-                        MaterialCode::Sand
-                    } else {
-                        MaterialCode::Grass
-                    };
-                    chunk_buffers.material[mat_index] = mat;
-                }
+                let vertical_dist = world_y - terrain_height;
+                let gx = chunk_buffers.dhdx[height_base + x];
+                let gz = chunk_buffers.dhdz[height_base + x];
+                chunk_buffers.density[base_rolling + x] =
+                    quantize_f32_to_i16(surface_distance(vertical_dist, gx, gz));
             }
         }
     }
-    is_uniform
+    for z in 1..=SAMPLES_PER_CHUNK_DIM {
+        let height_base = z * SAMPLES_PER_CHUNK_DIM_PADDED;
+        let z_base = z * SAMPLES_PER_CHUNK_2D_PADDED;
+        let mat_z_base = (z - 1) * SAMPLES_PER_CHUNK_2D;
+        for y in [0, SAMPLES_PER_CHUNK_DIM_PADDED - 1] {
+            let world_y = chunk_start.y + (y as f32 - 1.0) * VOXEL_WORLD_SIZE;
+            let base_rolling = z_base + y * SAMPLES_PER_CHUNK_DIM_PADDED;
+            for x in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
+                let terrain_height = chunk_buffers.heightmap[height_base + x];
+                let vertical_dist = world_y - terrain_height;
+                let gx = chunk_buffers.dhdx[height_base + x];
+                let gz = chunk_buffers.dhdz[height_base + x];
+                chunk_buffers.density[base_rolling + x] =
+                    quantize_f32_to_i16(surface_distance(vertical_dist, gx, gz));
+            }
+        }
+        let mut world_y = chunk_start.y - VOXEL_WORLD_SIZE;
+        for y in 1..=SAMPLES_PER_CHUNK_DIM {
+            world_y += VOXEL_WORLD_SIZE;
+            let below_sea = world_y < 0.0;
+            let base_rolling = z_base + y * SAMPLES_PER_CHUNK_DIM_PADDED;
+            let mat_base = mat_z_base + (y - 1) * SAMPLES_PER_CHUNK_DIM;
+            for x in [0, SAMPLES_PER_CHUNK_DIM_PADDED - 1] {
+                let height_base_plus_x = height_base + x;
+                let terrain_height = chunk_buffers.heightmap[height_base_plus_x];
+                let vertical_dist = world_y - terrain_height;
+                let gx = chunk_buffers.dhdx[height_base_plus_x];
+                let gz = chunk_buffers.dhdz[height_base_plus_x];
+                chunk_buffers.density[base_rolling + x] =
+                    quantize_f32_to_i16(surface_distance(vertical_dist, gx, gz));
+            }
+            for x in 1..=SAMPLES_PER_CHUNK_DIM {
+                let height_base_plus_x = height_base + x;
+                let terrain_height = chunk_buffers.heightmap[height_base_plus_x];
+                let vertical_dist = world_y - terrain_height;
+                let gx = chunk_buffers.dhdx[height_base_plus_x];
+                let gz = chunk_buffers.dhdz[height_base_plus_x];
+                let q = quantize_f32_to_i16(surface_distance(vertical_dist, gx, gz));
+                let mat = if q >= 0 {
+                    MaterialCode::Air
+                } else if q < solid_threshold {
+                    MaterialCode::Dirt
+                } else if below_sea {
+                    MaterialCode::Sand
+                } else {
+                    MaterialCode::Grass
+                };
+                chunk_buffers.density[base_rolling + x] = q;
+                chunk_buffers.material[mat_base + (x - 1)] = mat;
+            }
+        }
+    }
+    return Uniformity::NonUniform;
+}
+
+#[inline(always)]
+fn surface_distance(vertical_dist: f32, gx: f32, gz: f32) -> f32 {
+    let slope = 1.0 + gx * gx + gz * gz;
+    let inv_sqrt = unsafe { _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(slope))) };
+    (vertical_dist * inv_sqrt).clamp(-10.0, 10.0)
 }
 
 #[inline(always)]
