@@ -6,13 +6,13 @@ use std::hint::black_box;
 use criterion::{Criterion, criterion_group, criterion_main};
 use crossbeam_channel::unbounded;
 use marching_cubes::data_loader::file_loader::load_chunk_index_map;
+use marching_cubes::terrain::chunk_generator::{
+    compute_heightmap_gradients, generate_noise_height_samples, generate_terrain_heights,
+};
 use marching_cubes::{
-    data_loader::{
-        column_range_map::ColumnRangeMap,
-        driver::{
-            ChunkBuffers, ChunkSpawnResult, ClusterRequest, FullLodMode, LoadStateTransition,
-            LodBuffers, build_full_mesh_and_spawn, resolve_has_surface, try_load_chunk,
-        },
+    data_loader::driver::{
+        ChunkBuffers, ChunkSpawnResult, ClusterRequest, FullLodMode, LoadStateTransition,
+        LodBuffers, build_full_mesh_and_spawn, resolve_has_surface, try_load_chunk,
     },
     terrain::{
         chunk_generator::{
@@ -34,7 +34,14 @@ fn benchmark_build_full_mesh_and_spawn_with_collider(c: &mut Criterion) {
     let mut chunk_buffers = ChunkBuffers::new();
     let chunk_start = calculate_chunk_start(&chunk_coord);
     let fbm = get_fbm();
-    let uniformity = generate_chunk_into_buffers(&fbm, chunk_start, &mut chunk_buffers);
+    let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
+    generate_terrain_heights(&mut chunk_buffers.heightmap, &noise_samples);
+    compute_heightmap_gradients(
+        &mut chunk_buffers.dhdx,
+        &mut chunk_buffers.dhdz,
+        &noise_samples,
+    );
+    let uniformity = generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
     let cluster_request = ClusterRequest {
         position: (0, 0, 0),                                //shouldnt matter
         distance_squared: 0.0,                              //shouldnt matter
@@ -64,7 +71,14 @@ fn benchmark_build_full_mesh_and_spawn_no_collider(c: &mut Criterion) {
     let mut chunk_buffers = ChunkBuffers::new();
     let chunk_start = calculate_chunk_start(&chunk_coord);
     let fbm = get_fbm();
-    let uniformity = generate_chunk_into_buffers(&fbm, chunk_start, &mut chunk_buffers);
+    let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
+    generate_terrain_heights(&mut chunk_buffers.heightmap, &noise_samples);
+    compute_heightmap_gradients(
+        &mut chunk_buffers.dhdx,
+        &mut chunk_buffers.dhdz,
+        &noise_samples,
+    );
+    let uniformity = generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
     let cluster_request = ClusterRequest {
         position: (0, 0, 0),                                //shouldnt matter
         distance_squared: 0.0,                              //shouldnt matter
@@ -95,7 +109,14 @@ fn bench_resolve_has_surface_lod5(c: &mut Criterion) {
     let mut lod_buffers = LodBuffers::new();
     let chunk_start = calculate_chunk_start(&chunk_coord);
     let fbm = get_fbm();
-    let _uniformity = generate_chunk_into_buffers(&fbm, chunk_start, &mut chunk_buffers);
+    let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
+    generate_terrain_heights(&mut chunk_buffers.heightmap, &noise_samples);
+    compute_heightmap_gradients(
+        &mut chunk_buffers.dhdx,
+        &mut chunk_buffers.dhdz,
+        &noise_samples,
+    );
+    let _uniformity = generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
     let cluster_request = ClusterRequest {
         position: (0, 0, 0),   //shouldnt matter
         distance_squared: 0.0, //shouldnt matter
@@ -123,7 +144,14 @@ fn bench_resolve_has_surface_lod1(c: &mut Criterion) {
     let mut lod_buffers = LodBuffers::new();
     let chunk_start = calculate_chunk_start(&chunk_coord);
     let fbm = get_fbm();
-    let _uniformity = generate_chunk_into_buffers(&fbm, chunk_start, &mut chunk_buffers);
+    let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
+    generate_terrain_heights(&mut chunk_buffers.heightmap, &noise_samples);
+    compute_heightmap_gradients(
+        &mut chunk_buffers.dhdx,
+        &mut chunk_buffers.dhdz,
+        &noise_samples,
+    );
+    let _uniformity = generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
     let cluster_request = ClusterRequest {
         position: (0, 0, 0),   //shouldnt matter
         distance_squared: 0.0, //shouldnt matter
@@ -151,7 +179,14 @@ fn bench_resolve_has_surface_full_collider(c: &mut Criterion) {
     let mut lod_buffers = LodBuffers::new();
     let chunk_start = calculate_chunk_start(&chunk_coord);
     let fbm = get_fbm();
-    let _uniformity = generate_chunk_into_buffers(&fbm, chunk_start, &mut chunk_buffers);
+    let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
+    generate_terrain_heights(&mut chunk_buffers.heightmap, &noise_samples);
+    compute_heightmap_gradients(
+        &mut chunk_buffers.dhdx,
+        &mut chunk_buffers.dhdz,
+        &noise_samples,
+    );
+    let _uniformity = generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
     let cluster_request = ClusterRequest {
         position: (0, 0, 0),   //shouldnt matter
         distance_squared: 0.0, //shouldnt matter
@@ -178,7 +213,14 @@ fn bench_try_load_chunk_fail(c: &mut Criterion) {
     let mut chunk_buffers = ChunkBuffers::new();
     let chunk_start = calculate_chunk_start(&chunk_coord);
     let fbm = get_fbm();
-    let uniformity = generate_chunk_into_buffers(&fbm, chunk_start, &mut chunk_buffers);
+    let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
+    generate_terrain_heights(&mut chunk_buffers.heightmap, &noise_samples);
+    compute_heightmap_gradients(
+        &mut chunk_buffers.dhdx,
+        &mut chunk_buffers.dhdz,
+        &noise_samples,
+    );
+    let uniformity = generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
     let index_map_delta = RwLock::new(FxHashMap::default());
     let index_map_read = FxHashMap::default();
     #[cfg(windows)]
@@ -205,7 +247,14 @@ fn bench_try_load_chunk_success(c: &mut Criterion) {
     let mut chunk_buffers = ChunkBuffers::new();
     let chunk_start = calculate_chunk_start(&chunk_coord);
     let fbm = get_fbm();
-    let uniformity = generate_chunk_into_buffers(&fbm, chunk_start, &mut chunk_buffers);
+    let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
+    generate_terrain_heights(&mut chunk_buffers.heightmap, &noise_samples);
+    compute_heightmap_gradients(
+        &mut chunk_buffers.dhdx,
+        &mut chunk_buffers.dhdz,
+        &noise_samples,
+    );
+    let uniformity = generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
     let index_map_delta = RwLock::new(FxHashMap::default());
     let mut chunk_index_file = OpenOptions::new()
         .read(true)

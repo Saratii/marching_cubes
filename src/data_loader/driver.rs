@@ -1,8 +1,12 @@
-use crate::constants::SAMPLES_PER_CHUNK_PADDED;
-use crate::terrain::chunk_generator::padded_chunk_contains_surface;
+use crate::terrain::chunk_generator::{
+    compute_heightmap_gradients, generate_terrain_heights, padded_chunk_contains_surface,
+};
 #[cfg(feature = "debug")]
 use crate::ui::driver_debug_ui::{
     CHUNK_SPAWN_RECEIVER_QUEUE_SIZE, INTERNAL_QUEUE_SIZES, QUEUE_SIZE,
+};
+use crate::{
+    constants::SAMPLES_PER_CHUNK_PADDED, terrain::chunk_generator::generate_noise_height_samples,
 };
 use crate::{
     constants::{
@@ -488,9 +492,9 @@ fn chunk_loader_thread(
     priority_queue: Arc<(Mutex<BinaryHeap<ClusterRequest>>, Condvar)>,
     terrain_chunk_map_insert_sender: Sender<((i16, i16, i16), TerrainChunk)>,
 ) {
+    const PROCESS_BATCH_SIZE: usize = 64;
     let mut lod_buffers = LodBuffers::new();
     let mut chunk_buffers = ChunkBuffers::new();
-    const PROCESS_BATCH_SIZE: usize = 64;
     let mut internal_queue = Vec::with_capacity(PROCESS_BATCH_SIZE);
     #[cfg(feature = "timers")]
     let mut chunks_generated = 0;
@@ -541,8 +545,9 @@ fn chunk_loader_thread(
             );
             let min_chunk = cluster_coord_to_min_chunk_coord(cluster_request.position);
             for chunk_x in min_chunk.0..min_chunk.0 + CHUNKS_PER_CLUSTER_DIM as i16 {
-                for chunk_y in min_chunk.1..min_chunk.1 + CHUNKS_PER_CLUSTER_DIM as i16 {
-                    for chunk_z in min_chunk.2..min_chunk.2 + CHUNKS_PER_CLUSTER_DIM as i16 {
+                for chunk_z in min_chunk.2..min_chunk.2 + CHUNKS_PER_CLUSTER_DIM as i16 {
+                    let mut has_heightmap_been_calculated = false;
+                    for chunk_y in min_chunk.1..min_chunk.1 + CHUNKS_PER_CLUSTER_DIM as i16 {
                         let chunk_coord = (chunk_x, chunk_y, chunk_z);
                         let mut uniformity = column_range_map_read_only.contains(chunk_coord);
                         if uniformity == Uniformity::Unknown {
@@ -556,8 +561,25 @@ fn chunk_loader_thread(
                         }
                         if uniformity == Uniformity::Unknown {
                             let chunk_start = calculate_chunk_start(&chunk_coord);
+                            if !has_heightmap_been_calculated {
+                                let noise_samples = generate_noise_height_samples(
+                                    chunk_start.x,
+                                    chunk_start.z,
+                                    &fbm,
+                                );
+                                generate_terrain_heights(
+                                    &mut chunk_buffers.heightmap,
+                                    &noise_samples,
+                                );
+                                compute_heightmap_gradients(
+                                    &mut chunk_buffers.dhdx,
+                                    &mut chunk_buffers.dhdz,
+                                    &noise_samples,
+                                );
+                                has_heightmap_been_calculated = true;
+                            }
                             uniformity =
-                                generate_chunk_into_buffers(&fbm, chunk_start, &mut chunk_buffers);
+                                generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
                         }
                         match uniformity {
                             Uniformity::Air => {
@@ -723,8 +745,8 @@ fn svo_manager_thread(
         for (cluster_coord, has_entity) in clusters_to_deallocate.drain(..) {
             let min_chunk = cluster_coord_to_min_chunk_coord(cluster_coord);
             for chunk_x in min_chunk.0..min_chunk.0 + CHUNKS_PER_CLUSTER_DIM as i16 {
-                for chunk_y in min_chunk.1..min_chunk.1 + CHUNKS_PER_CLUSTER_DIM as i16 {
-                    for chunk_z in min_chunk.2..min_chunk.2 + CHUNKS_PER_CLUSTER_DIM as i16 {
+                for chunk_z in min_chunk.2..min_chunk.2 + CHUNKS_PER_CLUSTER_DIM as i16 {
+                    for chunk_y in min_chunk.1..min_chunk.1 + CHUNKS_PER_CLUSTER_DIM as i16 {
                         let chunk_coord = (chunk_x, chunk_y, chunk_z);
                         if has_entity[roller] {
                             chunk_spawn_channel

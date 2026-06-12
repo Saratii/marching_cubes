@@ -32,13 +32,19 @@ fn benchmark_generate_chunk_into_buffers(c: &mut Criterion) {
     let fbm = get_fbm();
     let mut chunk_buffers = ChunkBuffers::new();
     let chunk_start = calculate_chunk_start(&chunk_coord);
-    let uniformity = generate_chunk_into_buffers(&fbm, chunk_start, &mut chunk_buffers);
+    let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
+    generate_terrain_heights(&mut chunk_buffers.heightmap, &noise_samples);
+    compute_heightmap_gradients(
+        &mut chunk_buffers.dhdx,
+        &mut chunk_buffers.dhdz,
+        &noise_samples,
+    );
+    let uniformity = generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
     assert_eq!(uniformity, Uniformity::NonUniform);
     assert!(chunk_contains_surface(&chunk_buffers.density));
     c.bench_function("generate_chunk_into_buffers", |b| {
         b.iter(|| {
             black_box(generate_chunk_into_buffers(
-                black_box(&fbm),
                 black_box(chunk_start),
                 black_box(&mut chunk_buffers),
             ));
@@ -48,12 +54,18 @@ fn benchmark_generate_chunk_into_buffers(c: &mut Criterion) {
 
 fn benchmark_generate_uniform_densities_cpu(c: &mut Criterion) {
     let fbm = get_fbm();
+    let chunk_start = calculate_chunk_start(&(0, 2000, 0));
     let mut chunk_buffers = ChunkBuffers::new();
+    let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
+    generate_terrain_heights(&mut chunk_buffers.heightmap, &noise_samples);
+    compute_heightmap_gradients(
+        &mut chunk_buffers.dhdx,
+        &mut chunk_buffers.dhdz,
+        &noise_samples,
+    );
     c.bench_function("generate_uniform_densities_cpu", |b| {
         b.iter(|| {
-            let chunk_start = calculate_chunk_start(&(0, 2000, 0));
             black_box(generate_chunk_into_buffers(
-                black_box(&fbm),
                 black_box(chunk_start),
                 black_box(&mut chunk_buffers),
             ))
@@ -78,7 +90,14 @@ fn benchmark_marching_cubes(c: &mut Criterion) {
     let fbm = get_fbm();
     let chunk_start = calculate_chunk_start(&chunk);
     let mut chunk_buffers = ChunkBuffers::new();
-    generate_chunk_into_buffers(&fbm, chunk_start, black_box(&mut chunk_buffers));
+    let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
+    generate_terrain_heights(&mut chunk_buffers.heightmap, &noise_samples);
+    compute_heightmap_gradients(
+        &mut chunk_buffers.dhdx,
+        &mut chunk_buffers.dhdz,
+        &noise_samples,
+    );
+    generate_chunk_into_buffers(chunk_start, black_box(&mut chunk_buffers));
     c.bench_function("marching_cubes", |b| {
         b.iter(|| {
             black_box(mc_mesh_generation(
@@ -155,7 +174,14 @@ fn bench_downscale(c: &mut Criterion) {
     let mut lod_buffers = LodBuffers::new();
     let chunk_start = calculate_chunk_start(&chunk_coord);
     let fbm = get_fbm();
-    let uniformity = generate_chunk_into_buffers(&fbm, chunk_start, &mut chunk_buffers);
+    let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
+    generate_terrain_heights(&mut chunk_buffers.heightmap, &noise_samples);
+    compute_heightmap_gradients(
+        &mut chunk_buffers.dhdx,
+        &mut chunk_buffers.dhdz,
+        &noise_samples,
+    );
+    let uniformity = generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
     assert_eq!(uniformity, Uniformity::NonUniform);
     assert!(chunk_contains_surface(&chunk_buffers.density));
     c.benchmark_group("downscale")
@@ -236,7 +262,14 @@ fn bench_fill_voxel_densities(c: &mut Criterion) {
     let fbm = get_fbm();
     let mut chunk_buffers = ChunkBuffers::new();
     let chunk_start = calculate_chunk_start(&chunk_coord);
-    let uniformity = generate_chunk_into_buffers(&fbm, chunk_start, &mut chunk_buffers);
+    let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
+    generate_terrain_heights(&mut chunk_buffers.heightmap, &noise_samples);
+    compute_heightmap_gradients(
+        &mut chunk_buffers.dhdx,
+        &mut chunk_buffers.dhdz,
+        &noise_samples,
+    );
+    let uniformity = generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
     assert_eq!(uniformity, Uniformity::NonUniform);
     assert!(chunk_contains_surface(&chunk_buffers.density));
     c.bench_function("fill_voxel_densities", |b| {

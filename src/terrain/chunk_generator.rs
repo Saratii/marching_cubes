@@ -34,17 +34,9 @@ pub fn get_fbm() -> GeneratorWrapper<SafeNode> {
 
 //assumed to only be called on full res buffers
 pub fn generate_chunk_into_buffers(
-    fbm: &GeneratorWrapper<SafeNode>,
     chunk_start: Vec3,
     chunk_buffers: &mut ChunkBuffers,
 ) -> Uniformity {
-    let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, fbm);
-    generate_terrain_heights(&mut chunk_buffers.heightmap, &noise_samples);
-    compute_heightmap_gradients(
-        &mut chunk_buffers.dhdx,
-        &mut chunk_buffers.dhdz,
-        &noise_samples,
-    );
     let is_uniform = fill_voxel_densities(chunk_buffers, &chunk_start);
     let uniformity = if !is_uniform {
         // place_trees(
