@@ -1,5 +1,6 @@
 use crate::terrain::chunk_generator::{
-    compute_heightmap_gradients, generate_terrain_heights, padded_chunk_contains_surface,
+    compute_heightmap_gradients, fast_get_uniformity, generate_terrain_heights,
+    padded_chunk_contains_surface,
 };
 #[cfg(feature = "debug")]
 use crate::ui::driver_debug_ui::{
@@ -479,6 +480,7 @@ fn dedicated_write_thread(
 
 //compute thread for loading or generating chunks
 //recieves chunk load requests from svo_manager_thread and returns the data
+//uses a fast uniformity check to skip most of the chunk calculation on uniform chunks
 fn chunk_loader_thread(
     #[cfg_attr(not(feature = "timers"), allow(unused_variables))] thread_idx: usize,
     res_tx: Sender<ChunkResult>,
@@ -560,8 +562,8 @@ fn chunk_loader_thread(
                                 &mut chunk_buffers,
                             );
                         }
+                        let chunk_start = calculate_chunk_start(&chunk_coord);
                         if uniformity == Uniformity::Unknown {
-                            let chunk_start = calculate_chunk_start(&chunk_coord);
                             if !has_heightmap_been_calculated {
                                 let noise_samples = generate_noise_height_samples(
                                     chunk_start.x,
@@ -579,8 +581,12 @@ fn chunk_loader_thread(
                                 );
                                 has_heightmap_been_calculated = true;
                             }
-                            uniformity =
-                                generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
+                            uniformity = fast_get_uniformity(
+                                &chunk_buffers.heightmap,
+                                &chunk_buffers.dhdx,
+                                &chunk_buffers.dhdz,
+                                &chunk_start,
+                            );
                         }
                         match uniformity {
                             Uniformity::Air => {
@@ -604,6 +610,7 @@ fn chunk_loader_thread(
                                 }
                             }
                             Uniformity::NonUniform => {
+                                generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
                                 let has_surface = resolve_has_surface(
                                     &cluster_request,
                                     &chunk_buffers,

@@ -7,7 +7,8 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use crossbeam_channel::unbounded;
 use marching_cubes::data_loader::file_loader::load_chunk_index_map;
 use marching_cubes::terrain::chunk_generator::{
-    compute_heightmap_gradients, generate_noise_height_samples, generate_terrain_heights,
+    compute_heightmap_gradients, fast_get_uniformity, generate_noise_height_samples,
+    generate_terrain_heights,
 };
 use marching_cubes::{
     data_loader::driver::{
@@ -41,7 +42,13 @@ fn benchmark_build_full_mesh_and_spawn_with_collider(c: &mut Criterion) {
         &mut chunk_buffers.dhdz,
         &noise_samples,
     );
-    let uniformity = generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
+    generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
+    let uniformity = fast_get_uniformity(
+        &chunk_buffers.heightmap,
+        &chunk_buffers.dhdx,
+        &chunk_buffers.dhdz,
+        &chunk_start,
+    );
     let cluster_request = ClusterRequest {
         position: (0, 0, 0),                                //shouldnt matter
         distance_squared: 0.0,                              //shouldnt matter
@@ -78,7 +85,13 @@ fn benchmark_build_full_mesh_and_spawn_no_collider(c: &mut Criterion) {
         &mut chunk_buffers.dhdz,
         &noise_samples,
     );
-    let uniformity = generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
+    generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
+    let uniformity = fast_get_uniformity(
+        &chunk_buffers.heightmap,
+        &chunk_buffers.dhdx,
+        &chunk_buffers.dhdz,
+        &chunk_start,
+    );
     let cluster_request = ClusterRequest {
         position: (0, 0, 0),                                //shouldnt matter
         distance_squared: 0.0,                              //shouldnt matter
@@ -220,7 +233,13 @@ fn bench_try_load_chunk_fail(c: &mut Criterion) {
         &mut chunk_buffers.dhdz,
         &noise_samples,
     );
-    let uniformity = generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
+    generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
+    let uniformity = fast_get_uniformity(
+        &chunk_buffers.heightmap,
+        &chunk_buffers.dhdx,
+        &chunk_buffers.dhdz,
+        &chunk_start,
+    );
     let index_map_delta = RwLock::new(FxHashMap::default());
     let index_map_read = FxHashMap::default();
     #[cfg(windows)]
@@ -254,7 +273,13 @@ fn bench_try_load_chunk_success(c: &mut Criterion) {
         &mut chunk_buffers.dhdz,
         &noise_samples,
     );
-    let uniformity = generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
+    generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
+    let uniformity = fast_get_uniformity(
+        &chunk_buffers.heightmap,
+        &chunk_buffers.dhdx,
+        &chunk_buffers.dhdz,
+        &chunk_start,
+    );
     let index_map_delta = RwLock::new(FxHashMap::default());
     let mut chunk_index_file = OpenOptions::new()
         .read(true)

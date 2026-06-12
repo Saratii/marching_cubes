@@ -16,8 +16,8 @@ use marching_cubes::{
         chunk_compute_pipeline::GpuTerrainGenerator,
         chunk_generator::{
             calculate_chunk_start, chunk_contains_surface, compute_heightmap_gradients, downscale,
-            fill_voxel_densities, generate_chunk_into_buffers, generate_noise_height_samples,
-            generate_terrain_heights, get_fbm,
+            fast_get_uniformity, fill_voxel_densities, generate_chunk_into_buffers,
+            generate_noise_height_samples, generate_terrain_heights, get_fbm,
         },
         heightmap_compute_pipeline::GpuHeightmapGenerator,
         terrain::Uniformity,
@@ -39,7 +39,13 @@ fn benchmark_generate_chunk_into_buffers(c: &mut Criterion) {
         &mut chunk_buffers.dhdz,
         &noise_samples,
     );
-    let uniformity = generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
+    let uniformity = fast_get_uniformity(
+        &chunk_buffers.heightmap,
+        &chunk_buffers.dhdx,
+        &chunk_buffers.dhdz,
+        &chunk_start,
+    );
+    generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
     assert_eq!(uniformity, Uniformity::NonUniform);
     assert!(chunk_contains_surface(&chunk_buffers.density));
     c.bench_function("generate_chunk_into_buffers", |b| {
@@ -181,7 +187,13 @@ fn bench_downscale(c: &mut Criterion) {
         &mut chunk_buffers.dhdz,
         &noise_samples,
     );
-    let uniformity = generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
+    generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
+    let uniformity = fast_get_uniformity(
+        &chunk_buffers.heightmap,
+        &chunk_buffers.dhdx,
+        &chunk_buffers.dhdz,
+        &chunk_start,
+    );
     assert_eq!(uniformity, Uniformity::NonUniform);
     assert!(chunk_contains_surface(&chunk_buffers.density));
     c.benchmark_group("downscale")
@@ -269,12 +281,82 @@ fn bench_fill_voxel_densities(c: &mut Criterion) {
         &mut chunk_buffers.dhdz,
         &noise_samples,
     );
-    let uniformity = generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
+    generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
+    let uniformity = fast_get_uniformity(
+        &chunk_buffers.heightmap,
+        &chunk_buffers.dhdx,
+        &chunk_buffers.dhdz,
+        &chunk_start,
+    );
     assert_eq!(uniformity, Uniformity::NonUniform);
     assert!(chunk_contains_surface(&chunk_buffers.density));
     c.bench_function("fill_voxel_densities", |b| {
         b.iter(|| {
             black_box(fill_voxel_densities(&mut chunk_buffers, &chunk_start));
+        })
+    });
+}
+
+fn bench_fast_get_uniformity_uniform(c: &mut Criterion) {
+    let chunk_coord = (0, 2000, 0);
+    let mut chunk_buffers = ChunkBuffers::new();
+    let chunk_start = calculate_chunk_start(&chunk_coord);
+    let fbm = get_fbm();
+    let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
+    generate_terrain_heights(&mut chunk_buffers.heightmap, &noise_samples);
+    compute_heightmap_gradients(
+        &mut chunk_buffers.dhdx,
+        &mut chunk_buffers.dhdz,
+        &noise_samples,
+    );
+    generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
+    let uniformity = fast_get_uniformity(
+        &chunk_buffers.heightmap,
+        &chunk_buffers.dhdx,
+        &chunk_buffers.dhdz,
+        &chunk_start,
+    );
+    assert_eq!(uniformity, Uniformity::Air);
+    c.bench_function("fast_get_uniformity_uniform", |b| {
+        b.iter(|| {
+            black_box(fast_get_uniformity(
+                black_box(&chunk_buffers.heightmap),
+                black_box(&chunk_buffers.dhdx),
+                black_box(&chunk_buffers.dhdz),
+                black_box(&chunk_start),
+            ));
+        })
+    });
+}
+
+fn bench_fast_get_uniformity_non_uniform(c: &mut Criterion) {
+    let chunk_coord = find_chunk_with_surface();
+    let mut chunk_buffers = ChunkBuffers::new();
+    let chunk_start = calculate_chunk_start(&chunk_coord);
+    let fbm = get_fbm();
+    let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
+    generate_terrain_heights(&mut chunk_buffers.heightmap, &noise_samples);
+    compute_heightmap_gradients(
+        &mut chunk_buffers.dhdx,
+        &mut chunk_buffers.dhdz,
+        &noise_samples,
+    );
+    generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
+    let uniformity = fast_get_uniformity(
+        &chunk_buffers.heightmap,
+        &chunk_buffers.dhdx,
+        &chunk_buffers.dhdz,
+        &chunk_start,
+    );
+    assert_eq!(uniformity, Uniformity::NonUniform);
+    c.bench_function("fast_get_uniformity_non_uniform", |b| {
+        b.iter(|| {
+            black_box(fast_get_uniformity(
+                black_box(&chunk_buffers.heightmap),
+                black_box(&chunk_buffers.dhdx),
+                black_box(&chunk_buffers.dhdz),
+                black_box(&chunk_start),
+            ));
         })
     });
 }
@@ -296,6 +378,8 @@ criterion_group!(
     bench_generate_noise_height_samples,
     bench_generate_terrain_heights,
     bench_fill_voxel_densities,
+    bench_fast_get_uniformity_uniform,
+    bench_fast_get_uniformity_non_uniform,
 );
 criterion_main!(benches);
 
