@@ -250,6 +250,7 @@ pub fn toggle_first_person(
             *player_visibility = Visibility::Hidden;
         } else {
             camera_controller.is_first_person = false;
+            camera_controller.distance = CAMERA_3RD_PERSON_OFFSET.length();
             update_camera_position(&mut camera_transform, &camera_controller);
             let mut player_visibility = player_visibility.iter_mut().next().unwrap();
             *player_visibility = Visibility::Visible;
