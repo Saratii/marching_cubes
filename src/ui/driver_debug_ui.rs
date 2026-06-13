@@ -91,12 +91,33 @@ pub fn update_debug_texts(
             Without<ChunkSpawnReceiverText>,
         ),
     >,
+    mut rate_state: Local<(usize, f32, f32, bool)>,
+    time: Res<Time>,
 ) {
     if let Ok(mut text) = queue_text.single_mut() {
-        text.0 = format!(
-            "Pending Request Queue: {}",
-            QUEUE_SIZE.load(Ordering::Relaxed)
-        );
+        let current = QUEUE_SIZE.load(Ordering::Relaxed);
+        let (prev_size, accum_secs, instant_rate, initialized) = &mut *rate_state;
+        *accum_secs += time.delta_secs();
+        if current == 0 {
+            *instant_rate = 0.0;
+        }
+        if *accum_secs >= 0.5 {
+            if *initialized {
+                *instant_rate = (current as f32 - *prev_size as f32) / *accum_secs;
+            } else {
+                *initialized = true;
+            }
+            *prev_size = current;
+            *accum_secs = 0.0;
+        }
+        text.0 = if *instant_rate == 0.0 {
+            format!("Pending Request Queue: {}", current)
+        } else {
+            format!(
+                "Pending Request Queue: {} ({:+.0}/s)",
+                current, *instant_rate
+            )
+        };
     }
     if let Ok(mut text) = spawn_receiver_text.single_mut() {
         text.0 = format!(

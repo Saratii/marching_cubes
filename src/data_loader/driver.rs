@@ -36,8 +36,6 @@ use crossbeam_channel::{Receiver, Sender, unbounded};
 use fastnoise2::{SafeNode, generator::GeneratorWrapper};
 use parking_lot::RwLock;
 use rustc_hash::{FxHashMap, FxHashSet};
-#[cfg(feature = "timers")]
-use std::io::Write;
 #[cfg(feature = "debug")]
 use std::sync::atomic::AtomicUsize;
 use std::{
@@ -498,28 +496,6 @@ fn chunk_loader_thread(
     let mut lod_buffers = LodBuffers::new();
     let mut chunk_buffers = ChunkBuffers::new();
     let mut internal_queue = Vec::with_capacity(PROCESS_BATCH_SIZE);
-    #[cfg(feature = "timers")]
-    let mut chunks_generated = 0;
-    #[cfg(feature = "timers")]
-    let mut chunks_with_entities = 0;
-    #[cfg(feature = "timers")]
-    let mut last_record_time = Instant::now();
-    #[cfg(feature = "timers")]
-    let start_time = Instant::now();
-    #[cfg(feature = "timers")]
-    let mut throughput_file =
-        File::create(format!("plots/latest/throughput_thread_{}.csv", thread_idx)).unwrap();
-    #[cfg(feature = "timers")]
-    writeln!(
-        throughput_file,
-        "time_seconds,chunks_per_second,entity_chunks_per_second"
-    )
-    .unwrap();
-    #[cfg(feature = "timers")]
-    let mut queue_size_file =
-        File::create(format!("plots/latest/queue_size_thread_{}.csv", thread_idx)).unwrap();
-    #[cfg(feature = "timers")]
-    writeln!(queue_size_file, "time_seconds,queue_size").unwrap();
     loop {
         let (binary_heap_lock, condvar) = &*priority_queue;
         let mut binary_heap = binary_heap_lock.lock().unwrap();
@@ -634,20 +610,10 @@ fn chunk_loader_thread(
                                     ));
                                 }
                                 has_entity_buffer[rolling] = has_surface;
-                                #[cfg(feature = "timers")]
-                                {
-                                    if has_surface {
-                                        chunks_with_entities += 1;
-                                    }
-                                }
                             }
                             Uniformity::Unknown => unreachable!(),
                         };
                         rolling += 1;
-                        #[cfg(feature = "timers")]
-                        {
-                            chunks_generated += 1;
-                        }
                     }
                 }
             }
@@ -657,30 +623,6 @@ fn chunk_loader_thread(
                 cluster_coord: cluster_request.position,
                 load_state: new_state,
             });
-            #[cfg(feature = "timers")]
-            {
-                let elapsed = Instant::now().duration_since(last_record_time);
-                if elapsed.as_secs() >= 1 {
-                    let time_seconds = Instant::now().duration_since(start_time).as_secs_f64();
-                    let chunks_per_second = chunks_generated as f64 / elapsed.as_secs_f64();
-                    let entity_chunks_per_second =
-                        chunks_with_entities as f64 / elapsed.as_secs_f64();
-                    let queue_size = {
-                        let (binary_heap_lock, _condvar) = &*priority_queue;
-                        binary_heap_lock.lock().unwrap().len()
-                    };
-                    writeln!(
-                        &mut throughput_file,
-                        "{},{},{}",
-                        time_seconds, chunks_per_second, entity_chunks_per_second
-                    )
-                    .unwrap();
-                    writeln!(&mut queue_size_file, "{},{}", time_seconds, queue_size).unwrap();
-                    chunks_generated = 0;
-                    chunks_with_entities = 0;
-                    last_record_time = Instant::now();
-                }
-            }
         }
     }
 }
@@ -809,8 +751,6 @@ pub fn chunk_spawn_reciever(
     #[cfg(feature = "debug")]
     let mut spawned_this_frame: FxHashSet<(i16, i16, i16)> = FxHashSet::default();
     while let Ok(request) = req_rx.0.try_recv() {
-        #[cfg(feature = "timers")]
-        let t0 = Instant::now();
         match request {
             ChunkSpawnResult::ToSpawn((chunk_coord, mesh)) => {
                 let entity = commands
@@ -874,13 +814,6 @@ pub fn chunk_spawn_reciever(
         }
         if frame_start.0.elapsed() >= TARGET_FRAME_TIME {
             return; //if this fn would cause fps to drop below a certain threshold, wait until next frame to continue processing requests
-        }
-        #[cfg(feature = "timers")]
-        {
-            let run_time = Instant::now().duration_since(t0).as_millis();
-            if run_time >= 10 {
-                println!("chunk_spawn_reciever: {:?} ms", run_time);
-            }
         }
     }
     #[cfg(feature = "debug")]
