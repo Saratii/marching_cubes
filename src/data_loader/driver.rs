@@ -590,23 +590,19 @@ fn chunk_loader_thread(
                         }
                         match uniformity {
                             Uniformity::Air => {
-                                write_sender
-                                    .send(WriteCmd::WriteUniformAir { chunk_coord })
-                                    .unwrap();
+                                let _ =
+                                    write_sender.send(WriteCmd::WriteUniformAir { chunk_coord });
                                 if in_simulation_range {
-                                    terrain_chunk_map_insert_sender
-                                        .send((chunk_coord, TerrainChunk::UniformAir))
-                                        .unwrap();
+                                    let _ = terrain_chunk_map_insert_sender
+                                        .send((chunk_coord, TerrainChunk::UniformAir));
                                 }
                             }
                             Uniformity::Dirt => {
-                                write_sender
-                                    .send(WriteCmd::WriteUniformDirt { chunk_coord })
-                                    .unwrap();
+                                let _ =
+                                    write_sender.send(WriteCmd::WriteUniformDirt { chunk_coord });
                                 if in_simulation_range {
-                                    terrain_chunk_map_insert_sender
-                                        .send((chunk_coord, TerrainChunk::UniformDirt))
-                                        .unwrap();
+                                    let _ = terrain_chunk_map_insert_sender
+                                        .send((chunk_coord, TerrainChunk::UniformDirt));
                                 }
                             }
                             Uniformity::NonUniform => {
@@ -620,22 +616,16 @@ fn chunk_loader_thread(
                                     &chunk_spawn_channel,
                                 );
                                 if in_simulation_range {
-                                    terrain_chunk_map_insert_sender
-                                        .send((
-                                            chunk_coord,
-                                            TerrainChunk::NonUniformTerrainChunk(
-                                                NonUniformTerrainChunk {
-                                                    //allocation here
-                                                    densities: Arc::from(
-                                                        &chunk_buffers.density[..],
-                                                    ),
-                                                    materials: Arc::from(
-                                                        &chunk_buffers.material[..],
-                                                    ),
-                                                },
-                                            ),
-                                        ))
-                                        .unwrap();
+                                    let _ = terrain_chunk_map_insert_sender.send((
+                                        chunk_coord,
+                                        TerrainChunk::NonUniformTerrainChunk(
+                                            NonUniformTerrainChunk {
+                                                //allocation here
+                                                densities: Arc::from(&chunk_buffers.density[..]),
+                                                materials: Arc::from(&chunk_buffers.material[..]),
+                                            },
+                                        ),
+                                    ));
                                 }
                                 has_entity_buffer[rolling] = has_surface;
                                 #[cfg(feature = "timers")]
@@ -757,9 +747,8 @@ fn svo_manager_thread(
                     for chunk_y in min_chunk.1..min_chunk.1 + CHUNKS_PER_CLUSTER_DIM as i16 {
                         let chunk_coord = (chunk_x, chunk_y, chunk_z);
                         if has_entity[roller] {
-                            chunk_spawn_channel
-                                .send(ChunkSpawnResult::ToDespawn(chunk_coord))
-                                .unwrap();
+                            let _ =
+                                chunk_spawn_channel.send(ChunkSpawnResult::ToDespawn(chunk_coord));
                         }
                         terrain_map_lock.remove(&chunk_coord);
                         roller += 1;
@@ -916,9 +905,7 @@ fn process_lod(
     //must recheck surface incase the reduction eliminated the surface. Additionally filters out the false positive state from calling chunk_contains_surface on a padded buffer preventing empty geometry.
     if !chunk_contains_surface(reduced_density_buffer) {
         if had_entity {
-            chunk_spawn_channel
-                .send(ChunkSpawnResult::ToDespawn(chunk_coord))
-                .unwrap();
+            let _ = chunk_spawn_channel.send(ChunkSpawnResult::ToDespawn(chunk_coord));
         }
         return false;
     }
@@ -931,13 +918,9 @@ fn process_lod(
     );
     let mesh = generate_bevy_mesh(vertices, normals, material_ids, indices);
     if had_entity {
-        chunk_spawn_channel
-            .send(ChunkSpawnResult::ToChangeLod((chunk_coord, mesh)))
-            .unwrap();
+        let _ = chunk_spawn_channel.send(ChunkSpawnResult::ToChangeLod((chunk_coord, mesh)));
     } else {
-        chunk_spawn_channel
-            .send(ChunkSpawnResult::ToSpawn((chunk_coord, mesh)))
-            .unwrap();
+        let _ = chunk_spawn_channel.send(ChunkSpawnResult::ToSpawn((chunk_coord, mesh)));
     }
     true
 }
@@ -1121,13 +1104,11 @@ pub fn build_full_mesh_and_spawn(
         match mode {
             FullLodMode::NoCollider => {
                 if had_entity {
-                    chunk_spawn_channel
-                        .send(ChunkSpawnResult::ToChangeLod((chunk_coord, mesh)))
-                        .unwrap();
+                    let _ = chunk_spawn_channel
+                        .send(ChunkSpawnResult::ToChangeLod((chunk_coord, mesh)));
                 } else {
-                    chunk_spawn_channel
-                        .send(ChunkSpawnResult::ToSpawn((chunk_coord, mesh)))
-                        .unwrap();
+                    let _ =
+                        chunk_spawn_channel.send(ChunkSpawnResult::ToSpawn((chunk_coord, mesh)));
                 }
             }
             FullLodMode::WithCollider => {
@@ -1137,21 +1118,17 @@ pub fn build_full_mesh_and_spawn(
                 )
                 .unwrap();
                 if had_entity {
-                    chunk_spawn_channel
-                        .send(ChunkSpawnResult::ToChangeLodAddCollider((
-                            chunk_coord,
-                            mesh,
-                            collider,
-                        )))
-                        .unwrap();
+                    let _ = chunk_spawn_channel.send(ChunkSpawnResult::ToChangeLodAddCollider((
+                        chunk_coord,
+                        mesh,
+                        collider,
+                    )));
                 } else {
-                    chunk_spawn_channel
-                        .send(ChunkSpawnResult::ToSpawnWithCollider((
-                            chunk_coord,
-                            collider,
-                            mesh,
-                        )))
-                        .unwrap();
+                    let _ = chunk_spawn_channel.send(ChunkSpawnResult::ToSpawnWithCollider((
+                        chunk_coord,
+                        collider,
+                        mesh,
+                    )));
                 }
             }
             FullLodMode::AddColliderToExisting => {
@@ -1161,17 +1138,14 @@ pub fn build_full_mesh_and_spawn(
                 )
                 .unwrap();
                 if had_entity {
-                    chunk_spawn_channel
-                        .send(ChunkSpawnResult::ToGiveCollider((chunk_coord, collider)))
-                        .unwrap();
+                    let _ = chunk_spawn_channel
+                        .send(ChunkSpawnResult::ToGiveCollider((chunk_coord, collider)));
                 } else {
-                    chunk_spawn_channel
-                        .send(ChunkSpawnResult::ToSpawnWithCollider((
-                            chunk_coord,
-                            collider,
-                            mesh,
-                        )))
-                        .unwrap();
+                    let _ = chunk_spawn_channel.send(ChunkSpawnResult::ToSpawnWithCollider((
+                        chunk_coord,
+                        collider,
+                        mesh,
+                    )));
                 }
             }
         }

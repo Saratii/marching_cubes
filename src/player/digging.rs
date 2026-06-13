@@ -94,35 +94,27 @@ pub fn handle_digging_input(
                     );
                     match uniformity {
                         Uniformity::Air | Uniformity::Dirt => {
-                            write_cmd_sender
-                                .0
-                                .send(WriteCmd::UpdateNonUniform {
-                                    densities: Arc::clone(&densities),
-                                    materials: Arc::clone(&materials),
-                                    chunk_coord,
-                                })
-                                .unwrap();
+                            let _ = write_cmd_sender.0.send(WriteCmd::UpdateNonUniform {
+                                densities: Arc::clone(&densities),
+                                materials: Arc::clone(&materials),
+                                chunk_coord,
+                            });
                             if uniformity == Uniformity::Air {
-                                write_cmd_sender
+                                let _ = write_cmd_sender
                                     .0
-                                    .send(WriteCmd::RemoveUniformAir { chunk_coord })
-                                    .unwrap();
+                                    .send(WriteCmd::RemoveUniformAir { chunk_coord });
                             } else {
-                                write_cmd_sender
+                                let _ = write_cmd_sender
                                     .0
-                                    .send(WriteCmd::RemoveUniformDirt { chunk_coord })
-                                    .unwrap();
+                                    .send(WriteCmd::RemoveUniformDirt { chunk_coord });
                             }
                         }
                         Uniformity::NonUniform => {
-                            write_cmd_sender
-                                .0
-                                .send(WriteCmd::UpdateNonUniform {
-                                    densities: Arc::clone(&densities),
-                                    materials: Arc::clone(&materials),
-                                    chunk_coord,
-                                })
-                                .unwrap();
+                            let _ = write_cmd_sender.0.send(WriteCmd::UpdateNonUniform {
+                                densities: Arc::clone(&densities),
+                                materials: Arc::clone(&materials),
+                                chunk_coord,
+                            });
                         }
                         Uniformity::Unknown => unreachable!(),
                     }
