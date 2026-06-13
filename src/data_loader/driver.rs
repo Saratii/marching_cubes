@@ -553,6 +553,7 @@ fn chunk_loader_thread(
                     for chunk_y in min_chunk.1..min_chunk.1 + CHUNKS_PER_CLUSTER_DIM as i16 {
                         let chunk_coord = (chunk_x, chunk_y, chunk_z);
                         let mut uniformity = column_cache.uniformity_at_y(chunk_y);
+                        let mut loaded_from_disk = false;
                         if uniformity == Uniformity::Unknown {
                             uniformity = try_load_chunk(
                                 chunk_coord,
@@ -561,6 +562,9 @@ fn chunk_loader_thread(
                                 &mut chunk_data_file_read,
                                 &mut chunk_buffers,
                             );
+                            if uniformity == Uniformity::NonUniform {
+                                loaded_from_disk = true;
+                            }
                         }
                         let chunk_start = calculate_chunk_start(&chunk_coord);
                         if uniformity == Uniformity::Unknown {
@@ -606,7 +610,9 @@ fn chunk_loader_thread(
                                 }
                             }
                             Uniformity::NonUniform => {
-                                generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
+                                if !loaded_from_disk {
+                                    generate_chunk_into_buffers(chunk_start, &mut chunk_buffers);
+                                }
                                 let has_surface = resolve_has_surface(
                                     &cluster_request,
                                     &chunk_buffers,
