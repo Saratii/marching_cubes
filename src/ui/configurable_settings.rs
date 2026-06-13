@@ -19,6 +19,11 @@ const RENDER_RADIUS_STEPS: &[f32] = &[
     1600.0 * 1600.0,
     1800.0 * 1800.0,
     2000.0 * 2000.0,
+    2200.0 * 2200.0,
+    2400.0 * 2400.0,
+    2600.0 * 2600.0,
+    2800.0 * 2800.0,
+    3000.0 * 3000.0,
 ];
 const _: () = assert!(RENDER_RADIUS_STEPS[0] as u64 >= SIMULATION_RADIUS as u64);
 const DEFAULT_RENDER_RADIUS_SQUARED: f32 = 1000.0 * 1000.0;
@@ -152,7 +157,9 @@ impl SettingsType {
                 format!("Fog End Multiplier: {:.2}", s.fog_end_multiplier)
             }
             SettingsType::DistanceFogToggle => format!("Distance Fog: {}", on_off(s.distance_fog)),
-            SettingsType::OcclusionCullingToggle => format!("Occlusion Culling: {}", on_off(s.occlusion_culling)),
+            SettingsType::OcclusionCullingToggle => {
+                format!("Occlusion Culling: {}", on_off(s.occlusion_culling))
+            }
         }
     }
 
@@ -191,7 +198,9 @@ impl SettingsType {
                 settings.fog_end_multiplier = new;
             }
             SettingsType::DistanceFogToggle => settings.distance_fog = !settings.distance_fog,
-            SettingsType::OcclusionCullingToggle => settings.occlusion_culling = !settings.occlusion_culling,
+            SettingsType::OcclusionCullingToggle => {
+                settings.occlusion_culling = !settings.occlusion_culling
+            }
         }
     }
 }
