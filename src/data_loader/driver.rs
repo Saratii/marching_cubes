@@ -820,22 +820,22 @@ pub fn chunk_spawn_reciever(
     frame_start: Res<FrameStart>,
 ) {
     const TARGET_FRAME_TIME: Duration = Duration::from_nanos(1_000_000_000 / 90);
-    #[cfg(feature = "debug")]
-    let mut spawned_this_frame: FxHashSet<(i16, i16, i16)> = FxHashSet::default();
     while let Ok(request) = req_rx.0.try_recv() {
         match request {
             ChunkSpawnResult::ToSpawn((chunk_coord, mesh)) => {
-                let mesh_handle = mesh_handles.add(mesh);
-                let entity = commands
-                    .spawn((
-                        Mesh3d(mesh_handle.clone()),
-                        ChunkTag,
-                        Transform::from_translation(chunk_coord_to_world_pos(&chunk_coord)),
-                        MeshMaterial3d(standard_material.0.clone()),
-                    ))
-                    .id();
-                spawned_this_frame.insert(chunk_coord);
-                chunk_entity_map.insert(chunk_coord, (entity, mesh_handle));
+                //use option in case a chunk is spawned, despawned, and spawned again but the second spawn comes before the despawn
+                if chunk_entity_map.get_option(chunk_coord).is_none() {
+                    let mesh_handle = mesh_handles.add(mesh);
+                    let entity = commands
+                        .spawn((
+                            Mesh3d(mesh_handle.clone()),
+                            ChunkTag,
+                            Transform::from_translation(chunk_coord_to_world_pos(&chunk_coord)),
+                            MeshMaterial3d(standard_material.0.clone()),
+                        ))
+                        .id();
+                    chunk_entity_map.insert(chunk_coord, (entity, mesh_handle));
+                }
             }
             ChunkSpawnResult::ToGiveCollider((chunk_coord, collider)) => {
                 let (entity, _) = chunk_entity_map.get(chunk_coord);
@@ -846,24 +846,33 @@ pub fn chunk_spawn_reciever(
                 commands.entity(entity).remove::<Collider>();
             }
             ChunkSpawnResult::ToDespawn(chunk_coord) => {
-                let (entity, mesh_handle) = chunk_entity_map.remove(chunk_coord);
-                mesh_handles.remove(&mesh_handle);
-                commands.entity(entity).despawn();
+                //use option in case the corresponding ToSpawn was skipped due to a duplicate, leaving nothing to remove
+                if let Some((entity, mesh_handle)) = chunk_entity_map.get_option(chunk_coord) {
+                    let entity = *entity;
+                    let mesh_handle = mesh_handle.clone();
+                    chunk_entity_map.remove(chunk_coord);
+                    mesh_handles.remove(&mesh_handle);
+                    commands.entity(entity).despawn();
+                }
             }
             ChunkSpawnResult::ToChangeLodAddCollider((chunk_coord, new_mesh, new_collider)) => {
-                let (entity, mesh_handle) = chunk_entity_map.get(chunk_coord);
-                if let Some(aabb) = new_mesh.compute_aabb() {
-                    commands.entity(entity).insert(aabb);
+                //use option to handle the case where the chunk was despawned while the LOD change was in flight
+                if let Some((entity, mesh_handle)) = chunk_entity_map.get_option(chunk_coord) {
+                    if let Some(aabb) = new_mesh.compute_aabb() {
+                        commands.entity(*entity).insert(aabb);
+                    }
+                    mesh_handles.insert(mesh_handle, new_mesh).unwrap();
+                    commands.entity(*entity).insert(new_collider);
                 }
-                mesh_handles.insert(&mesh_handle, new_mesh).unwrap();
-                commands.entity(entity).insert(new_collider);
             }
             ChunkSpawnResult::ToChangeLod((chunk_coord, new_mesh)) => {
-                let (entity, mesh_handle) = chunk_entity_map.get(chunk_coord);
-                if let Some(aabb) = new_mesh.compute_aabb() {
-                    commands.entity(entity).insert(aabb);
+                //use option to handle the case where the chunk was despawned while the LOD change was in flight
+                if let Some((entity, mesh_handle)) = chunk_entity_map.get_option(chunk_coord) {
+                    if let Some(aabb) = new_mesh.compute_aabb() {
+                        commands.entity(*entity).insert(aabb);
+                    }
+                    mesh_handles.insert(mesh_handle, new_mesh).unwrap();
                 }
-                mesh_handles.insert(&mesh_handle, new_mesh).unwrap();
             }
             ChunkSpawnResult::ToChangeLodRemoveCollider((chunk_coord, new_mesh)) => {
                 let (entity, mesh_handle) = chunk_entity_map.get(chunk_coord);
@@ -874,17 +883,20 @@ pub fn chunk_spawn_reciever(
                 commands.entity(entity).remove::<Collider>();
             }
             ChunkSpawnResult::ToSpawnWithCollider((chunk_coord, collider, mesh)) => {
-                let mesh_handle = mesh_handles.add(mesh);
-                let entity = commands
-                    .spawn((
-                        Mesh3d(mesh_handle.clone()),
-                        collider,
-                        ChunkTag,
-                        Transform::from_translation(chunk_coord_to_world_pos(&chunk_coord)),
-                        MeshMaterial3d(standard_material.0.clone()),
-                    ))
-                    .id();
-                chunk_entity_map.insert(chunk_coord, (entity, mesh_handle));
+                //use option in case a chunk is spawned, despawned, and spawned again but the second spawn comes before the despawn
+                if chunk_entity_map.get_option(chunk_coord).is_none() {
+                    let mesh_handle = mesh_handles.add(mesh);
+                    let entity = commands
+                        .spawn((
+                            Mesh3d(mesh_handle.clone()),
+                            collider,
+                            ChunkTag,
+                            Transform::from_translation(chunk_coord_to_world_pos(&chunk_coord)),
+                            MeshMaterial3d(standard_material.0.clone()),
+                        ))
+                        .id();
+                    chunk_entity_map.insert(chunk_coord, (entity, mesh_handle));
+                }
             }
         }
         if frame_start.0.elapsed() >= TARGET_FRAME_TIME {

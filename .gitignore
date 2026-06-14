@@ -6,3 +6,4 @@ perf.data.old
 profile.json.gz
 profile.kernel.etl
 imgui.ini
+.vscode
