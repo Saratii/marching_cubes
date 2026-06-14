@@ -3,6 +3,7 @@ use rustc_hash::FxHashMap;
 use crate::terrain::terrain::Uniformity;
 
 //store ranges of chunk columns that match uniformity instead of storing individial chunks
+//does not store non-uniform chunks because caching them doesnt save much
 #[derive(Clone)]
 pub struct ColumnRangeMap {
     map: FxHashMap<u32, Vec<ColumnRange>>,

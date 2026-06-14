@@ -305,7 +305,6 @@ pub fn setup_chunk_driver(
         column_range_map.size_in_bytes(),
         t0.elapsed().as_millis()
     );
-    let column_range_map_clone = column_range_map.clone();
     let column_range_map = Arc::new(column_range_map);
     let fbm = get_fbm();
     commands.insert_resource(NoiseGenerator(fbm.clone()));
@@ -344,7 +343,6 @@ pub fn setup_chunk_driver(
             empty_air_offsets,
             empty_dirt_offsets,
             index_map_read_arc,
-            column_range_map_clone,
         );
     });
     let priority_queue = Arc::new((Mutex::new(BinaryHeap::new()), Condvar::new()));
@@ -398,6 +396,7 @@ pub fn setup_chunk_driver(
     commands.insert_resource(TerrainChunkMap(terrain_chunk_map));
 }
 
+//assume duplicate writes are impossible otherwise something went wrong
 fn dedicated_write_thread(
     rx: Receiver<WriteCmd>,
     index_map_delta: Arc<RwLock<FxHashMap<(i16, i16, i16), u64>>>,
@@ -408,7 +407,6 @@ fn dedicated_write_thread(
     mut air_empty_offsets: VecDeque<u64>,
     mut dirt_empty_offsets: VecDeque<u64>,
     chunk_index_map_read: Arc<FxHashMap<(i16, i16, i16), u64>>,
-    mut column_range_map: ColumnRangeMap, //track locally to avoid duplicate writes. //these are real time sets whereas the worker thread sets are initial snapshots. It may be worth using the arc here and storing a delta instead
 ) {
     let mut chunk_write_reuse = Vec::with_capacity(14); //sizeof (i16, i16, i16, u64)
     let mut serial_buffer = [0; CHUNK_SERIALIZED_SIZE];
@@ -451,26 +449,16 @@ fn dedicated_write_thread(
                 }
             }
             WriteCmd::WriteUniformAir { chunk_coord } => {
-                let uniformity = column_range_map.contains(chunk_coord);
-                if uniformity == Uniformity::Unknown {
-                    write_uniform_chunk(&chunk_coord, &mut air_file, &mut air_empty_offsets);
-                    column_range_map.insert(chunk_coord, Uniformity::Air);
-                }
+                write_uniform_chunk(&chunk_coord, &mut air_file, &mut air_empty_offsets);
             }
             WriteCmd::WriteUniformDirt { chunk_coord } => {
-                let uniformity = column_range_map.contains(chunk_coord);
-                if uniformity == Uniformity::Unknown {
-                    write_uniform_chunk(&chunk_coord, &mut dirt_file, &mut dirt_empty_offsets);
-                    column_range_map.insert(chunk_coord, Uniformity::Dirt);
-                }
+                write_uniform_chunk(&chunk_coord, &mut dirt_file, &mut dirt_empty_offsets);
             }
             WriteCmd::RemoveUniformAir { chunk_coord } => {
                 remove_uniform_chunk(&chunk_coord, &mut air_file, &mut air_empty_offsets);
-                column_range_map.remove(chunk_coord, Uniformity::Air);
             }
             WriteCmd::RemoveUniformDirt { chunk_coord } => {
                 remove_uniform_chunk(&chunk_coord, &mut dirt_file, &mut dirt_empty_offsets);
-                column_range_map.remove(chunk_coord, Uniformity::Dirt);
             }
         }
     }
@@ -529,6 +517,23 @@ fn chunk_loader_thread(
                     for chunk_y in min_chunk.1..min_chunk.1 + CHUNKS_PER_CLUSTER_DIM as i16 {
                         let chunk_coord = (chunk_x, chunk_y, chunk_z);
                         let mut uniformity = column_cache.uniformity_at_y(chunk_y);
+                        if uniformity == Uniformity::Air {
+                            //cache hit
+                            if in_simulation_range {
+                                let _ = terrain_chunk_map_insert_sender
+                                    .send((chunk_coord, TerrainChunk::UniformAir));
+                            }
+                            rolling += 1;
+                            continue;
+                        } else if uniformity == Uniformity::Dirt {
+                            //cache hit
+                            if in_simulation_range {
+                                let _ = terrain_chunk_map_insert_sender
+                                    .send((chunk_coord, TerrainChunk::UniformDirt));
+                            }
+                            rolling += 1;
+                            continue;
+                        }
                         let mut loaded_from_disk = false;
                         if uniformity == Uniformity::Unknown {
                             uniformity = try_load_chunk(
