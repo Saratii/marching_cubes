@@ -127,22 +127,27 @@ pub fn handle_digging_input(
                         .unwrap();
                         match entity {
                             //entity already existed, update it
-                            Some(entity) => {
-                                let (mut collider_component, mut mesh_handle) =
+                            Some((entity, mesh_handle)) => {
+                                let (mut collider_component, mut mesh) =
                                     solid_chunk_query.get_mut(*entity).unwrap();
                                 *collider_component = collider;
-                                mesh_handles.remove(&mesh_handle.0);
+                                mesh_handles.remove(mesh_handle);
                                 if let Some(aabb) = new_mesh.compute_aabb() {
                                     commands.entity(*entity).insert(aabb);
                                 }
-                                *mesh_handle = Mesh3d(mesh_handles.add(new_mesh));
+                                let new_mesh_handle = mesh_handles.add(new_mesh);
+                                *mesh = Mesh3d(new_mesh_handle.clone());
+                                terrain_io
+                                    .chunk_entity_map
+                                    .replace_mesh_handle(chunk_coord, new_mesh_handle);
                             }
                             //entity did not already exist
                             None => {
+                                let new_mesh_handle = mesh_handles.add(new_mesh);
                                 let new_entity = commands
                                     .spawn((
                                         collider,
-                                        Mesh3d(mesh_handles.add(new_mesh)),
+                                        Mesh3d(new_mesh_handle.clone()),
                                         MeshMaterial3d(material_handle.0.clone()),
                                         ChunkTag,
                                         Transform::from_translation(chunk_coord_to_world_pos(
@@ -150,13 +155,16 @@ pub fn handle_digging_input(
                                         )),
                                     ))
                                     .id();
-                                terrain_io.chunk_entity_map.insert(chunk_coord, new_entity);
+                                terrain_io
+                                    .chunk_entity_map
+                                    .insert(chunk_coord, (new_entity, new_mesh_handle));
                             }
                         }
                     } else {
                         //no geometry, remove existing entity if it exists
-                        if let Some(entity) = entity {
+                        if let Some((entity, mesh_handle)) = entity {
                             commands.entity(*entity).despawn();
+                            mesh_handles.remove(mesh_handle);
                             terrain_io.chunk_entity_map.remove(chunk_coord);
                         }
                     }

@@ -644,7 +644,8 @@ pub fn validate_player_spawn(
     let player_position = player_position_query.iter().next().unwrap();
     let player_chunk = world_pos_to_chunk_coord(&player_position.translation);
     for chunk_y in (player_chunk.1 - 10..=player_chunk.1).rev() {
-        if let Some(entity) = chunk_entity_map.get_option((player_chunk.0, chunk_y, player_chunk.2))
+        if let Some((entity, _)) =
+            chunk_entity_map.get_option((player_chunk.0, chunk_y, player_chunk.2))
         {
             if spawned_chunks_query.get(*entity).is_ok() {
                 INITIAL_CHUNKS_LOADED.store(true, Ordering::Relaxed);

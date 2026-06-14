@@ -801,7 +801,6 @@ pub fn chunk_spawn_reciever(
     mut mesh_handles: ResMut<Assets<Mesh>>,
     req_rx: Res<ChunkSpawnReciever>,
     mut chunk_entity_map: ResMut<ChunkEntityMap>,
-    mesh_handles_query: Query<&Mesh3d, With<ChunkTag>>,
     frame_start: Res<FrameStart>,
 ) {
     const TARGET_FRAME_TIME: Duration = Duration::from_nanos(1_000_000_000 / 90);
@@ -810,76 +809,66 @@ pub fn chunk_spawn_reciever(
     while let Ok(request) = req_rx.0.try_recv() {
         match request {
             ChunkSpawnResult::ToSpawn((chunk_coord, mesh)) => {
+                let mesh_handle = mesh_handles.add(mesh);
                 let entity = commands
                     .spawn((
-                        Mesh3d(mesh_handles.add(mesh)),
+                        Mesh3d(mesh_handle.clone()),
                         ChunkTag,
                         Transform::from_translation(chunk_coord_to_world_pos(&chunk_coord)),
                         MeshMaterial3d(standard_material.0.clone()),
                     ))
                     .id();
                 spawned_this_frame.insert(chunk_coord);
-                chunk_entity_map.insert(chunk_coord, entity);
+                chunk_entity_map.insert(chunk_coord, (entity, mesh_handle));
             }
             ChunkSpawnResult::ToGiveCollider((chunk_coord, collider)) => {
-                let entity = chunk_entity_map.get(chunk_coord);
+                let (entity, _) = chunk_entity_map.get(chunk_coord);
                 commands.entity(entity).insert(collider);
             }
             ChunkSpawnResult::ToRemoveCollider(chunk_coord) => {
-                let entity = chunk_entity_map.get(chunk_coord);
+                let (entity, _) = chunk_entity_map.get(chunk_coord);
                 commands.entity(entity).remove::<Collider>();
             }
             ChunkSpawnResult::ToDespawn(chunk_coord) => {
-                let entity = chunk_entity_map.remove(chunk_coord);
-                if let Ok(mesh_ref) = mesh_handles_query.get(entity) {
-                    mesh_handles.remove(&mesh_ref.0);
-                }
+                let (entity, mesh_handle) = chunk_entity_map.remove(chunk_coord);
+                mesh_handles.remove(&mesh_handle);
                 commands.entity(entity).despawn();
             }
             ChunkSpawnResult::ToChangeLodAddCollider((chunk_coord, new_mesh, new_collider)) => {
-                let entity = chunk_entity_map.get(chunk_coord);
-                let mesh_ref = mesh_handles_query.get(entity).unwrap();
+                let (entity, mesh_handle) = chunk_entity_map.get(chunk_coord);
                 if let Some(aabb) = new_mesh.compute_aabb() {
                     commands.entity(entity).insert(aabb);
                 }
-                mesh_handles.insert(&mesh_ref.0, new_mesh).unwrap();
+                mesh_handles.insert(&mesh_handle, new_mesh).unwrap();
                 commands.entity(entity).insert(new_collider);
             }
             ChunkSpawnResult::ToChangeLod((chunk_coord, new_mesh)) => {
-                #[cfg(feature = "debug")]
-                if spawned_this_frame.contains(&chunk_coord) {
-                    println!(
-                        "ToChangeLod for {:?} which was spawned this frame",
-                        chunk_coord
-                    );
-                }
-                let entity = chunk_entity_map.get(chunk_coord);
-                let mesh_ref = mesh_handles_query.get(entity).unwrap();
+                let (entity, mesh_handle) = chunk_entity_map.get(chunk_coord);
                 if let Some(aabb) = new_mesh.compute_aabb() {
                     commands.entity(entity).insert(aabb);
                 }
-                mesh_handles.insert(&mesh_ref.0, new_mesh).unwrap();
+                mesh_handles.insert(&mesh_handle, new_mesh).unwrap();
             }
             ChunkSpawnResult::ToChangeLodRemoveCollider((chunk_coord, new_mesh)) => {
-                let entity = chunk_entity_map.get(chunk_coord);
-                let mesh_ref = mesh_handles_query.get(entity).unwrap();
+                let (entity, mesh_handle) = chunk_entity_map.get(chunk_coord);
                 if let Some(aabb) = new_mesh.compute_aabb() {
                     commands.entity(entity).insert(aabb);
                 }
-                mesh_handles.insert(&mesh_ref.0, new_mesh).unwrap();
+                mesh_handles.insert(&mesh_handle, new_mesh).unwrap();
                 commands.entity(entity).remove::<Collider>();
             }
             ChunkSpawnResult::ToSpawnWithCollider((chunk_coord, collider, mesh)) => {
+                let mesh_handle = mesh_handles.add(mesh);
                 let entity = commands
                     .spawn((
-                        Mesh3d(mesh_handles.add(mesh)),
+                        Mesh3d(mesh_handle.clone()),
                         collider,
                         ChunkTag,
                         Transform::from_translation(chunk_coord_to_world_pos(&chunk_coord)),
                         MeshMaterial3d(standard_material.0.clone()),
                     ))
                     .id();
-                chunk_entity_map.insert(chunk_coord, entity);
+                chunk_entity_map.insert(chunk_coord, (entity, mesh_handle));
             }
         }
         if frame_start.0.elapsed() >= TARGET_FRAME_TIME {
