@@ -3,9 +3,10 @@ use crate::terrain::chunk_generator::{
     compute_heightmap_gradients, fast_get_uniformity, generate_terrain_heights,
     padded_chunk_contains_surface,
 };
+use crate::ui::driver_debug_ui::QUEUE_SIZE;
 #[cfg(feature = "debug")]
 use crate::ui::driver_debug_ui::{
-    CHUNK_SPAWN_RECEIVER_QUEUE_SIZE, INTERNAL_QUEUE_SIZES, QUEUE_SIZE,
+    CHUNK_SPAWN_RECEIVER_QUEUE_SIZE, CLUSTERS_PROCESSED, INTERNAL_QUEUE_SIZES,
 };
 use crate::{
     constants::SAMPLES_PER_CHUNK_PADDED, terrain::chunk_generator::generate_noise_height_samples,
@@ -71,6 +72,8 @@ pub const RF2_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF2;
 pub const RF3_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF3;
 pub const RF4_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF4;
 pub const RF5_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF5;
+const PRIORITY_QUEUE_MAX_SIZE: usize = 10000;
+const INTERNAL_WORKER_QUEUE_SIZE: usize = 64;
 
 //I dont like this but, block player movement until first chunk load happens
 pub static INITIAL_CHUNKS_LOADED: AtomicBool = AtomicBool::new(false);
@@ -493,21 +496,19 @@ fn chunk_loader_thread(
     priority_queue: Arc<(Mutex<BinaryHeap<ClusterRequest>>, Condvar)>,
     terrain_chunk_map_modification_sender: Sender<TerrainChunkMapModification>,
 ) {
-    const PROCESS_BATCH_SIZE: usize = 64;
     let mut lod_buffers = LodBuffers::new();
     let mut chunk_buffers = ChunkBuffers::new();
-    let mut internal_queue = Vec::with_capacity(PROCESS_BATCH_SIZE);
+    let mut internal_queue = Vec::with_capacity(INTERNAL_WORKER_QUEUE_SIZE);
     loop {
         let (binary_heap_lock, condvar) = &*priority_queue;
         let mut binary_heap = binary_heap_lock.lock().unwrap();
         while binary_heap.is_empty() {
             binary_heap = condvar.wait(binary_heap).unwrap();
         }
-        let num_to_pop = binary_heap.len().min(PROCESS_BATCH_SIZE);
+        let num_to_pop = binary_heap.len().min(INTERNAL_WORKER_QUEUE_SIZE);
         for _ in 0..num_to_pop {
             internal_queue.push(binary_heap.pop().unwrap());
         }
-        #[cfg(feature = "debug")]
         QUEUE_SIZE.store(binary_heap.len(), Ordering::Relaxed);
         drop(binary_heap);
         #[cfg(feature = "debug")]
@@ -663,6 +664,8 @@ fn chunk_loader_thread(
                 cluster_coord: cluster_request.position,
                 load_state: new_state,
             });
+            #[cfg(feature = "debug")]
+            CLUSTERS_PROCESSED.fetch_add(1, Ordering::Relaxed);
         }
     }
 }
@@ -696,6 +699,12 @@ fn svo_manager_thread(
         &chunks_being_loaded,
         &mut request_buffer,
     );
+    request_buffer.sort_unstable_by(|a, b| {
+        a.distance_squared
+            .partial_cmp(&b.distance_squared)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    request_buffer.truncate(10000);
     for request in &request_buffer {
         chunks_being_loaded.insert(request.position);
     }
@@ -705,7 +714,6 @@ fn svo_manager_thread(
         for request in request_buffer.drain(..) {
             binary_heap.push(request);
         }
-        #[cfg(feature = "debug")]
         QUEUE_SIZE.store(binary_heap.len(), Ordering::Relaxed);
     }
     condvar.notify_all();
@@ -764,25 +772,33 @@ fn svo_manager_thread(
             roller = 0;
         }
         drop(terrain_map_lock);
-        svo.fill_missing_chunks_in_radius(
-            &player_translation,
-            f32::from_bits(RENDER_RADIUS_SQUARED.load(Ordering::Relaxed)),
-            &chunks_being_loaded,
-            &mut request_buffer,
-        );
-        for request in &request_buffer {
-            chunks_being_loaded.insert(request.position);
-        }
-        let (binary_heap_lock, condvar) = &*priority_queue;
-        {
-            let mut binary_heap = binary_heap_lock.lock().unwrap();
-            for request in request_buffer.drain(..) {
-                binary_heap.push(request);
+        if QUEUE_SIZE.load(Ordering::Relaxed) < PRIORITY_QUEUE_MAX_SIZE {
+            svo.fill_missing_chunks_in_radius(
+                &player_translation,
+                f32::from_bits(RENDER_RADIUS_SQUARED.load(Ordering::Relaxed)),
+                &chunks_being_loaded,
+                &mut request_buffer,
+            );
+            request_buffer.sort_unstable_by(|a, b| {
+                a.distance_squared
+                    .partial_cmp(&b.distance_squared)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let cap = 10000usize.saturating_sub(QUEUE_SIZE.load(Ordering::Relaxed));
+            request_buffer.truncate(cap);
+            for request in &request_buffer {
+                chunks_being_loaded.insert(request.position);
             }
-            #[cfg(feature = "debug")]
-            QUEUE_SIZE.store(binary_heap.len(), Ordering::Relaxed);
+            let (binary_heap_lock, condvar) = &*priority_queue;
+            {
+                let mut binary_heap = binary_heap_lock.lock().unwrap();
+                for request in request_buffer.drain(..) {
+                    binary_heap.push(request);
+                }
+                QUEUE_SIZE.store(binary_heap.len(), Ordering::Relaxed);
+            }
+            condvar.notify_all();
         }
-        condvar.notify_all();
         #[cfg(feature = "timers")]
         {
             if !first_completion_printed && chunks_being_loaded.is_empty() {

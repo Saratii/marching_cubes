@@ -8,6 +8,7 @@ use std::sync::{
 pub static QUEUE_SIZE: AtomicUsize = AtomicUsize::new(0);
 pub static CHUNK_SPAWN_RECEIVER_QUEUE_SIZE: AtomicUsize = AtomicUsize::new(0);
 pub static INTERNAL_QUEUE_SIZES: OnceLock<Box<[AtomicUsize]>> = OnceLock::new();
+pub static CLUSTERS_PROCESSED: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Component)]
 pub struct PriorityQueueSizeText;
@@ -95,27 +96,26 @@ pub fn update_debug_texts(
     time: Res<Time>,
 ) {
     if let Ok(mut text) = queue_text.single_mut() {
-        let current = QUEUE_SIZE.load(Ordering::Relaxed);
-        let (prev_size, accum_secs, instant_rate, initialized) = &mut *rate_state;
+        let (prev_processed, accum_secs, instant_rate, initialized) = &mut *rate_state;
         *accum_secs += time.delta_secs();
-        if current == 0 {
-            *instant_rate = 0.0;
-        }
+        let current_queue = QUEUE_SIZE.load(Ordering::Relaxed);
+        let current_processed = CLUSTERS_PROCESSED.load(Ordering::Relaxed);
         if *accum_secs >= 0.5 {
             if *initialized {
-                *instant_rate = (current as f32 - *prev_size as f32) / *accum_secs;
+                let delta = current_processed.wrapping_sub(*prev_processed) as f32;
+                *instant_rate = delta / *accum_secs;
             } else {
                 *initialized = true;
             }
-            *prev_size = current;
+            *prev_processed = current_processed;
             *accum_secs = 0.0;
         }
         text.0 = if *instant_rate == 0.0 {
-            format!("Pending Request Queue: {}", current)
+            format!("Pending Request Queue: {:>5}", current_queue)
         } else {
             format!(
-                "Pending Request Queue: {} ({:+.0}/s)",
-                current, *instant_rate
+                "Pending Request Queue: {:>5} ( -{:0>5.0} clusters/s)",
+                current_queue, *instant_rate
             )
         };
     }

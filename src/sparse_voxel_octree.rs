@@ -96,14 +96,6 @@ impl SvoNode {
         load_state: LoadState,
     ) {
         if self.size == 1 {
-            #[cfg(feature = "debug")]
-            assert!(
-                self.chunk.is_none(),
-                "Overwriting existing chunk at {:?}, existing state: {:?}, incoming state: {:?}",
-                coord,
-                self.chunk.as_ref().unwrap().1,
-                load_state
-            );
             self.chunk = Some((has_entity, load_state));
             return;
         }
@@ -233,7 +225,6 @@ impl SvoNode {
                         let prev_has_entity = self.chunk.as_ref().unwrap().0;
                         let prev_in_simulation_radius =
                             current_load_state == LoadState::FullWithCollider;
-                        self.chunk = None;
                         request_buffer.push(ClusterRequest {
                             position: self.lower_cluster_coord,
                             distance_squared,

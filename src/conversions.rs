@@ -75,9 +75,10 @@ pub fn cluster_coord_to_min_chunk_coord(cluster_coord: (i16, i16, i16)) -> (i16,
 
 #[inline(always)]
 pub fn cluster_coord_to_world_center(c: &(i16, i16, i16)) -> Vec3 {
+    let half_offset = (CHUNKS_PER_CLUSTER_DIM as f32 - 1.0) * 0.5 * CHUNK_WORLD_SIZE;
     Vec3::new(
-        c.0 as f32 * CLUSTER_WORLD_LENGTH + CLUSTER_WORLD_LENGTH * 0.5,
-        c.1 as f32 * CLUSTER_WORLD_LENGTH + CLUSTER_WORLD_LENGTH * 0.5,
-        c.2 as f32 * CLUSTER_WORLD_LENGTH + CLUSTER_WORLD_LENGTH * 0.5,
+        c.0 as f32 * CLUSTER_WORLD_LENGTH + half_offset,
+        c.1 as f32 * CLUSTER_WORLD_LENGTH + half_offset,
+        c.2 as f32 * CLUSTER_WORLD_LENGTH + half_offset,
     )
 }

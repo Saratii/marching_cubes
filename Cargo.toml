@@ -9,7 +9,7 @@ rand = "0.9.2"
 criterion = "0.7.0"
 fastnoise2 = "0.3.2"
 mimalloc = "0.1.48"
-bevy_rapier3d = { path = "C:/Programming/bevy_rapier/bevy_rapier3d", features = [ "simd-stable", "debug-render" ] }
+bevy_rapier3d = { version = "0.34.0", features = [ "simd-stable", "debug-render" ] }
 serde_json = "1.0.145"
 serde = "1.0.228"
 crossbeam-channel = "0.5.15"
