@@ -70,7 +70,7 @@ pub fn handle_digging_input(
     if should_dig {
         if let Some(cursor_pos) = window.iter().next().unwrap().cursor_position() {
             let (camera, camera_transform) = camera.iter().next().unwrap();
-            if let Some((world_pos, _, _)) = screen_to_world_ray(
+            if let Some(world_pos) = screen_to_world_ray(
                 cursor_pos,
                 camera,
                 camera_transform,
@@ -294,7 +294,7 @@ fn screen_to_world_ray(
     camera: &Camera,
     camera_transform: &GlobalTransform,
     terrain_chunk_map: &TerrainChunkMap,
-) -> Option<(Vec3, Vec3, (i16, i16, i16))> {
+) -> Option<Vec3> {
     let ray = camera
         .viewport_to_world(camera_transform, cursor_pos)
         .unwrap();
@@ -307,13 +307,10 @@ fn screen_to_world_ray(
         let chunk_coord = world_pos_to_chunk_coord(&current_pos);
         if let Some(chunk_data) = terrain_chunk_map.0.lock().unwrap().get(&chunk_coord) {
             let voxel_idx = world_pos_to_voxel_index(&current_pos, &chunk_coord);
-            let chunk_world_pos = chunk_coord_to_world_pos(&chunk_coord);
             if chunk_data.is_solid(voxel_idx.0, voxel_idx.1, voxel_idx.2) {
-                return Some((current_pos, chunk_world_pos, chunk_coord));
+                return Some(current_pos);
             }
             distance_traveled += step_size;
-        } else {
-            break;
         }
     }
     None

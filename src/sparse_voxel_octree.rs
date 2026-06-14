@@ -212,12 +212,14 @@ impl SvoNode {
                     {
                         return; //skip chunks where the sphere intersects but chunk center is outside max radius
                     }
-                    let load_state_transition = get_load_state_transition_first(distance_squared);
+                    let load_state_transition =
+                        get_load_state_transition(None, get_desired_state(distance_squared));
                     request_buffer.push(ClusterRequest {
                         position: self.lower_cluster_coord,
                         distance_squared,
                         load_state_transition,
                         prev_has_entity: None,
+                        prev_in_simulation_radius: false,
                     });
                 } else if !chunks_being_loaded.contains(&self.lower_cluster_coord) {
                     //chunk already existed
@@ -226,17 +228,18 @@ impl SvoNode {
                         .distance_squared(cluster_coord_to_world_center(&self.lower_cluster_coord));
                     let desired_load_state = get_desired_state(distance_squared);
                     if desired_load_state != current_load_state {
-                        let load_state_transition = get_load_state_transition_from_states(
-                            current_load_state,
-                            desired_load_state,
-                        );
+                        let load_state_transition =
+                            get_load_state_transition(Some(current_load_state), desired_load_state);
                         let prev_has_entity = self.chunk.as_ref().unwrap().0;
+                        let prev_in_simulation_radius =
+                            current_load_state == LoadState::FullWithCollider;
                         self.chunk = None;
                         request_buffer.push(ClusterRequest {
                             position: self.lower_cluster_coord,
                             distance_squared,
                             load_state_transition,
                             prev_has_entity: Some(prev_has_entity),
+                            prev_in_simulation_radius,
                         });
                     }
                 }
@@ -377,14 +380,14 @@ pub fn sphere_intersects_aabb(center: &Vec3, radius_squared: f32, min: &Vec3, ma
 }
 
 #[inline(always)]
-fn get_load_state_transition_from_states(
-    current: LoadState,
+fn get_load_state_transition(
+    current: Option<LoadState>,
     desired: LoadState,
 ) -> LoadStateTransition {
-    #[cfg(feature = "debug")]
-    assert!(desired != current);
     match (current, desired) {
-        (LoadState::Full, LoadState::FullWithCollider) => LoadStateTransition::NoChangeAddCollider,
+        (Some(LoadState::Full), LoadState::FullWithCollider) => {
+            LoadStateTransition::NoChangeAddCollider
+        }
         (_, LoadState::FullWithCollider) => LoadStateTransition::ToFullWithCollider,
         (_, LoadState::Full) => LoadStateTransition::ToFull,
         (_, LoadState::Lod1) => LoadStateTransition::ToLod1,
@@ -392,28 +395,6 @@ fn get_load_state_transition_from_states(
         (_, LoadState::Lod3) => LoadStateTransition::ToLod3,
         (_, LoadState::Lod4) => LoadStateTransition::ToLod4,
         (_, LoadState::Lod5) => LoadStateTransition::ToLod5,
-    }
-}
-
-//assume no current state
-#[inline(always)]
-fn get_load_state_transition_first(distance_squared: f32) -> LoadStateTransition {
-    if distance_squared > REDUCED_LOD_5_RADIUS_SQUARED {
-        LoadStateTransition::ToLod5
-    } else if distance_squared > REDUCED_LOD_4_RADIUS_SQUARED {
-        LoadStateTransition::ToLod4
-    } else if distance_squared > REDUCED_LOD_3_RADIUS_SQUARED {
-        LoadStateTransition::ToLod3
-    } else if distance_squared > REDUCED_LOD_2_RADIUS_SQUARED {
-        LoadStateTransition::ToLod2
-    } else if distance_squared > REDUCED_LOD_1_RADIUS_SQUARED {
-        LoadStateTransition::ToLod1
-    } else if distance_squared <= SIMULATION_RADIUS_SQUARED {
-        //not in full lod and needs collider
-        return LoadStateTransition::ToFullWithCollider;
-    } else {
-        //in full lod but out of simulation range
-        LoadStateTransition::ToFull
     }
 }
 

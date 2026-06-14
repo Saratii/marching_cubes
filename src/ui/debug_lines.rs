@@ -19,6 +19,10 @@ use crate::{
     ui::configurable_settings::ConfigurableSettings,
 };
 
+const CHUNKS_WITH_COLLIDER_COLOR: Color = Color::srgb(1.0, 0.0, 0.0);
+const CHUNKS_IN_CHUNK_MAP_COLOR: Color = Color::srgba(0.0, 0.5, 1.0, 0.6);
+const CLUSTER_COLOR: Color = Color::srgb(0.0, 1.0, 0.0);
+
 pub fn draw_lod_debug(
     mut gizmos: Gizmos,
     player_transform_query: Query<&Transform, With<PlayerTag>>,
@@ -55,7 +59,7 @@ pub fn draw_collider_debug(
         gizmos.cube(
             Transform::from_translation(transform.translation)
                 .with_scale(Vec3::splat(CHUNK_WORLD_SIZE)),
-            Color::srgb(1.0, 0.0, 0.0),
+            CHUNKS_WITH_COLLIDER_COLOR,
         );
     }
     let terrain_chunk_map_lock = terrain_chunk_map.0.lock().unwrap();
@@ -64,7 +68,7 @@ pub fn draw_collider_debug(
         gizmos.cube(
             Transform::from_translation(chunk_world_pos)
                 .with_scale(Vec3::splat(CHUNK_WORLD_SIZE as f32)),
-            Color::srgba(0.0, 0.5, 1.0, 0.6),
+            CHUNKS_IN_CHUNK_MAP_COLOR,
         );
     }
 }
@@ -86,7 +90,7 @@ pub fn draw_cluster_debug(
             gizmos.cube(
                 Transform::from_translation(cluster_world_pos)
                     .with_scale(Vec3::splat(CLUSTER_WORLD_LENGTH)),
-                Color::srgb(0.0, 1.0, 0.0),
+                CLUSTER_COLOR,
             );
         }
     }

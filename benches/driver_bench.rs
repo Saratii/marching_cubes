@@ -54,6 +54,7 @@ fn benchmark_build_full_mesh_and_spawn_with_collider(c: &mut Criterion) {
         distance_squared: 0.0,                              //shouldnt matter
         load_state_transition: LoadStateTransition::ToFull, //shouldnt matter
         prev_has_entity: None,
+        prev_had_collider: false,
     };
     let (chunk_spawn_sender, _chunk_spawn_reciever) = unbounded::<ChunkSpawnResult>();
     assert_eq!(uniformity, Uniformity::NonUniform);
@@ -97,6 +98,7 @@ fn benchmark_build_full_mesh_and_spawn_no_collider(c: &mut Criterion) {
         distance_squared: 0.0,                              //shouldnt matter
         load_state_transition: LoadStateTransition::ToFull, //shouldnt matter
         prev_has_entity: None,
+        prev_had_collider: false,
     };
     let (chunk_spawn_sender, _chunk_spawn_reciever) = unbounded::<ChunkSpawnResult>();
     assert_eq!(uniformity, Uniformity::NonUniform);
@@ -135,6 +137,7 @@ fn bench_resolve_has_surface_lod5(c: &mut Criterion) {
         distance_squared: 0.0, //shouldnt matter
         load_state_transition: LoadStateTransition::ToLod5,
         prev_has_entity: None, //shouldnt matter
+        prev_had_collider: false,
     };
     let (chunk_spawn_sender, _chunk_spawn_reciever) = unbounded::<ChunkSpawnResult>();
     c.bench_function("resolve_has_surface_lod5", |b| {
@@ -170,6 +173,7 @@ fn bench_resolve_has_surface_lod1(c: &mut Criterion) {
         distance_squared: 0.0, //shouldnt matter
         load_state_transition: LoadStateTransition::ToLod1,
         prev_has_entity: None, //shouldnt matter
+        prev_had_collider: false,
     };
     let (chunk_spawn_sender, _chunk_spawn_reciever) = unbounded::<ChunkSpawnResult>();
     c.bench_function("resolve_has_surface_lod1", |b| {
@@ -205,6 +209,7 @@ fn bench_resolve_has_surface_full_collider(c: &mut Criterion) {
         distance_squared: 0.0, //shouldnt matter
         load_state_transition: LoadStateTransition::ToFullWithCollider,
         prev_has_entity: None, //shouldnt matter
+        prev_had_collider: false,
     };
     let (chunk_spawn_sender, _chunk_spawn_reciever) = unbounded::<ChunkSpawnResult>();
     c.bench_function("resolve_has_surface_full_collider", |b| {

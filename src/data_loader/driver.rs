@@ -1,3 +1,4 @@
+use crate::conversions::{chunk_coord_to_cluster_coord, cluster_coord_to_world_center};
 use crate::terrain::chunk_generator::{
     compute_heightmap_gradients, fast_get_uniformity, generate_terrain_heights,
     padded_chunk_contains_surface,
@@ -74,10 +75,17 @@ pub const RF5_SAMPLES_PER_CHUNK_DIM: usize = SAMPLES_PER_CHUNK_DIM / RF5;
 //I dont like this but, block player movement until first chunk load happens
 pub static INITIAL_CHUNKS_LOADED: AtomicBool = AtomicBool::new(false);
 
+#[repr(u8)]
 pub enum FullLodMode {
     NoCollider,
     WithCollider,
     AddColliderToExisting,
+}
+
+#[repr(u8)]
+pub enum TerrainChunkMapModification {
+    Insert((i16, i16, i16), TerrainChunk),
+    Remove((i16, i16, i16)),
 }
 
 pub struct ChunkBuffers {
@@ -178,6 +186,8 @@ pub enum ChunkSpawnResult {
     ToGiveCollider(((i16, i16, i16), Collider)), //same lod but now needs a collider
     ToChangeLod(((i16, i16, i16), Mesh)), //change mesh, assume it has no collider and doesnt need one
     ToChangeLodAddCollider(((i16, i16, i16), Mesh, Collider)), //when its both changing LOD and now needs a collider
+    ToChangeLodRemoveCollider(((i16, i16, i16), Mesh)), //had collider and becoming lod therefor no longer needs collider
+    ToRemoveCollider((i16, i16, i16)), //was full, still full except no longer needs collider
 }
 
 pub enum WriteCmd {
@@ -208,7 +218,8 @@ pub struct ClusterRequest {
     pub position: (i16, i16, i16),
     pub distance_squared: f32, //distance to cluster center in world units
     pub load_state_transition: LoadStateTransition,
-    pub prev_has_entity: Option<[bool; CHUNKS_PER_CLUSTER]>, //this is needed for the off chance that resolution change causes there to be a new surface
+    pub prev_has_entity: Option<[bool; CHUNKS_PER_CLUSTER]>,
+    pub prev_in_simulation_radius: bool, //if in sim radius and had entity, it also had a collider
 }
 
 impl PartialEq for ClusterRequest {
@@ -325,7 +336,7 @@ pub fn setup_chunk_driver(
     let t0 = Instant::now();
     let index_map_read = Arc::new(load_chunk_index_map(&mut chunk_index_file));
     let index_map_read_arc = Arc::clone(&index_map_read);
-    let (terrain_chunk_map_insert_sender, terrain_chunk_map_insert_reciever) =
+    let (terrain_chunk_map_modification_sender, terrain_chunk_map_modification_reciever) =
         crossbeam_channel::unbounded();
     println!(
         "Loaded {} chunks into index map in {} ms.",
@@ -360,7 +371,8 @@ pub fn setup_chunk_driver(
         let column_range_map_read_only = Arc::clone(&column_range_map);
         let write_sender_clone = write_tx.clone();
         let priority_queue_arc = Arc::clone(&priority_queue);
-        let terrain_chunk_map_insert_sender_clone = terrain_chunk_map_insert_sender.clone();
+        let terrain_chunk_map_modification_sender_clone =
+            terrain_chunk_map_modification_sender.clone();
         let _handle = thread::Builder::new()
             .name(format!("chunk_loader_{thread_idx}"))
             .spawn(move || {
@@ -375,7 +387,7 @@ pub fn setup_chunk_driver(
                     column_range_map_read_only,
                     write_sender_clone,
                     priority_queue_arc,
-                    terrain_chunk_map_insert_sender_clone,
+                    terrain_chunk_map_modification_sender_clone,
                 );
             })
             .expect("failed to spawn chunk loader thread");
@@ -389,7 +401,8 @@ pub fn setup_chunk_driver(
             svo,
             priority_queue,
             terrain_chunk_map_arc,
-            terrain_chunk_map_insert_reciever,
+            terrain_chunk_map_modification_reciever,
+            terrain_chunk_map_modification_sender,
         );
     });
     commands.insert_resource(WriteCmdSender(write_tx));
@@ -478,7 +491,7 @@ fn chunk_loader_thread(
     column_range_map_read_only: Arc<ColumnRangeMap>,
     write_sender: Sender<WriteCmd>,
     priority_queue: Arc<(Mutex<BinaryHeap<ClusterRequest>>, Condvar)>,
-    terrain_chunk_map_insert_sender: Sender<((i16, i16, i16), TerrainChunk)>,
+    terrain_chunk_map_modification_sender: Sender<TerrainChunkMapModification>,
 ) {
     const PROCESS_BATCH_SIZE: usize = 64;
     let mut lod_buffers = LodBuffers::new();
@@ -520,16 +533,24 @@ fn chunk_loader_thread(
                         if uniformity == Uniformity::Air {
                             //cache hit
                             if in_simulation_range {
-                                let _ = terrain_chunk_map_insert_sender
-                                    .send((chunk_coord, TerrainChunk::UniformAir));
+                                let _ = terrain_chunk_map_modification_sender.send(
+                                    TerrainChunkMapModification::Insert(
+                                        chunk_coord,
+                                        TerrainChunk::UniformAir,
+                                    ),
+                                );
                             }
                             rolling += 1;
                             continue;
                         } else if uniformity == Uniformity::Dirt {
                             //cache hit
                             if in_simulation_range {
-                                let _ = terrain_chunk_map_insert_sender
-                                    .send((chunk_coord, TerrainChunk::UniformDirt));
+                                let _ = terrain_chunk_map_modification_sender.send(
+                                    TerrainChunkMapModification::Insert(
+                                        chunk_coord,
+                                        TerrainChunk::UniformDirt,
+                                    ),
+                                );
                             }
                             rolling += 1;
                             continue;
@@ -578,16 +599,24 @@ fn chunk_loader_thread(
                                 let _ =
                                     write_sender.send(WriteCmd::WriteUniformAir { chunk_coord });
                                 if in_simulation_range {
-                                    let _ = terrain_chunk_map_insert_sender
-                                        .send((chunk_coord, TerrainChunk::UniformAir));
+                                    let _ = terrain_chunk_map_modification_sender.send(
+                                        TerrainChunkMapModification::Insert(
+                                            chunk_coord,
+                                            TerrainChunk::UniformAir,
+                                        ),
+                                    );
                                 }
                             }
                             Uniformity::Dirt => {
                                 let _ =
                                     write_sender.send(WriteCmd::WriteUniformDirt { chunk_coord });
                                 if in_simulation_range {
-                                    let _ = terrain_chunk_map_insert_sender
-                                        .send((chunk_coord, TerrainChunk::UniformDirt));
+                                    let _ = terrain_chunk_map_modification_sender.send(
+                                        TerrainChunkMapModification::Insert(
+                                            chunk_coord,
+                                            TerrainChunk::UniformDirt,
+                                        ),
+                                    );
                                 }
                             }
                             Uniformity::NonUniform => {
@@ -603,16 +632,22 @@ fn chunk_loader_thread(
                                     &chunk_spawn_channel,
                                 );
                                 if in_simulation_range {
-                                    let _ = terrain_chunk_map_insert_sender.send((
-                                        chunk_coord,
-                                        TerrainChunk::NonUniformTerrainChunk(
-                                            NonUniformTerrainChunk {
-                                                //allocation here
-                                                densities: Arc::from(&chunk_buffers.density[..]),
-                                                materials: Arc::from(&chunk_buffers.material[..]),
-                                            },
+                                    let _ = terrain_chunk_map_modification_sender.send(
+                                        TerrainChunkMapModification::Insert(
+                                            chunk_coord,
+                                            TerrainChunk::NonUniformTerrainChunk(
+                                                NonUniformTerrainChunk {
+                                                    //allocation here
+                                                    densities: Arc::from(
+                                                        &chunk_buffers.density[..],
+                                                    ),
+                                                    materials: Arc::from(
+                                                        &chunk_buffers.material[..],
+                                                    ),
+                                                },
+                                            ),
                                         ),
-                                    ));
+                                    );
                                 }
                                 has_entity_buffer[rolling] = has_surface;
                             }
@@ -643,7 +678,8 @@ fn svo_manager_thread(
     mut svo: SvoNode,
     priority_queue: Arc<(Mutex<BinaryHeap<ClusterRequest>>, Condvar)>,
     terrain_chunk_map: Arc<Mutex<FxHashMap<(i16, i16, i16), TerrainChunk>>>,
-    terrain_chunk_map_insert_reciever: Receiver<((i16, i16, i16), TerrainChunk)>,
+    terrain_chunk_map_modification_reciever: Receiver<TerrainChunkMapModification>,
+    terrain_chunk_map_modification_sender: Sender<TerrainChunkMapModification>,
 ) {
     #[cfg(feature = "timers")]
     let t0 = Instant::now();
@@ -675,18 +711,34 @@ fn svo_manager_thread(
     condvar.notify_all();
     let mut clusters_to_deallocate = Vec::new();
     loop {
+        let player_translation_lock = player_translation.lock().unwrap();
+        let player_translation = *player_translation_lock;
+        drop(player_translation_lock);
         let mut terrain_map_lock = terrain_chunk_map.lock().unwrap();
-        while let Ok((chunk_coord, terrain_chunk)) = terrain_chunk_map_insert_reciever.try_recv() {
-            terrain_map_lock.insert(chunk_coord, terrain_chunk);
+        while let Ok(modification) = terrain_chunk_map_modification_reciever.try_recv() {
+            match modification {
+                TerrainChunkMapModification::Insert(chunk_coord, terrain_chunk) => {
+                    terrain_map_lock.insert(chunk_coord, terrain_chunk);
+                }
+                TerrainChunkMapModification::Remove(chunk_coord) => {
+                    terrain_map_lock.remove(&chunk_coord);
+                }
+            }
+        }
+        for chunk_coord in terrain_map_lock.keys() {
+            let lower_cluster_coord = chunk_coord_to_cluster_coord(chunk_coord);
+            let distance_squared = player_translation
+                .distance_squared(cluster_coord_to_world_center(&lower_cluster_coord));
+            if distance_squared > SIMULATION_RADIUS_SQUARED {
+                let _ = terrain_chunk_map_modification_sender
+                    .send(TerrainChunkMapModification::Remove(*chunk_coord));
+            }
         }
         drop(terrain_map_lock);
         while let Ok(result) = results_channel.try_recv() {
             svo.insert(result.cluster_coord, result.has_entity, result.load_state);
             chunks_being_loaded.remove(&result.cluster_coord);
         }
-        let player_translation_lock = player_translation.lock().unwrap();
-        let player_translation = *player_translation_lock;
-        drop(player_translation_lock);
         svo.query_chunks_outside_sphere(&player_translation, &mut clusters_to_deallocate);
         for (chunk_coord, _) in &clusters_to_deallocate {
             svo.delete(*chunk_coord);
@@ -773,6 +825,10 @@ pub fn chunk_spawn_reciever(
                 let entity = chunk_entity_map.get(chunk_coord);
                 commands.entity(entity).insert(collider);
             }
+            ChunkSpawnResult::ToRemoveCollider(chunk_coord) => {
+                let entity = chunk_entity_map.get(chunk_coord);
+                commands.entity(entity).remove::<Collider>();
+            }
             ChunkSpawnResult::ToDespawn(chunk_coord) => {
                 let entity = chunk_entity_map.remove(chunk_coord);
                 if let Ok(mesh_ref) = mesh_handles_query.get(entity) {
@@ -804,6 +860,15 @@ pub fn chunk_spawn_reciever(
                 }
                 mesh_handles.insert(&mesh_ref.0, new_mesh).unwrap();
             }
+            ChunkSpawnResult::ToChangeLodRemoveCollider((chunk_coord, new_mesh)) => {
+                let entity = chunk_entity_map.get(chunk_coord);
+                let mesh_ref = mesh_handles_query.get(entity).unwrap();
+                if let Some(aabb) = new_mesh.compute_aabb() {
+                    commands.entity(entity).insert(aabb);
+                }
+                mesh_handles.insert(&mesh_ref.0, new_mesh).unwrap();
+                commands.entity(entity).remove::<Collider>();
+            }
             ChunkSpawnResult::ToSpawnWithCollider((chunk_coord, collider, mesh)) => {
                 let entity = commands
                     .spawn((
@@ -828,6 +893,7 @@ pub fn chunk_spawn_reciever(
 //downscales to new resolution from full resolution
 //searches downscaled densities for surface
 //if has surface runs marching cubes, generates mesh, and sends either a spawn command or a change lod command based on if it was previously loaded or not
+//if going from full within simulation radius to an lod, send remove from chunk map command
 //returns if the reduced chunk contains a surface
 fn process_lod(
     density_buffer: &[i16],
@@ -838,6 +904,7 @@ fn process_lod(
     reduced_material_buffer: &mut [MaterialCode],
     out_samples_per_chunk_dim: usize,
     had_entity: bool,
+    prev_in_simulation_radius: bool,
 ) -> bool {
     downscale(
         density_buffer,
@@ -862,7 +929,14 @@ fn process_lod(
     );
     let mesh = generate_bevy_mesh(vertices, normals, material_ids, indices);
     if had_entity {
-        let _ = chunk_spawn_channel.send(ChunkSpawnResult::ToChangeLod((chunk_coord, mesh)));
+        if prev_in_simulation_radius {
+            let _ = chunk_spawn_channel.send(ChunkSpawnResult::ToChangeLodRemoveCollider((
+                chunk_coord,
+                mesh,
+            )));
+        } else {
+            let _ = chunk_spawn_channel.send(ChunkSpawnResult::ToChangeLod((chunk_coord, mesh)));
+        }
     } else {
         let _ = chunk_spawn_channel.send(ChunkSpawnResult::ToSpawn((chunk_coord, mesh)));
     }
@@ -905,6 +979,15 @@ pub fn resolve_has_surface(
     rolling: usize,
     chunk_spawn_channel: &Sender<ChunkSpawnResult>,
 ) -> bool {
+    if cluster_request.prev_in_simulation_radius
+        && cluster_request.load_state_transition == LoadStateTransition::ToFull
+    {
+        let had_entity = cluster_request.had_entity(rolling);
+        if had_entity {
+            let _ = chunk_spawn_channel.send(ChunkSpawnResult::ToRemoveCollider(chunk_coord));
+        }
+        return had_entity;
+    }
     if !chunk_contains_surface(&chunk_buffers.density) {
         return false; //surface scan is faster than downscaling and early exit will apply to the majority of chunks. Produces false positives handled later. 
     }
@@ -921,6 +1004,7 @@ pub fn resolve_has_surface(
                 &mut lod_buffers.material_r5,
                 RF5_SAMPLES_PER_CHUNK_DIM,
                 had_entity,
+                cluster_request.prev_in_simulation_radius,
             )
         }
         LoadStateTransition::ToLod4 => {
@@ -934,6 +1018,7 @@ pub fn resolve_has_surface(
                 &mut lod_buffers.material_r4,
                 RF4_SAMPLES_PER_CHUNK_DIM,
                 had_entity,
+                cluster_request.prev_in_simulation_radius,
             )
         }
         LoadStateTransition::ToLod3 => {
@@ -947,6 +1032,7 @@ pub fn resolve_has_surface(
                 &mut lod_buffers.material_r3,
                 RF3_SAMPLES_PER_CHUNK_DIM,
                 had_entity,
+                cluster_request.prev_in_simulation_radius,
             )
         }
         LoadStateTransition::ToLod2 => {
@@ -960,6 +1046,7 @@ pub fn resolve_has_surface(
                 &mut lod_buffers.material_r2,
                 RF2_SAMPLES_PER_CHUNK_DIM,
                 had_entity,
+                cluster_request.prev_in_simulation_radius,
             )
         }
         LoadStateTransition::ToLod1 => {
@@ -973,6 +1060,7 @@ pub fn resolve_has_surface(
                 &mut lod_buffers.material_r1,
                 RF1_SAMPLES_PER_CHUNK_DIM,
                 had_entity,
+                cluster_request.prev_in_simulation_radius,
             )
         }
         LoadStateTransition::ToFull => build_full_mesh_and_spawn(
