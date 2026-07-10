@@ -5,7 +5,8 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-pub static QUEUE_SIZE: AtomicUsize = AtomicUsize::new(0);
+use crate::data_loader::driver::QUEUE_SIZE;
+
 pub static CHUNK_SPAWN_RECEIVER_QUEUE_SIZE: AtomicUsize = AtomicUsize::new(0);
 pub static INTERNAL_QUEUE_SIZES: OnceLock<Box<[AtomicUsize]>> = OnceLock::new();
 pub static CLUSTERS_PROCESSED: AtomicUsize = AtomicUsize::new(0);

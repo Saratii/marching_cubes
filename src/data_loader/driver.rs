@@ -3,7 +3,6 @@ use crate::terrain::chunk_generator::{
     compute_heightmap_gradients, fast_get_uniformity, generate_terrain_heights,
     padded_chunk_contains_surface,
 };
-use crate::ui::driver_debug_ui::QUEUE_SIZE;
 #[cfg(feature = "debug")]
 use crate::ui::driver_debug_ui::{
     CHUNK_SPAWN_RECEIVER_QUEUE_SIZE, CLUSTERS_PROCESSED, INTERNAL_QUEUE_SIZES,
@@ -38,7 +37,6 @@ use crossbeam_channel::{Receiver, Sender, unbounded};
 use fastnoise2::{SafeNode, generator::GeneratorWrapper};
 use parking_lot::RwLock;
 use rustc_hash::{FxHashMap, FxHashSet};
-#[cfg(feature = "debug")]
 use std::sync::atomic::AtomicUsize;
 use std::{
     collections::{BinaryHeap, VecDeque},
@@ -77,6 +75,7 @@ const INTERNAL_WORKER_QUEUE_SIZE: usize = 64;
 
 //I dont like this but, block player movement until first chunk load happens
 pub static INITIAL_CHUNKS_LOADED: AtomicBool = AtomicBool::new(false);
+pub static QUEUE_SIZE: AtomicUsize = AtomicUsize::new(0);
 
 #[repr(u8)]
 pub enum FullLodMode {
