@@ -10,7 +10,7 @@ use bevy::{
     shader::ShaderRef,
 };
 
-use crate::{data_loader::file_loader::get_project_root, terrain::ATTRIBUTE_MATERIAL_ID};
+use crate::{deformable_terrain::file_loader::get_project_root, terrain::ATTRIBUTE_MATERIAL_ID};
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
 pub struct TerrainMaterialExtension {

@@ -7,8 +7,10 @@ use crate::{
     constants::{
         CHUNK_WORLD_SIZE, HALF_CHUNK, SAMPLES_PER_CHUNK_DIM, SAMPLES_PER_CHUNK_DIM_PADDED,
     },
-    marching_cubes::tables::{CORNER_OFFSETS, EDGE_ID_OFFSETS, EDGE_VERTICES, TRIANGLE_TABLE},
-    terrain::chunk_generator::MaterialCode,
+    deformable_terrain::{
+        chunk_generator::MaterialCode,
+        marching_cubes::tables::{CORNER_OFFSETS, EDGE_ID_OFFSETS, EDGE_VERTICES, TRIANGLE_TABLE},
+    },
 };
 
 type EdgeKey = u64;

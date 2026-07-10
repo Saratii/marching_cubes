@@ -1,34 +1,32 @@
+use crate::constants::SAMPLES_PER_CHUNK_PADDED;
 use crate::conversions::{chunk_coord_to_cluster_coord, cluster_coord_to_world_center};
-use crate::terrain::chunk_generator::{
-    compute_heightmap_gradients, fast_get_uniformity, generate_terrain_heights,
-    padded_chunk_contains_surface,
+use crate::deformable_terrain::chunk_generator::{
+    MaterialCode, calculate_chunk_start, chunk_contains_surface, compute_heightmap_gradients,
+    downscale, fast_get_uniformity, generate_chunk_into_buffers, generate_noise_height_samples,
+    generate_terrain_heights, get_fbm, padded_chunk_contains_surface,
 };
+use crate::deformable_terrain::column_range_map::ColumnRangeMap;
 #[cfg(feature = "debug")]
-use crate::ui::driver_debug_ui::{
+use crate::deformable_terrain::driver_debug_ui::{
     CHUNK_SPAWN_RECEIVER_QUEUE_SIZE, CLUSTERS_PROCESSED, INTERNAL_QUEUE_SIZES,
 };
-use crate::{
-    constants::SAMPLES_PER_CHUNK_PADDED, terrain::chunk_generator::generate_noise_height_samples,
+use crate::deformable_terrain::file_loader::{
+    CHUNK_SERIALIZED_SIZE, ChunkEntityMap, get_project_root, load_chunk, load_chunk_index_map,
+    load_uniform_chunks, remove_uniform_chunk, update_chunk, write_chunk, write_uniform_chunk,
 };
+use crate::deformable_terrain::marching_cubes::mc::mc_mesh_generation;
+use crate::deformable_terrain::sparse_voxel_octree::SvoNode;
+use crate::deformable_terrain::terrain::{
+    ChunkTag, NonUniformTerrainChunk, TerrainChunk, TerrainMaterialHandle, Uniformity,
+    generate_bevy_mesh,
+};
+
 use crate::{
     constants::{
         CHUNKS_PER_CLUSTER, CHUNKS_PER_CLUSTER_DIM, SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_2D_PADDED,
         SAMPLES_PER_CHUNK_DIM, SIMULATION_RADIUS_SQUARED,
     },
     conversions::cluster_coord_to_min_chunk_coord,
-    data_loader::{
-        column_range_map::ColumnRangeMap,
-        file_loader::{
-            CHUNK_SERIALIZED_SIZE, get_project_root, load_chunk, load_chunk_index_map,
-            load_uniform_chunks, remove_uniform_chunk, update_chunk, write_chunk,
-        },
-    },
-    terrain::{
-        chunk_generator::{
-            MaterialCode, calculate_chunk_start, downscale, generate_chunk_into_buffers, get_fbm,
-        },
-        terrain::NonUniformTerrainChunk,
-    },
     ui::configurable_settings::RENDER_RADIUS_SQUARED,
 };
 use bevy::{camera::primitives::MeshAabb, prelude::*};
@@ -49,16 +47,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{
-    conversions::chunk_coord_to_world_pos,
-    data_loader::file_loader::{ChunkEntityMap, write_uniform_chunk},
-    marching_cubes::mc::mc_mesh_generation,
-    sparse_voxel_octree::SvoNode,
-    terrain::{
-        chunk_generator::chunk_contains_surface,
-        terrain::{ChunkTag, TerrainChunk, TerrainMaterialHandle, Uniformity, generate_bevy_mesh},
-    },
-};
+use crate::conversions::chunk_coord_to_world_pos;
 
 pub const RF1: usize = 2;
 pub const RF2: usize = 4;
@@ -1199,4 +1188,9 @@ pub fn build_full_mesh_and_spawn(
         }
         true
     }
+}
+
+pub fn record_frame_start(mut frame_start: ResMut<FrameStart>) {
+    //record frame start time so a thread can yield if its taking too long
+    frame_start.0 = Instant::now();
 }

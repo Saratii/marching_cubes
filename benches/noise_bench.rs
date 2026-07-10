@@ -1,13 +1,10 @@
 use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use marching_cubes::{
-    constants::{
-        CHUNK_WORLD_SIZE, HALF_CHUNK, NOISE_AMPLITUDE, NOISE_FREQUENCY, SAMPLES_PER_CHUNK_2D,
-        SAMPLES_PER_CHUNK_DIM, WORLD_SEED,
-    },
-    terrain::chunk_generator::get_fbm,
-};
+use marching_cubes::{constants::{
+    CHUNK_WORLD_SIZE, HALF_CHUNK, NOISE_AMPLITUDE, NOISE_FREQUENCY, SAMPLES_PER_CHUNK_2D,
+    SAMPLES_PER_CHUNK_DIM, WORLD_SEED,
+}, deformable_terrain::chunk_generator::get_fbm};
 
 fn benchmark_full_chunk_noise(c: &mut Criterion) {
     //call noise on every sample in the chunk

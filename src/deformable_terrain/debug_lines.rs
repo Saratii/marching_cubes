@@ -13,9 +13,11 @@ use crate::{
         chunk_coord_to_cluster_coord, chunk_coord_to_world_pos, cluster_coord_to_world_center,
         world_pos_to_chunk_coord,
     },
-    data_loader::driver::TerrainChunkMap,
+    deformable_terrain::{
+        driver::TerrainChunkMap,
+        terrain::{ChunkTag, TerrainChunk},
+    },
     player::player::PlayerTag,
-    terrain::terrain::{ChunkTag, TerrainChunk},
     ui::configurable_settings::ConfigurableSettings,
 };
 

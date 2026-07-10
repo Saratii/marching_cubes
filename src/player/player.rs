@@ -13,13 +13,13 @@ use crate::{
         PLAYER_SPAWN, WORLD_SEED,
     },
     conversions::world_pos_to_chunk_coord,
-    data_loader::{
+    deformable_terrain::{
         driver::{INITIAL_CHUNKS_LOADED, PlayerTranslationMutexHandle},
         file_loader::{
             ChunkEntityMap, PlayerDataFile, PlayerSaveData, read_player_data, write_player_data,
         },
+        terrain::{ChunkTag, NoiseFunction},
     },
-    terrain::terrain::{ChunkTag, NoiseFunction},
     ui::menu::MenuRoot,
 };
 

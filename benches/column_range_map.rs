@@ -1,7 +1,7 @@
 use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use marching_cubes::{data_loader::column_range_map::ColumnRangeMap, terrain::terrain::Uniformity};
+use marching_cubes::deformable_terrain::{column_range_map::ColumnRangeMap, terrain::Uniformity};
 
 fn benchmark_insert_sequential(c: &mut Criterion) {
     c.bench_function("insert_sequential", |b| {

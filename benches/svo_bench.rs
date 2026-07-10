@@ -2,8 +2,10 @@ use std::{hint::black_box, sync::atomic::Ordering};
 
 use bevy::math::Vec3;
 use criterion::{Criterion, criterion_group, criterion_main};
+
 use marching_cubes::{
-    sparse_voxel_octree::SvoNode, ui::configurable_settings::RENDER_RADIUS_SQUARED,
+    deformable_terrain::sparse_voxel_octree::SvoNode,
+    ui::configurable_settings::RENDER_RADIUS_SQUARED,
 };
 use rustc_hash::FxHashSet;
 

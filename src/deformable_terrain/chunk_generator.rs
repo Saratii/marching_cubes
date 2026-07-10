@@ -11,8 +11,7 @@ use crate::{
         SAMPLES_PER_CHUNK_2D_PADDED, SAMPLES_PER_CHUNK_DIM, SAMPLES_PER_CHUNK_DIM_PADDED,
         VOXEL_WORLD_SIZE, WORLD_SEED,
     },
-    data_loader::driver::ChunkBuffers,
-    terrain::terrain::Uniformity,
+    deformable_terrain::{driver::ChunkBuffers, terrain::Uniformity},
 };
 
 const SCALE: f32 = 32767.0 / 10.0; // Map [-10, 10] to [-32767, 32767]

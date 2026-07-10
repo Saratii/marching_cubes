@@ -10,7 +10,7 @@ use crate::{
         REDUCED_LOD_4_RADIUS_SQUARED, REDUCED_LOD_5_RADIUS_SQUARED, SIMULATION_RADIUS_SQUARED,
     },
     conversions::{cluster_coord_to_world_center, cluster_coord_to_world_pos},
-    data_loader::driver::{ClusterRequest, LoadState, LoadStateTransition},
+    deformable_terrain::driver::{ClusterRequest, LoadState, LoadStateTransition},
     ui::configurable_settings::RENDER_RADIUS_SQUARED,
 };
 

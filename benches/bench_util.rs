@@ -1,10 +1,10 @@
-use marching_cubes::{
-    data_loader::driver::ChunkBuffers,
-    terrain::chunk_generator::{
+use marching_cubes::deformable_terrain::{
+    chunk_generator::{
         calculate_chunk_start, chunk_contains_surface, compute_heightmap_gradients,
         generate_chunk_into_buffers, generate_noise_height_samples, generate_terrain_heights,
         get_fbm,
     },
+    driver::ChunkBuffers,
 };
 
 pub fn find_chunk_with_surface() -> (i16, i16, i16) {

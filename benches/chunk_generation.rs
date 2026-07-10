@@ -1,7 +1,6 @@
 #[path = "bench_util.rs"]
 mod bench_util;
 
-use bevy::math::Vec3;
 use criterion::{Criterion, criterion_group, criterion_main};
 
 use marching_cubes::{
@@ -9,17 +8,14 @@ use marching_cubes::{
         SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_2D_PADDED, SAMPLES_PER_CHUNK_DIM,
         SAMPLES_PER_CHUNK_PADDED,
     },
-    conversions::{chunk_coord_to_cluster_coord, world_pos_to_chunk_coord},
-    data_loader::driver::{ChunkBuffers, LodBuffers, RF1, RF1_SAMPLES_PER_CHUNK_DIM, RF5},
-    marching_cubes::mc::mc_mesh_generation,
-    terrain::{
-        chunk_compute_pipeline::GpuTerrainGenerator,
+    deformable_terrain::{
         chunk_generator::{
             calculate_chunk_start, chunk_contains_surface, compute_heightmap_gradients, downscale,
             fast_get_uniformity, fill_voxel_densities, generate_chunk_into_buffers,
             generate_noise_height_samples, generate_terrain_heights, get_fbm,
         },
-        heightmap_compute_pipeline::GpuHeightmapGenerator,
+        driver::{ChunkBuffers, LodBuffers, RF1, RF1_SAMPLES_PER_CHUNK_DIM, RF5},
+        marching_cubes::mc::mc_mesh_generation,
         terrain::Uniformity,
     },
 };
@@ -79,18 +75,6 @@ fn benchmark_generate_uniform_densities_cpu(c: &mut Criterion) {
     });
 }
 
-fn benchmark_generate_densities_gpu(c: &mut Criterion) {
-    let gpu_generator = GpuTerrainGenerator::new();
-    let chunk_coord = find_chunk_with_surface();
-    c.bench_function("generate_densities_gpu", |b| {
-        b.iter(|| {
-            let (densities, materials, is_uniform) =
-                gpu_generator.generate_densities(black_box(&chunk_coord));
-            black_box((densities, materials, is_uniform));
-        })
-    });
-}
-
 fn benchmark_marching_cubes(c: &mut Criterion) {
     let chunk = find_chunk_with_surface();
     let fbm = get_fbm();
@@ -113,45 +97,6 @@ fn benchmark_marching_cubes(c: &mut Criterion) {
                 false,
                 black_box(&chunk_buffers.density),
             ));
-        })
-    });
-}
-
-fn benchmark_heightmap_single_chunk_gpu(c: &mut Criterion) {
-    let chunk_coord = (0, 0, 0);
-    let gpu_generator = GpuHeightmapGenerator::new();
-    c.bench_function("heightmap_single_gpu", |b| {
-        b.iter(|| {
-            black_box(gpu_generator.generate_heightmap(black_box(&chunk_coord)));
-        })
-    });
-}
-
-fn benchmark_cluster_heightmap_gpu(c: &mut Criterion) {
-    let gpu_generator = GpuHeightmapGenerator::new();
-    let chunk = world_pos_to_chunk_coord(&Vec3::ZERO);
-    let cluster = chunk_coord_to_cluster_coord(&chunk);
-    c.bench_function("cluster_heightmap_gpu", |b| {
-        b.iter(|| {
-            black_box(
-                gpu_generator
-                    .generate_cluster(black_box(cluster.0 as i32), black_box(cluster.2 as i32)),
-            );
-        })
-    });
-}
-
-fn benchmark_batch_cluster_heightmaps_gpu(c: &mut Criterion) {
-    let gpu_generator = GpuHeightmapGenerator::new();
-    let mut cluster_coords = Vec::with_capacity(100 * 100);
-    for z in -50..50 {
-        for x in -50..50 {
-            cluster_coords.push((x, z));
-        }
-    }
-    c.bench_function("batch_cluster_heightmaps_gpu", |b| {
-        b.iter(|| {
-            black_box(gpu_generator.generate_batch_clusters(black_box(&cluster_coords)));
         })
     });
 }
@@ -365,11 +310,7 @@ criterion_group!(
     benches,
     benchmark_generate_chunk_into_buffers,
     benchmark_marching_cubes,
-    benchmark_generate_densities_gpu,
-    benchmark_heightmap_single_chunk_gpu,
-    benchmark_cluster_heightmap_gpu,
     benchmark_generate_uniform_densities_cpu,
-    benchmark_batch_cluster_heightmaps_gpu,
     benchmark_compute_heightmap_gradients,
     bench_downscale,
     bench_chunk_contains_surface_full,

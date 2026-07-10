@@ -12,13 +12,8 @@ use fastnoise2::{SafeNode, generator::GeneratorWrapper};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    constants::SAMPLES_PER_CHUNK_DIM_PADDED,
-    conversions::flatten_index,
-    data_loader::file_loader::get_project_root,
-    terrain::{
-        ATTRIBUTE_MATERIAL_ID, chunk_generator::MaterialCode,
-        terrain_material::TerrainMaterialExtension,
-    },
+    constants::SAMPLES_PER_CHUNK_DIM_PADDED, conversions::flatten_index,
+    deformable_terrain::{chunk_generator::MaterialCode, file_loader::get_project_root, terrain_material::TerrainMaterialExtension}, terrain::ATTRIBUTE_MATERIAL_ID,
 };
 
 #[derive(Component)]

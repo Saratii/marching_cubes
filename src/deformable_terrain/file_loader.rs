@@ -7,9 +7,9 @@ use std::mem::transmute;
 use std::path::PathBuf;
 
 use crate::constants::{SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_PADDED};
-use crate::data_loader::column_range_map::ColumnRangeMap;
-use crate::terrain::chunk_generator::MaterialCode;
-use crate::terrain::terrain::Uniformity;
+use crate::deformable_terrain::chunk_generator::MaterialCode;
+use crate::deformable_terrain::column_range_map::ColumnRangeMap;
+use crate::deformable_terrain::terrain::Uniformity;
 
 pub const CHUNK_SERIALIZED_SIZE: usize = SAMPLES_PER_CHUNK * std::mem::size_of::<u8>()
     + SAMPLES_PER_CHUNK_PADDED * std::mem::size_of::<i16>();
