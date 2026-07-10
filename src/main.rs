@@ -23,7 +23,7 @@ use marching_cubes::deformable_terrain::debug_lines::{
 };
 use marching_cubes::deformable_terrain::digging::handle_digging_input;
 use marching_cubes::deformable_terrain::driver::{
-    FrameStart, INITIAL_CHUNKS_LOADED, chunk_spawn_reciever, record_frame_start, setup_chunk_driver,
+    FrameStart, INITIAL_CHUNKS_LOADED, record_frame_start, setup_chunk_driver,
 };
 #[cfg(feature = "debug")]
 use marching_cubes::deformable_terrain::driver_debug_ui::{spawn_debug_texts, update_debug_texts};
@@ -117,7 +117,7 @@ fn main() {
         .add_systems(
             Startup,
             (
-                setup_chunk_driver.after(spawn_player),
+                setup_chunk_driver,
                 setup,
                 // generate_large_map_utility.after(setup_chunk_loading),
                 setup_map,

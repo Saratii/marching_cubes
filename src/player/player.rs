@@ -14,10 +14,11 @@ use crate::{
     },
     conversions::world_pos_to_chunk_coord,
     deformable_terrain::{
-        driver::{INITIAL_CHUNKS_LOADED, PlayerTranslationMutexHandle},
+        driver::INITIAL_CHUNKS_LOADED,
         file_loader::{
             ChunkEntityMap, PlayerDataFile, PlayerSaveData, read_player_data, write_player_data,
         },
+        plugin::MoveableCenter,
         terrain::{ChunkTag, NoiseFunction},
     },
     ui::menu::MenuRoot,
@@ -166,10 +167,6 @@ pub fn spawn_player(
             PLAYER_SPAWN.z,
         ),
     };
-    println!("Spawning player at position: {:?}", player_spawn);
-    commands.insert_resource(PlayerTranslationMutexHandle(Arc::new(Mutex::new(
-        player_spawn,
-    ))));
     let player_mesh = Cuboid::new(
         PLAYER_CUBOID_SIZE.x,
         PLAYER_CUBOID_SIZE.y,
@@ -440,21 +437,21 @@ pub fn player_movement(
 }
 
 pub fn sync_player_mutex(
-    player_transform_mutex_handle: ResMut<PlayerTranslationMutexHandle>,
+    mut moveable_center: ResMut<MoveableCenter>,
     player_transform_query: Query<&Transform, With<PlayerTag>>,
     mut player_data_file: ResMut<PlayerDataFile>,
     camera_controller: Res<CameraController>,
     mut last_saved_yaw: Local<f32>,
     mut last_saved_pitch: Local<f32>,
 ) {
-    let mut player_transform_lock = player_transform_mutex_handle.0.lock().unwrap();
     let player_translation = player_transform_query.iter().next().unwrap().translation;
-    let translation_changed = *player_transform_lock != player_translation;
+    let current_position = moveable_center.read();
+    let translation_changed = current_position != player_translation;
     let angles_changed = *last_saved_yaw != camera_controller.player_yaw
         || *last_saved_pitch != camera_controller.player_pitch;
     if translation_changed || angles_changed {
         if translation_changed {
-            *player_transform_lock = player_translation;
+            moveable_center.update(player_translation);
         }
         *last_saved_yaw = camera_controller.player_yaw;
         *last_saved_pitch = camera_controller.player_pitch;

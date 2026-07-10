@@ -15,6 +15,7 @@ use crate::deformable_terrain::file_loader::{
     load_uniform_chunks, remove_uniform_chunk, update_chunk, write_chunk, write_uniform_chunk,
 };
 use crate::deformable_terrain::marching_cubes::mc::mc_mesh_generation;
+use crate::deformable_terrain::plugin::MoveableCenter;
 use crate::deformable_terrain::sparse_voxel_octree::SvoNode;
 use crate::deformable_terrain::terrain::{
     ChunkTag, NonUniformTerrainChunk, TerrainChunk, TerrainMaterialHandle, Uniformity,
@@ -119,9 +120,6 @@ pub struct FrameStart(pub Instant);
 
 #[derive(Resource)]
 pub struct LogicalProcesors(pub usize);
-
-#[derive(Resource)]
-pub struct PlayerTranslationMutexHandle(pub Arc<Mutex<Vec3>>);
 
 #[derive(Resource)]
 pub struct NoiseGenerator(pub GeneratorWrapper<SafeNode>);
@@ -253,10 +251,7 @@ struct ChunkResult {
 #[derive(Resource)]
 pub struct WriteCmdSender(pub Sender<WriteCmd>);
 
-pub fn setup_chunk_driver(
-    mut commands: Commands,
-    player_translation_mutex_handle: Res<PlayerTranslationMutexHandle>,
-) {
+pub fn setup_chunk_driver(mut commands: Commands, moveable_center: Res<MoveableCenter>) {
     #[cfg(feature = "timers")]
     {
         std::fs::create_dir_all("plots").unwrap();
@@ -271,7 +266,7 @@ pub fn setup_chunk_driver(
             .map(|_| AtomicUsize::new(0))
             .collect()
     });
-    let player_translation_arc = Arc::clone(&player_translation_mutex_handle.0);
+    let moveable_center_arc = Arc::clone(&moveable_center.center_mutex);
     let (chunk_spawn_sender, chunk_spawn_reciever) = unbounded::<ChunkSpawnResult>();
     let terrain_chunk_map = Arc::new(Mutex::new(FxHashMap::default()));
     let (res_tx, res_rx) = unbounded::<ChunkResult>();
@@ -387,7 +382,7 @@ pub fn setup_chunk_driver(
     thread::spawn(move || {
         svo_manager_thread(
             res_rx,
-            player_translation_arc,
+            moveable_center_arc,
             chunk_spawn_sender,
             svo,
             priority_queue,
@@ -664,7 +659,7 @@ fn chunk_loader_thread(
 //sends chunks to be spawned to main thread
 fn svo_manager_thread(
     results_channel: Receiver<ChunkResult>,
-    player_translation: Arc<Mutex<Vec3>>,
+    moveable_center: Arc<Mutex<Vec3>>,
     chunk_spawn_channel: Sender<ChunkSpawnResult>,
     mut svo: SvoNode,
     priority_queue: Arc<(Mutex<BinaryHeap<ClusterRequest>>, Condvar)>,
@@ -678,11 +673,11 @@ fn svo_manager_thread(
     let mut first_completion_printed = false;
     let mut request_buffer = Vec::new();
     let mut chunks_being_loaded = FxHashSet::default();
-    let player_translation_lock = player_translation.lock().unwrap();
-    let initial_player_translation = *player_translation_lock;
-    drop(player_translation_lock);
+    let moveable_center_lock = moveable_center.lock().unwrap();
+    let initial_moveable_center = *moveable_center_lock;
+    drop(moveable_center_lock);
     svo.fill_missing_chunks_in_radius(
-        &initial_player_translation,
+        &initial_moveable_center,
         SIMULATION_RADIUS_SQUARED,
         &chunks_being_loaded,
         &mut request_buffer,
@@ -707,9 +702,9 @@ fn svo_manager_thread(
     condvar.notify_all();
     let mut clusters_to_deallocate = Vec::new();
     loop {
-        let player_translation_lock = player_translation.lock().unwrap();
-        let player_translation = *player_translation_lock;
-        drop(player_translation_lock);
+        let moveable_center_lock = moveable_center.lock().unwrap();
+        let moveable_center = *moveable_center_lock;
+        drop(moveable_center_lock);
         let mut terrain_map_lock = terrain_chunk_map.lock().unwrap();
         while let Ok(modification) = terrain_chunk_map_modification_reciever.try_recv() {
             match modification {
@@ -723,7 +718,7 @@ fn svo_manager_thread(
         }
         for chunk_coord in terrain_map_lock.keys() {
             let lower_cluster_coord = chunk_coord_to_cluster_coord(chunk_coord);
-            let distance_squared = player_translation
+            let distance_squared = moveable_center
                 .distance_squared(cluster_coord_to_world_center(&lower_cluster_coord));
             if distance_squared > SIMULATION_RADIUS_SQUARED {
                 let _ = terrain_chunk_map_modification_sender
@@ -735,7 +730,7 @@ fn svo_manager_thread(
             svo.insert(result.cluster_coord, result.has_entity, result.load_state);
             chunks_being_loaded.remove(&result.cluster_coord);
         }
-        svo.query_chunks_outside_sphere(&player_translation, &mut clusters_to_deallocate);
+        svo.query_chunks_outside_sphere(&moveable_center, &mut clusters_to_deallocate);
         for (chunk_coord, _) in &clusters_to_deallocate {
             svo.delete(*chunk_coord);
         }
@@ -762,7 +757,7 @@ fn svo_manager_thread(
         drop(terrain_map_lock);
         if QUEUE_SIZE.load(Ordering::Relaxed) < PRIORITY_QUEUE_MAX_SIZE {
             svo.fill_missing_chunks_in_radius(
-                &player_translation,
+                &moveable_center,
                 f32::from_bits(RENDER_RADIUS_SQUARED.load(Ordering::Relaxed)),
                 &chunks_being_loaded,
                 &mut request_buffer,

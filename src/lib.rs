@@ -7,5 +7,4 @@ pub mod deformable_terrain;
 pub mod lighting;
 pub mod player;
 pub mod settings;
-pub mod terrain;
 pub mod ui;

@@ -3,18 +3,26 @@ use std::sync::Arc;
 use bevy::{
     asset::RenderAssetUsages,
     image::{ImageLoaderSettings, ImageSampler},
-    mesh::{Indices, PrimitiveTopology},
+    mesh::{Indices, MeshVertexAttribute, PrimitiveTopology},
     pbr::ExtendedMaterial,
     prelude::*,
     render::render_resource::{AddressMode, SamplerDescriptor},
 };
 use fastnoise2::{SafeNode, generator::GeneratorWrapper};
 use serde::{Deserialize, Serialize};
+use wgpu::VertexFormat;
 
 use crate::{
-    constants::SAMPLES_PER_CHUNK_DIM_PADDED, conversions::flatten_index,
-    deformable_terrain::{chunk_generator::MaterialCode, file_loader::get_project_root, terrain_material::TerrainMaterialExtension}, terrain::ATTRIBUTE_MATERIAL_ID,
+    constants::SAMPLES_PER_CHUNK_DIM_PADDED,
+    conversions::flatten_index,
+    deformable_terrain::{
+        chunk_generator::MaterialCode, file_loader::get_project_root,
+        terrain_material::TerrainMaterialExtension,
+    },
 };
+
+pub(crate) const ATTRIBUTE_MATERIAL_ID: MeshVertexAttribute =
+    MeshVertexAttribute::new("MaterialId", 988540918, VertexFormat::Uint32);
 
 #[derive(Component)]
 pub struct ChunkTag;
