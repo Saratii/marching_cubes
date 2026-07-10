@@ -1,13 +1,16 @@
-use std::{sync::atomic::Ordering, time::Duration};
+use std::time::Duration;
 
 use bevy::{
     prelude::*,
     winit::{UpdateMode, WinitSettings},
 };
 
-use crate::ui::configurable_settings::{
-    ConfigurableSettings, FpsLimit, MenuFocus, MenuTab, RENDER_RADIUS_SQUARED, SettingsType,
-    save_configurable_settings,
+use crate::{
+    deformable_terrain::plugin::DeformableTerrainConfig,
+    ui::configurable_settings::{
+        ConfigurableSettings, FpsLimit, MenuFocus, MenuTab, SettingsType,
+        save_configurable_settings,
+    },
 };
 
 const BACKGROUND_COLOR: Color = Color::srgba(0.2, 0.2, 0.3, 0.8);
@@ -163,10 +166,9 @@ pub fn menu_update(
                     apply_fps_limit(&settings.fps_limit, &mut winit_settings);
                 }
                 if setting == SettingsType::RenderRadiusChange {
-                    RENDER_RADIUS_SQUARED.store(
+                    DeformableTerrainConfig::set_render_radius(
                         settings.render_radius_squared.0.to_bits(),
-                        Ordering::Relaxed,
-                    );
+                    )
                 }
                 for (SettingLabel(setting_type), mut text) in text_query.iter_mut() {
                     if *setting_type == setting {

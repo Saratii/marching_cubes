@@ -1,8 +1,6 @@
 use std::sync::atomic::Ordering;
 
-use bevy::prelude::*;
-use rustc_hash::FxHashSet;
-
+use crate::deformable_terrain::driver::RENDER_RADIUS_SQUARED;
 use crate::{
     constants::{
         CHUNK_WORLD_SIZE, CHUNKS_PER_CLUSTER, CHUNKS_PER_CLUSTER_DIM, CLUSTER_WORLD_LENGTH,
@@ -11,8 +9,9 @@ use crate::{
     },
     conversions::{cluster_coord_to_world_center, cluster_coord_to_world_pos},
     deformable_terrain::driver::{ClusterRequest, LoadState, LoadStateTransition},
-    ui::configurable_settings::RENDER_RADIUS_SQUARED,
 };
+use bevy::prelude::*;
+use rustc_hash::FxHashSet;
 
 const MAX_WORLD_SIZE: i16 = 512; //in chunks
 

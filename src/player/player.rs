@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex, atomic::Ordering};
+use std::sync::atomic::Ordering;
 
 use bevy::{
     input::mouse::{MouseMotion, MouseWheel},
@@ -436,7 +436,7 @@ pub fn player_movement(
     controller.translation = Some(movement_vec * time.delta_secs());
 }
 
-pub fn sync_player_mutex(
+pub fn sync_terrain_center(
     mut moveable_center: ResMut<MoveableCenter>,
     player_transform_query: Query<&Transform, With<PlayerTag>>,
     mut player_data_file: ResMut<PlayerDataFile>,

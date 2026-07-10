@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{from_str, to_string_pretty};
 use std::fs::{create_dir_all, read_to_string, write};
 use std::path::PathBuf;
-use std::sync::atomic::AtomicU32;
 
 use crate::constants::SIMULATION_RADIUS;
 
@@ -26,9 +25,7 @@ const RENDER_RADIUS_STEPS: &[f32] = &[
     3000.0 * 3000.0,
 ];
 const _: () = assert!(RENDER_RADIUS_STEPS[0] as u64 >= SIMULATION_RADIUS as u64);
-const DEFAULT_RENDER_RADIUS_SQUARED: f32 = 1000.0 * 1000.0;
-
-pub static RENDER_RADIUS_SQUARED: AtomicU32 = AtomicU32::new(DEFAULT_RENDER_RADIUS_SQUARED as u32);
+pub const DEFAULT_RENDER_RADIUS_SQUARED: f32 = 1000.0 * 1000.0;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RenderRadiusSquared(pub f32);

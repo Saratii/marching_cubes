@@ -23,13 +23,15 @@ use marching_cubes::deformable_terrain::debug_lines::{
 };
 use marching_cubes::deformable_terrain::digging::handle_digging_input;
 use marching_cubes::deformable_terrain::driver::{
-    FrameStart, INITIAL_CHUNKS_LOADED, record_frame_start, setup_chunk_driver,
+    FrameStart, INITIAL_CHUNKS_LOADED, record_frame_start,
 };
 #[cfg(feature = "debug")]
 use marching_cubes::deformable_terrain::driver_debug_ui::{spawn_debug_texts, update_debug_texts};
 use marching_cubes::deformable_terrain::file_loader::setup_chunk_loading;
-use marching_cubes::deformable_terrain::plugin::DeformableTerrainPlugin;
-use marching_cubes::deformable_terrain::terrain::{NoiseFunction, setup_map};
+use marching_cubes::deformable_terrain::plugin::{
+    DeformableTerrainConfig, DeformableTerrainPlugin,
+};
+use marching_cubes::deformable_terrain::terrain::NoiseFunction;
 use marching_cubes::deformable_terrain::terrain_material::TerrainMaterialExtension;
 use marching_cubes::lighting::lighting_main::{
     apply_settings_changes, setup_camera, setup_lighting,
@@ -37,25 +39,21 @@ use marching_cubes::lighting::lighting_main::{
 use marching_cubes::player::player::{
     CameraController, KeyBindings, camera_look, camera_zoom, free_cam_movement, grab_on_click,
     handle_focus_change, initial_grab_cursor, player_movement, spawn_free_cam_root, spawn_player,
-    sync_player_mutex, sync_player_rotation, toggle_first_person, toggle_fly_mode, toggle_free_cam,
-    validate_player_spawn,
+    sync_player_rotation, sync_terrain_center, toggle_first_person, toggle_fly_mode,
+    toggle_free_cam, validate_player_spawn,
 };
 use marching_cubes::settings::settings_driver::{load_settings, save_monitor_on_move};
 use marching_cubes::ui::configurable_settings::{
-    FpsLimit, MenuFocus, MenuTab, RENDER_RADIUS_SQUARED, load_configurable_settings,
+    FpsLimit, MenuFocus, MenuTab, load_configurable_settings,
 };
 use marching_cubes::ui::crosshair::spawn_crosshair;
 use marching_cubes::ui::menu::{SettingsState, menu_toggle, menu_update};
 
 fn main() {
-    println!("fma: {}", std::is_x86_feature_detected!("fma"));
-    println!("avx2: {}", std::is_x86_feature_detected!("avx2"));
-    println!("sse2: {}", std::is_x86_feature_detected!("sse2"));
     let settings = load_settings(); //automatically saved state
     let configurable_settings = load_configurable_settings(); //user saved state
-    RENDER_RADIUS_SQUARED.store(
+    DeformableTerrainConfig::set_render_radius(
         configurable_settings.render_radius_squared.0.to_bits(),
-        Ordering::Relaxed,
     );
     let window_centered_position = settings.window_centered_position;
     let update_mode = match configurable_settings.fps_limit {
@@ -117,10 +115,7 @@ fn main() {
         .add_systems(
             Startup,
             (
-                setup_chunk_driver,
                 setup,
-                // generate_large_map_utility.after(setup_chunk_loading),
-                setup_map,
                 spawn_crosshair,
                 spawn_player.after(setup_chunk_loading).after(setup_camera),
                 // spawn_minimap.after(spawn_player),
@@ -141,7 +136,7 @@ fn main() {
                 camera_zoom,
                 camera_look,
                 player_movement,
-                sync_player_mutex.after(player_movement),
+                sync_terrain_center.after(player_movement),
                 validate_player_spawn
                     .after(PhysicsSet::SyncBackend)
                     .run_if(|| !INITIAL_CHUNKS_LOADED.load(Ordering::Relaxed)),

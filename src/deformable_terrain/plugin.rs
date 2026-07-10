@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, atomic::Ordering};
 
 use bevy::{
     app::{App, Plugin, Startup, Update},
@@ -6,9 +6,24 @@ use bevy::{
     math::Vec3,
 };
 
-use crate::deformable_terrain::{driver::chunk_spawn_reciever, file_loader::setup_chunk_loading};
+use crate::deformable_terrain::{
+    driver::{RENDER_RADIUS_SQUARED, chunk_spawn_reciever, info_print, setup_chunk_driver},
+    file_loader::setup_chunk_loading,
+    terrain::setup_map,
+};
 
-pub struct DeformableTerrainPlugin;
+#[derive(Resource)]
+pub struct DeformableTerrainConfig {}
+
+impl DeformableTerrainConfig {
+    pub fn render_radius() -> u32 {
+        RENDER_RADIUS_SQUARED.load(Ordering::Relaxed)
+    }
+
+    pub fn set_render_radius(radius: u32) {
+        RENDER_RADIUS_SQUARED.store(radius, Ordering::Relaxed);
+    }
+}
 
 #[derive(Resource)]
 pub struct MoveableCenter {
@@ -27,13 +42,23 @@ impl MoveableCenter {
     }
 }
 
+pub struct DeformableTerrainPlugin;
+
 impl Plugin for DeformableTerrainPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(MoveableCenter {
             center_mutex: Arc::new(Mutex::new(Vec3::ZERO)),
             last_center: Vec3::ZERO,
         })
-        .add_systems(Startup, setup_chunk_loading)
+        .add_systems(
+            Startup,
+            (
+                info_print,
+                setup_chunk_loading,
+                setup_chunk_driver,
+                setup_map,
+            ),
+        )
         .add_systems(Update, chunk_spawn_reciever);
     }
 }

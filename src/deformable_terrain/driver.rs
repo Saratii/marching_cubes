@@ -28,7 +28,6 @@ use crate::{
         SAMPLES_PER_CHUNK_DIM, SIMULATION_RADIUS_SQUARED,
     },
     conversions::cluster_coord_to_min_chunk_coord,
-    ui::configurable_settings::RENDER_RADIUS_SQUARED,
 };
 use bevy::{camera::primitives::MeshAabb, prelude::*};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
@@ -36,7 +35,7 @@ use crossbeam_channel::{Receiver, Sender, unbounded};
 use fastnoise2::{SafeNode, generator::GeneratorWrapper};
 use parking_lot::RwLock;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicU32, AtomicUsize};
 use std::{
     collections::{BinaryHeap, VecDeque},
     fs::{File, OpenOptions},
@@ -66,6 +65,7 @@ const INTERNAL_WORKER_QUEUE_SIZE: usize = 64;
 //I dont like this but, block player movement until first chunk load happens
 pub static INITIAL_CHUNKS_LOADED: AtomicBool = AtomicBool::new(false);
 pub static QUEUE_SIZE: AtomicUsize = AtomicUsize::new(0);
+pub static RENDER_RADIUS_SQUARED: AtomicU32 = AtomicU32::new(0);
 
 #[repr(u8)]
 pub enum FullLodMode {
@@ -251,7 +251,7 @@ struct ChunkResult {
 #[derive(Resource)]
 pub struct WriteCmdSender(pub Sender<WriteCmd>);
 
-pub fn setup_chunk_driver(mut commands: Commands, moveable_center: Res<MoveableCenter>) {
+pub(crate) fn setup_chunk_driver(mut commands: Commands, moveable_center: Res<MoveableCenter>) {
     #[cfg(feature = "timers")]
     {
         std::fs::create_dir_all("plots").unwrap();
@@ -297,7 +297,7 @@ pub fn setup_chunk_driver(mut commands: Commands, moveable_center: Res<MoveableC
         Uniformity::Dirt,
         &mut column_range_map,
     );
-    println!(
+    info!(
         "Loaded ColumnRangeMap with {} bytes in {} ms.",
         column_range_map.size_in_bytes(),
         t0.elapsed().as_millis()
@@ -324,7 +324,7 @@ pub fn setup_chunk_driver(mut commands: Commands, moveable_center: Res<MoveableC
     let index_map_read_arc = Arc::clone(&index_map_read);
     let (terrain_chunk_map_modification_sender, terrain_chunk_map_modification_reciever) =
         crossbeam_channel::unbounded();
-    println!(
+    info!(
         "Loaded {} chunks into index map in {} ms.",
         index_map_read.len(),
         t0.elapsed().as_millis()
@@ -1188,4 +1188,10 @@ pub fn build_full_mesh_and_spawn(
 pub fn record_frame_start(mut frame_start: ResMut<FrameStart>) {
     //record frame start time so a thread can yield if its taking too long
     frame_start.0 = Instant::now();
+}
+
+pub(crate) fn info_print() {
+    info!("fma: {}", std::is_x86_feature_detected!("fma"));
+    info!("avx2: {}", std::is_x86_feature_detected!("avx2"));
+    info!("sse2: {}", std::is_x86_feature_detected!("sse2"));
 }
