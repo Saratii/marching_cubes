@@ -27,16 +27,13 @@ pub struct TerrainMaterialHandle(
     pub Handle<ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>>,
 );
 
-#[derive(Resource)]
-pub struct TextureArrayHandle(pub Handle<Image>);
-
 #[derive(Clone)]
-pub struct NonUniformTerrainChunk {
-    pub densities: Arc<[i16]>, //arc, so the write thread can read them
-    pub materials: Arc<[MaterialCode]>,
+pub(crate) struct NonUniformTerrainChunk {
+    pub(crate) densities: Arc<[i16]>, //arc, so the write thread can read them
+    pub(crate) materials: Arc<[MaterialCode]>,
 }
 
-pub enum TerrainChunk {
+pub(crate) enum TerrainChunk {
     UniformDirt,
     UniformAir,
     NonUniformTerrainChunk(NonUniformTerrainChunk),
@@ -44,7 +41,7 @@ pub enum TerrainChunk {
 
 impl TerrainChunk {
     #[inline(always)]
-    pub fn is_solid(&self, x: u32, y: u32, z: u32) -> bool {
+    pub(crate) fn is_solid(&self, x: u32, y: u32, z: u32) -> bool {
         match self {
             TerrainChunk::UniformDirt => true,
             TerrainChunk::UniformAir => false,
@@ -54,30 +51,17 @@ impl TerrainChunk {
 }
 
 impl NonUniformTerrainChunk {
-    pub fn new(densities: Arc<[i16]>, materials: Arc<[MaterialCode]>) -> Self {
-        Self {
-            densities,
-            materials,
-        }
-    }
-
-    pub fn get_density(&self, x: u32, y: u32, z: u32) -> i16 {
+    pub(crate) fn get_density(&self, x: u32, y: u32, z: u32) -> i16 {
         let index = flatten_index(x, y, z, SAMPLES_PER_CHUNK_DIM_PADDED);
         self.densities[index as usize]
     }
 
-    pub fn get_mut_density(&mut self, x: u32, y: u32, z: u32) -> &mut i16 {
-        let index = flatten_index(x, y, z, SAMPLES_PER_CHUNK_DIM_PADDED);
-        let densities = Arc::make_mut(&mut self.densities);
-        &mut densities[index as usize]
-    }
-
-    pub fn is_solid(&self, x: u32, y: u32, z: u32) -> bool {
+    pub(crate) fn is_solid(&self, x: u32, y: u32, z: u32) -> bool {
         self.get_density(x, y, z) < 0
     }
 }
 
-pub fn setup_map(
+pub(crate) fn setup_map(
     mut commands: Commands,
     mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>>>,
     asset_server: Res<AssetServer>,
@@ -111,10 +95,9 @@ pub fn setup_map(
         },
     });
     commands.insert_resource(TerrainMaterialHandle(standard_terrain_material_handle));
-    commands.insert_resource(TextureArrayHandle(texture_array_handle));
 }
 
-pub fn generate_bevy_mesh(
+pub(crate) fn generate_bevy_mesh(
     vertices: Vec<Vec3>,
     normals: Vec<Vec3>,
     material_ids: Vec<u32>,

@@ -47,11 +47,6 @@ impl SvoNode {
     }
 
     #[inline(always)]
-    pub fn is_leaf(&self) -> bool {
-        self.size == 1
-    }
-
-    #[inline(always)]
     fn child_index(&self, chunk_coord: &(i16, i16, i16)) -> usize {
         let half = self.size / 2;
         let mut index = 0;
@@ -65,27 +60,6 @@ impl SvoNode {
             index |= 4;
         }
         index
-    }
-
-    pub fn get(&self, coord: (i16, i16, i16)) -> Option<&([bool; CHUNKS_PER_CLUSTER], LoadState)> {
-        if self.size == 1 {
-            return self.chunk.as_ref();
-        }
-        let children = self.children.as_ref()?;
-        let idx = self.child_index(&coord);
-        children[idx].as_ref()?.get(coord)
-    }
-
-    pub fn get_mut(
-        &mut self,
-        coord: (i16, i16, i16),
-    ) -> Option<&mut ([bool; CHUNKS_PER_CLUSTER], LoadState)> {
-        if self.size == 1 {
-            return self.chunk.as_mut();
-        }
-        let idx = self.child_index(&coord);
-        let children = self.children.as_mut()?;
-        children[idx].as_mut()?.get_mut(coord)
     }
 
     pub fn insert(
@@ -116,47 +90,6 @@ impl SvoNode {
             .as_mut()
             .unwrap()
             .insert(coord, has_entity, load_state);
-    }
-
-    pub fn contains(&self, cluster_coord: &(i16, i16, i16)) -> bool {
-        if cluster_coord.0 < self.lower_cluster_coord.0
-            || cluster_coord.1 < self.lower_cluster_coord.1
-            || cluster_coord.2 < self.lower_cluster_coord.2
-            || cluster_coord.0 >= self.lower_cluster_coord.0 + self.size
-            || cluster_coord.1 >= self.lower_cluster_coord.1 + self.size
-            || cluster_coord.2 >= self.lower_cluster_coord.2 + self.size
-        {
-            return false;
-        }
-        if self.size == 1 {
-            return self.chunk.is_some();
-        }
-        let index = self.child_index(cluster_coord);
-        match &self.children {
-            Some(children) => {
-                if let Some(child) = &children[index] {
-                    child.contains(cluster_coord)
-                } else {
-                    false
-                }
-            }
-            None => false,
-        }
-    }
-
-    pub fn iter(&self) -> Box<dyn Iterator<Item = &SvoNode> + '_> {
-        if self.size == 1 {
-            Box::new(std::iter::once(self))
-        } else if let Some(children) = &self.children {
-            Box::new(
-                children
-                    .iter()
-                    .filter_map(|c| c.as_ref())
-                    .flat_map(|c| c.iter()),
-            )
-        } else {
-            Box::new(std::iter::empty())
-        }
     }
 
     pub fn delete(&mut self, coord: (i16, i16, i16)) -> bool {
@@ -333,16 +266,6 @@ impl SvoNode {
                 child.collect_all_chunks(results);
             }
         }
-    }
-
-    pub fn size_in_bytes(&self) -> usize {
-        let mut size = std::mem::size_of::<Self>();
-        if let Some(children) = &self.children {
-            for child in children.iter().flatten() {
-                size += child.size_in_bytes();
-            }
-        }
-        size
     }
 }
 

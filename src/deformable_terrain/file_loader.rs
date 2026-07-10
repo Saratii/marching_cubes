@@ -34,7 +34,7 @@ fn serialize_chunk_data(densities: &[i16], materials: &[MaterialCode], mut buffe
 }
 
 //read density and material data into provided buffers
-pub fn deserialize_chunk_data(
+fn deserialize_chunk_data(
     data: &[u8],
     density_buffer: &mut [i16],
     material_buffer: &mut [MaterialCode],
@@ -48,7 +48,7 @@ pub fn deserialize_chunk_data(
     }
 }
 
-pub fn write_chunk(
+pub(crate) fn write_chunk(
     densities: &[i16],
     materials: &[MaterialCode],
     chunk_coord: &(i16, i16, i16),
@@ -75,7 +75,7 @@ pub fn write_chunk(
     index_map_delta.insert(*chunk_coord, byte_offset);
 }
 
-pub fn update_chunk(
+pub(crate) fn update_chunk(
     byte_offset: u64,
     densities: &[i16],
     materials: &[MaterialCode],
@@ -89,7 +89,7 @@ pub fn update_chunk(
 }
 
 //loads chunk data into provided density and material buffers
-pub fn load_chunk(
+pub(crate) fn load_chunk(
     chunk_data_file: &mut File,
     byte_offset: u64,
     density_buffer: &mut [i16],
