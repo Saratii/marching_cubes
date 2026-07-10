@@ -1,5 +1,6 @@
 use crate::constants::SAMPLES_PER_CHUNK_PADDED;
 use crate::conversions::{chunk_coord_to_cluster_coord, cluster_coord_to_world_center};
+use crate::deformable_terrain::chunk_entity_map::ChunkEntityMap;
 use crate::deformable_terrain::chunk_generator::{
     MaterialCode, calculate_chunk_start, chunk_contains_surface, compute_heightmap_gradients,
     downscale, fast_get_uniformity, generate_chunk_into_buffers, generate_noise_height_samples,
@@ -11,15 +12,14 @@ use crate::deformable_terrain::driver_debug_ui::{
     CHUNK_SPAWN_RECEIVER_QUEUE_SIZE, CLUSTERS_PROCESSED, INTERNAL_QUEUE_SIZES,
 };
 use crate::deformable_terrain::file_loader::{
-    CHUNK_SERIALIZED_SIZE, ChunkEntityMap, get_project_root, load_chunk, load_chunk_index_map,
-    load_uniform_chunks, remove_uniform_chunk, update_chunk, write_chunk, write_uniform_chunk,
+    CHUNK_SERIALIZED_SIZE, get_project_root, load_chunk, load_chunk_index_map, load_uniform_chunks,
+    remove_uniform_chunk, update_chunk, write_chunk, write_uniform_chunk,
 };
 use crate::deformable_terrain::marching_cubes::mc::mc_mesh_generation;
-use crate::deformable_terrain::plugin::MoveableCenter;
+use crate::deformable_terrain::plugin::{ChunkTag, MoveableCenter, Uniformity};
 use crate::deformable_terrain::sparse_voxel_octree::SvoNode;
 use crate::deformable_terrain::terrain::{
-    ChunkTag, NonUniformTerrainChunk, TerrainChunk, TerrainMaterialHandle, Uniformity,
-    generate_bevy_mesh,
+    NonUniformTerrainChunk, TerrainChunk, TerrainMaterialHandle, generate_bevy_mesh,
 };
 
 use crate::{

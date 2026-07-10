@@ -1,3 +1,4 @@
+pub mod chunk_entity_map;
 pub mod chunk_generator;
 pub mod column_range_map;
 #[cfg(feature = "debug")]
@@ -9,6 +10,6 @@ pub mod driver_debug_ui;
 pub mod file_loader;
 pub mod marching_cubes;
 pub mod plugin;
-pub mod sparse_voxel_octree;
-pub mod terrain;
+mod sparse_voxel_octree;
+mod terrain;
 pub mod terrain_material;

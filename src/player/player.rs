@@ -1,4 +1,8 @@
-use std::sync::atomic::Ordering;
+use std::{
+    fs::{File, OpenOptions, create_dir_all},
+    io::{Read, Seek, SeekFrom, Write},
+    sync::atomic::Ordering,
+};
 
 use bevy::{
     input::mouse::{MouseMotion, MouseWheel},
@@ -14,12 +18,10 @@ use crate::{
     },
     conversions::world_pos_to_chunk_coord,
     deformable_terrain::{
+        chunk_entity_map::ChunkEntityMap,
         driver::INITIAL_CHUNKS_LOADED,
-        file_loader::{
-            ChunkEntityMap, PlayerDataFile, PlayerSaveData, read_player_data, write_player_data,
-        },
-        plugin::MoveableCenter,
-        terrain::{ChunkTag, NoiseFunction},
+        file_loader::get_project_root,
+        plugin::{ChunkTag, MoveableCenter, NoiseFunction},
     },
     ui::menu::MenuRoot,
 };
@@ -41,6 +43,15 @@ const BASE_GRAVITY: f32 = -9.81;
 const JUMP_IMPULSE: f32 = 7.0;
 const FLY_SPEED: f32 = 20.0;
 const FLY_FAST_MULTIPLIER: f32 = 4.0;
+
+#[derive(Resource)]
+pub struct PlayerDataFile(pub File);
+
+pub struct PlayerSaveData {
+    pub position: Vec3,
+    pub yaw: f32,
+    pub pitch: f32,
+}
 
 #[derive(Component)]
 pub struct FlyMode {
@@ -141,13 +152,21 @@ pub fn spawn_player(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut player_data_file: ResMut<PlayerDataFile>,
     fbm: Res<NoiseFunction>,
     main_camera: Query<Entity, With<MainCameraTag>>,
     mut camera_controller: ResMut<CameraController>,
     mut camera_transform: Query<&mut Transform, With<MainCameraTag>>,
 ) {
-    let save_data = read_player_data(&mut player_data_file.0);
+    let root = get_project_root();
+    create_dir_all(root.join("data/latest")).expect("Failed to create data directory");
+    let mut player_data_file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(root.join("data/player_data.txt"))
+        .unwrap();
+    let save_data = read_player_data(&mut player_data_file);
+    commands.insert_resource(PlayerDataFile(player_data_file));
     let player_spawn = match &save_data {
         Some(data) => {
             camera_controller.yaw = data.yaw;
@@ -664,4 +683,34 @@ pub fn sync_player_rotation(
         return;
     };
     mesh_transform.rotation = Quat::from_rotation_y(camera_controller.player_yaw);
+}
+
+pub fn write_player_data(f: &mut File, data: &PlayerSaveData) {
+    f.set_len(0).unwrap();
+    f.seek(SeekFrom::Start(0)).unwrap();
+    let s = format!(
+        "{} {} {} {} {}",
+        data.position.x, data.position.y, data.position.z, data.yaw, data.pitch
+    );
+    f.write_all(s.as_bytes()).unwrap();
+    f.flush().unwrap();
+}
+
+pub fn read_player_data(f: &mut File) -> Option<PlayerSaveData> {
+    f.seek(SeekFrom::Start(0)).unwrap();
+    let mut buf = String::new();
+    if f.read_to_string(&mut buf).is_err() {
+        return None;
+    }
+    let mut it = buf.split_whitespace();
+    let x = it.next()?.parse::<f32>().ok()?;
+    let y = it.next()?.parse::<f32>().ok()?;
+    let z = it.next()?.parse::<f32>().ok()?;
+    let yaw = it.next()?.parse::<f32>().ok()?;
+    let pitch = it.next()?.parse::<f32>().ok()?;
+    Some(PlayerSaveData {
+        position: Vec3::new(x, y, z),
+        yaw,
+        pitch,
+    })
 }

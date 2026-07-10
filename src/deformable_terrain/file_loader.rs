@@ -1,93 +1,20 @@
 use bevy::prelude::*;
 use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
-use std::fs::{File, OpenOptions, create_dir_all};
+use std::fs::{File, create_dir_all};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::mem::transmute;
 use std::path::PathBuf;
 
 use crate::constants::{SAMPLES_PER_CHUNK, SAMPLES_PER_CHUNK_PADDED};
+use crate::deformable_terrain::chunk_entity_map::ChunkEntityMap;
 use crate::deformable_terrain::chunk_generator::MaterialCode;
 use crate::deformable_terrain::column_range_map::ColumnRangeMap;
-use crate::deformable_terrain::terrain::Uniformity;
+use crate::deformable_terrain::plugin::Uniformity;
 
-pub const CHUNK_SERIALIZED_SIZE: usize = SAMPLES_PER_CHUNK * std::mem::size_of::<u8>()
+pub(crate) const CHUNK_SERIALIZED_SIZE: usize = SAMPLES_PER_CHUNK * std::mem::size_of::<u8>()
     + SAMPLES_PER_CHUNK_PADDED * std::mem::size_of::<i16>();
 const TOMBSTONE_BYTES: [u8; 6] = [0xFF; 6];
-
-#[derive(Resource)]
-pub struct PlayerDataFile(pub File);
-
-pub struct PlayerSaveData {
-    pub position: Vec3,
-    pub yaw: f32,
-    pub pitch: f32,
-}
-
-//store mesh handle to be able to replace mesh without the entity being spawned to avoid crash NotSpawned(ValidButNotSpawned(EntityValidButNotSpawnedError
-#[derive(Resource)]
-pub struct ChunkEntityMap(FxHashMap<(i16, i16, i16), (Entity, Handle<Mesh>)>);
-
-impl ChunkEntityMap {
-    pub fn insert(&mut self, chunk_coord: (i16, i16, i16), entity: (Entity, Handle<Mesh>)) {
-        #[cfg(feature = "debug")]
-        {
-            assert!(
-                self.0.insert(chunk_coord, entity).is_none(),
-                "ChunkEntityMap::insert: chunk coord {chunk_coord:?} already had an entity"
-            );
-        }
-        #[cfg(not(feature = "debug"))]
-        {
-            self.0.insert(chunk_coord, entity);
-        }
-    }
-
-    pub fn replace_mesh_handle(
-        &mut self,
-        chunk_coord: (i16, i16, i16),
-        new_mesh_handle: Handle<Mesh>,
-    ) {
-        let (_, mesh_handle) = self.0.get_mut(&chunk_coord).unwrap();
-        *mesh_handle = new_mesh_handle;
-    }
-
-    pub fn get(&self, chunk_coord: (i16, i16, i16)) -> (Entity, Handle<Mesh>) {
-        #[cfg(feature = "debug")]
-        {
-            let result = self.0.get(&chunk_coord);
-            assert!(
-                result.is_some(),
-                "ChunkEntityMap::get: chunk coord {chunk_coord:?} had no entity"
-            );
-            result.unwrap().clone()
-        }
-        #[cfg(not(feature = "debug"))]
-        {
-            self.0.get(&chunk_coord).unwrap().clone()
-        }
-    }
-
-    pub fn get_option(&self, chunk_coord: (i16, i16, i16)) -> Option<&(Entity, Handle<Mesh>)> {
-        self.0.get(&chunk_coord)
-    }
-
-    pub fn remove(&mut self, chunk_coord: (i16, i16, i16)) -> (Entity, Handle<Mesh>) {
-        #[cfg(feature = "debug")]
-        {
-            let result = self.0.remove(&chunk_coord);
-            assert!(
-                result.is_some(),
-                "ChunkEntityMap::remove: chunk coord {chunk_coord:?} had no entity"
-            );
-            result.unwrap()
-        }
-        #[cfg(not(feature = "debug"))]
-        {
-            self.0.remove(&chunk_coord).unwrap()
-        }
-    }
-}
 
 // Binary format layout:
 // - SDF values: num_voxels * i16 (2 bytes each)
@@ -204,16 +131,7 @@ pub fn get_project_root() -> PathBuf {
 pub fn setup_chunk_loading(mut commands: Commands) {
     let root = get_project_root();
     create_dir_all(root.join("data/latest")).expect("Failed to create data directory");
-    commands.insert_resource(ChunkEntityMap {
-        0: FxHashMap::default(),
-    }); //store entities on the main thread
-    let player_data_file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .open(root.join("data/player_data.txt"))
-        .unwrap();
-    commands.insert_resource(PlayerDataFile(player_data_file));
+    commands.insert_resource(ChunkEntityMap::new());
 }
 
 // Load all chunk coords and track empty slots
@@ -286,34 +204,4 @@ pub fn remove_uniform_chunk(
         offset += 6;
     }
     f.flush().unwrap();
-}
-
-pub fn write_player_data(f: &mut File, data: &PlayerSaveData) {
-    f.set_len(0).unwrap();
-    f.seek(SeekFrom::Start(0)).unwrap();
-    let s = format!(
-        "{} {} {} {} {}",
-        data.position.x, data.position.y, data.position.z, data.yaw, data.pitch
-    );
-    f.write_all(s.as_bytes()).unwrap();
-    f.flush().unwrap();
-}
-
-pub fn read_player_data(f: &mut File) -> Option<PlayerSaveData> {
-    f.seek(SeekFrom::Start(0)).unwrap();
-    let mut buf = String::new();
-    if f.read_to_string(&mut buf).is_err() {
-        return None;
-    }
-    let mut it = buf.split_whitespace();
-    let x = it.next()?.parse::<f32>().ok()?;
-    let y = it.next()?.parse::<f32>().ok()?;
-    let z = it.next()?.parse::<f32>().ok()?;
-    let yaw = it.next()?.parse::<f32>().ok()?;
-    let pitch = it.next()?.parse::<f32>().ok()?;
-    Some(PlayerSaveData {
-        position: Vec3::new(x, y, z),
-        yaw,
-        pitch,
-    })
 }

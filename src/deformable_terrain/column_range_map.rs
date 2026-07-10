@@ -1,6 +1,6 @@
 use rustc_hash::FxHashMap;
 
-use crate::deformable_terrain::terrain::Uniformity;
+use crate::deformable_terrain::plugin::Uniformity;
 
 //store ranges of chunk columns that match uniformity instead of storing individial chunks
 //does not store non-uniform chunks because caching them doesnt save much

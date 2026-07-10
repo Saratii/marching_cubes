@@ -2,15 +2,32 @@ use std::sync::{Arc, Mutex, atomic::Ordering};
 
 use bevy::{
     app::{App, Plugin, Startup, Update},
-    ecs::resource::Resource,
+    ecs::{component::Component, resource::Resource},
     math::Vec3,
 };
+use fastnoise2::{SafeNode, generator::GeneratorWrapper};
+use serde::{Deserialize, Serialize};
 
 use crate::deformable_terrain::{
     driver::{RENDER_RADIUS_SQUARED, chunk_spawn_reciever, info_print, setup_chunk_driver},
     file_loader::setup_chunk_loading,
     terrain::setup_map,
 };
+
+#[derive(Resource)]
+pub struct NoiseFunction(pub GeneratorWrapper<SafeNode>);
+
+#[derive(Component)]
+pub struct ChunkTag;
+
+#[repr(u8)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy)]
+pub enum Uniformity {
+    NonUniform,
+    Dirt,
+    Air,
+    Unknown,
+}
 
 #[derive(Resource)]
 pub struct DeformableTerrainConfig {}

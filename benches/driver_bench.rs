@@ -2,13 +2,16 @@ use crate::bench_util::find_chunk_with_surface;
 use criterion::{Criterion, criterion_group, criterion_main};
 use crossbeam_channel::unbounded;
 use marching_cubes::deformable_terrain::chunk_generator::{
-    calculate_chunk_start, chunk_contains_surface, compute_heightmap_gradients, fast_get_uniformity, generate_chunk_into_buffers, generate_noise_height_samples, generate_terrain_heights, get_fbm
+    calculate_chunk_start, chunk_contains_surface, compute_heightmap_gradients,
+    fast_get_uniformity, generate_chunk_into_buffers, generate_noise_height_samples,
+    generate_terrain_heights, get_fbm,
 };
 use marching_cubes::deformable_terrain::driver::{
-    ChunkBuffers, ChunkSpawnResult, ClusterRequest, FullLodMode, LoadStateTransition, LodBuffers, build_full_mesh_and_spawn, resolve_has_surface, try_load_chunk
+    ChunkBuffers, ChunkSpawnResult, ClusterRequest, FullLodMode, LoadStateTransition, LodBuffers,
+    build_full_mesh_and_spawn, resolve_has_surface, try_load_chunk,
 };
 use marching_cubes::deformable_terrain::file_loader::load_chunk_index_map;
-use marching_cubes::deformable_terrain::terrain::Uniformity;
+use marching_cubes::deformable_terrain::plugin::Uniformity;
 use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
 #[cfg(windows)]

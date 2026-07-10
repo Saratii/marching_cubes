@@ -8,8 +8,6 @@ use bevy::{
     prelude::*,
     render::render_resource::{AddressMode, SamplerDescriptor},
 };
-use fastnoise2::{SafeNode, generator::GeneratorWrapper};
-use serde::{Deserialize, Serialize};
 use wgpu::VertexFormat;
 
 use crate::{
@@ -24,12 +22,6 @@ use crate::{
 pub(crate) const ATTRIBUTE_MATERIAL_ID: MeshVertexAttribute =
     MeshVertexAttribute::new("MaterialId", 988540918, VertexFormat::Uint32);
 
-#[derive(Component)]
-pub struct ChunkTag;
-
-#[derive(Resource)]
-pub struct NoiseFunction(pub GeneratorWrapper<SafeNode>);
-
 #[derive(Resource)]
 pub struct TerrainMaterialHandle(
     pub Handle<ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>>,
@@ -37,15 +29,6 @@ pub struct TerrainMaterialHandle(
 
 #[derive(Resource)]
 pub struct TextureArrayHandle(pub Handle<Image>);
-
-#[repr(u8)]
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy)]
-pub enum Uniformity {
-    NonUniform,
-    Dirt,
-    Air,
-    Unknown,
-}
 
 #[derive(Clone)]
 pub struct NonUniformTerrainChunk {

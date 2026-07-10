@@ -12,14 +12,14 @@ use crate::{
         chunk_coord_to_world_pos, flatten_index, world_pos_to_chunk_coord, world_pos_to_voxel_index,
     },
     deformable_terrain::{
+        chunk_entity_map::ChunkEntityMap,
         chunk_generator::{MaterialCode, dequantize_i16_to_f32, quantize_f32_to_i16},
         driver::{TerrainChunkMap, WriteCmd, WriteCmdSender},
-        file_loader::ChunkEntityMap,
         marching_cubes::mc::mc_mesh_generation,
+        plugin::{ChunkTag, Uniformity},
         sparse_voxel_octree::sphere_intersects_aabb,
         terrain::{
-            ChunkTag, NonUniformTerrainChunk, TerrainChunk, TerrainMaterialHandle, Uniformity,
-            generate_bevy_mesh,
+            NonUniformTerrainChunk, TerrainChunk, TerrainMaterialHandle, generate_bevy_mesh,
         },
     },
     player::player::MainCameraTag,

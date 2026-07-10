@@ -16,7 +16,7 @@ use marching_cubes::{
         },
         driver::{ChunkBuffers, LodBuffers, RF1, RF1_SAMPLES_PER_CHUNK_DIM, RF5},
         marching_cubes::mc::mc_mesh_generation,
-        terrain::Uniformity,
+        plugin::Uniformity,
     },
 };
 use std::{hint::black_box, time::Duration};

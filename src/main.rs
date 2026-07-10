@@ -29,9 +29,8 @@ use marching_cubes::deformable_terrain::driver::{
 use marching_cubes::deformable_terrain::driver_debug_ui::{spawn_debug_texts, update_debug_texts};
 use marching_cubes::deformable_terrain::file_loader::setup_chunk_loading;
 use marching_cubes::deformable_terrain::plugin::{
-    DeformableTerrainConfig, DeformableTerrainPlugin,
+    DeformableTerrainConfig, DeformableTerrainPlugin, NoiseFunction,
 };
-use marching_cubes::deformable_terrain::terrain::NoiseFunction;
 use marching_cubes::deformable_terrain::terrain_material::TerrainMaterialExtension;
 use marching_cubes::lighting::lighting_main::{
     apply_settings_changes, setup_camera, setup_lighting,

@@ -29,10 +29,6 @@ name = "file_io"
 harness = false
 
 [[bench]]
-name = "svo_bench"
-harness = false
-
-[[bench]]
 name = "column_range_map"
 harness = false
 
