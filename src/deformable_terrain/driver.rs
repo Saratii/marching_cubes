@@ -75,7 +75,7 @@ pub enum FullLodMode {
 }
 
 #[repr(u8)]
-pub enum TerrainChunkMapModification {
+pub(crate) enum TerrainChunkMapModification {
     Insert((i16, i16, i16), TerrainChunk),
     Remove((i16, i16, i16)),
 }
@@ -126,7 +126,7 @@ pub struct NoiseGenerator(pub GeneratorWrapper<SafeNode>);
 
 //stores the data for all chunks in Z0 radius on the bevy thread. Chunk loader can write to the mutex and bevy can modify it for digging operations.
 #[derive(Resource)]
-pub struct TerrainChunkMap(pub Arc<Mutex<FxHashMap<(i16, i16, i16), TerrainChunk>>>);
+pub struct TerrainChunkMap(pub(crate) Arc<Mutex<FxHashMap<(i16, i16, i16), TerrainChunk>>>);
 
 #[repr(u8)]
 #[derive(Debug, PartialEq, Copy, Clone)]
