@@ -104,7 +104,7 @@ fn main() {
             SystemInformationDiagnosticsPlugin,
             PerfUiPlugin,
             RapierPhysicsPlugin::<NoUserData>::default(),
-            DeformableTerrainPlugin,
+            DeformableTerrainPlugin { lods: false },
             MaterialPlugin::<ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>>::default(
             ),
             // LogDiagnosticsPlugin::default(),

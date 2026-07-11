@@ -8,7 +8,7 @@ use marching_cubes::deformable_terrain::chunk_generator::{
 };
 use marching_cubes::deformable_terrain::driver::{
     ChunkBuffers, ChunkSpawnResult, ClusterRequest, FullLodMode, LoadStateTransition, LodBuffers,
-    build_full_mesh_and_spawn, resolve_has_surface, try_load_chunk,
+    build_full_mesh_and_spawn, lod_resolve_has_surface, try_load_chunk,
 };
 use marching_cubes::deformable_terrain::file_loader::load_chunk_index_map;
 use marching_cubes::deformable_terrain::plugin::Uniformity;
@@ -134,7 +134,7 @@ fn bench_resolve_has_surface_lod5(c: &mut Criterion) {
     let (chunk_spawn_sender, _chunk_spawn_reciever) = unbounded::<ChunkSpawnResult>();
     c.bench_function("resolve_has_surface_lod5", |b| {
         b.iter(|| {
-            black_box(resolve_has_surface(
+            black_box(lod_resolve_has_surface(
                 black_box(&cluster_request),
                 black_box(&chunk_buffers),
                 black_box(&mut lod_buffers),
@@ -170,7 +170,7 @@ fn bench_resolve_has_surface_lod1(c: &mut Criterion) {
     let (chunk_spawn_sender, _chunk_spawn_reciever) = unbounded::<ChunkSpawnResult>();
     c.bench_function("resolve_has_surface_lod1", |b| {
         b.iter(|| {
-            black_box(resolve_has_surface(
+            black_box(lod_resolve_has_surface(
                 black_box(&cluster_request),
                 black_box(&chunk_buffers),
                 black_box(&mut lod_buffers),
@@ -206,7 +206,7 @@ fn bench_resolve_has_surface_full_collider(c: &mut Criterion) {
     let (chunk_spawn_sender, _chunk_spawn_reciever) = unbounded::<ChunkSpawnResult>();
     c.bench_function("resolve_has_surface_full_collider", |b| {
         b.iter(|| {
-            black_box(resolve_has_surface(
+            black_box(lod_resolve_has_surface(
                 black_box(&cluster_request),
                 black_box(&chunk_buffers),
                 black_box(&mut lod_buffers),

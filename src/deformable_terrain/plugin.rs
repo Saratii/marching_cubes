@@ -9,7 +9,7 @@ use fastnoise2::{SafeNode, generator::GeneratorWrapper};
 use serde::{Deserialize, Serialize};
 
 use crate::deformable_terrain::{
-    driver::{RENDER_RADIUS_SQUARED, chunk_spawn_reciever, info_print, setup_chunk_driver},
+    driver::{Lods, RENDER_RADIUS_SQUARED, chunk_spawn_reciever, info_print, setup_chunk_driver},
     file_loader::setup_chunk_loading,
     terrain::setup_map,
 };
@@ -30,7 +30,9 @@ pub enum Uniformity {
 }
 
 #[derive(Resource)]
-pub struct DeformableTerrainConfig {}
+pub struct DeformableTerrainConfig {
+    pub lods: bool,
+}
 
 impl DeformableTerrainConfig {
     pub fn render_radius() -> u32 {
@@ -39,6 +41,10 @@ impl DeformableTerrainConfig {
 
     pub fn set_render_radius(radius: u32) {
         RENDER_RADIUS_SQUARED.store(radius, Ordering::Relaxed);
+    }
+
+    pub fn default() -> Self {
+        DeformableTerrainConfig { lods: false }
     }
 }
 
@@ -59,7 +65,9 @@ impl MoveableCenter {
     }
 }
 
-pub struct DeformableTerrainPlugin;
+pub struct DeformableTerrainPlugin {
+    pub lods: bool,
+}
 
 impl Plugin for DeformableTerrainPlugin {
     fn build(&self, app: &mut App) {
@@ -67,6 +75,8 @@ impl Plugin for DeformableTerrainPlugin {
             center_mutex: Arc::new(Mutex::new(Vec3::ZERO)),
             last_center: Vec3::ZERO,
         })
+        .insert_resource(DeformableTerrainConfig::default())
+        .insert_resource(Lods(self.lods))
         .add_systems(
             Startup,
             (

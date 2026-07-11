@@ -14,7 +14,7 @@ use marching_cubes::{
             fast_get_uniformity, fill_voxel_densities, generate_chunk_into_buffers,
             generate_noise_height_samples, generate_terrain_heights, get_fbm,
         },
-        driver::{ChunkBuffers, LodBuffers, RF1, RF1_SAMPLES_PER_CHUNK_DIM, RF5},
+        driver::{ChunkBuffers, LodBuffers},
         marching_cubes::mc::mc_mesh_generation,
         plugin::Uniformity,
     },
@@ -150,7 +150,7 @@ fn bench_downscale(c: &mut Criterion) {
                     black_box(&chunk_buffers.material),
                     black_box(&mut lod_buffers.density_r1),
                     black_box(&mut lod_buffers.material_r1),
-                    black_box(RF1_SAMPLES_PER_CHUNK_DIM),
+                    black_box(32),
                 ));
             })
         });
@@ -166,7 +166,7 @@ fn bench_chunk_contains_surface_full(c: &mut Criterion) {
 }
 
 fn bench_chunk_contains_surface_r1(c: &mut Criterion) {
-    let density_r1 = [-10; SAMPLES_PER_CHUNK / RF1.pow(3)]; //no surface is the common and worst case
+    let density_r1 = [-10; SAMPLES_PER_CHUNK / 2_usize.pow(3)]; //no surface is the common and worst case
     c.bench_function("chunk_contains_surface_r1", |b| {
         b.iter(|| {
             black_box(chunk_contains_surface(black_box(&density_r1)));
@@ -175,7 +175,7 @@ fn bench_chunk_contains_surface_r1(c: &mut Criterion) {
 }
 
 fn bench_chunk_contains_surface_r5(c: &mut Criterion) {
-    let density_r5 = [-10; SAMPLES_PER_CHUNK / RF5.pow(3)]; //no surface is the common and worst case
+    let density_r5 = [-10; SAMPLES_PER_CHUNK / 32_usize.pow(3)]; //no surface is the common and worst case
     c.bench_function("chunk_contains_surface_r5", |b| {
         b.iter(|| {
             black_box(chunk_contains_surface(black_box(&density_r5)));
