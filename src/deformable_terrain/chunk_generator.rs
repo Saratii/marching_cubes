@@ -31,6 +31,35 @@ pub fn get_fbm() -> GeneratorWrapper<SafeNode> {
     (mountains).build()
 }
 
+#[derive(Clone)]
+pub enum HeightSource {
+    Noise(GeneratorWrapper<SafeNode>),
+    Flat(f32),
+}
+
+//dispatches once per column; Flat is strictly cheaper than Noise (no bicubic, no sampling)
+pub fn compute_heightmap_and_gradients(
+    chunk_start_x: f32, //assumed to be even and integer
+    chunk_start_z: f32, //assumed to be even and integer
+    height_source: &HeightSource,
+    heightmap_buffer: &mut [f32], // (SAMPLES_PER_CHUNK_DIM + 2) * (SAMPLES_PER_CHUNK_DIM + 2)
+    dhdx: &mut [f32],
+    dhdz: &mut [f32],
+) {
+    match height_source {
+        HeightSource::Noise(fbm) => {
+            let noise_samples = generate_noise_height_samples(chunk_start_x, chunk_start_z, fbm);
+            generate_terrain_heights(heightmap_buffer, &noise_samples);
+            compute_heightmap_gradients(dhdx, dhdz, &noise_samples);
+        }
+        HeightSource::Flat(height) => {
+            heightmap_buffer.fill(*height);
+            dhdx.fill(0.0);
+            dhdz.fill(0.0);
+        }
+    }
+}
+
 //assumed to only be called on full res buffers
 pub fn generate_chunk_into_buffers(chunk_start: Vec3, chunk_buffers: &mut ChunkBuffers) {
     fill_voxel_densities(chunk_buffers, &chunk_start);

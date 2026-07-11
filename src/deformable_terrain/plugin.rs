@@ -15,6 +15,9 @@ use crate::deformable_terrain::{
 };
 
 #[derive(Resource)]
+pub(crate) struct FlatTerrainHeight(pub(crate) Option<f32>);
+
+#[derive(Resource)]
 pub struct NoiseFunction(pub GeneratorWrapper<SafeNode>);
 
 #[derive(Component)]
@@ -67,6 +70,7 @@ impl MoveableCenter {
 
 pub struct DeformableTerrainPlugin {
     pub lods: bool,
+    pub flat_terrain_height: Option<f32>,
 }
 
 impl Plugin for DeformableTerrainPlugin {
@@ -77,6 +81,7 @@ impl Plugin for DeformableTerrainPlugin {
         })
         .insert_resource(DeformableTerrainConfig::default())
         .insert_resource(Lods(self.lods))
+        .insert_resource(FlatTerrainHeight(self.flat_terrain_height))
         .add_systems(
             Startup,
             (

@@ -104,7 +104,10 @@ fn main() {
             SystemInformationDiagnosticsPlugin,
             PerfUiPlugin,
             RapierPhysicsPlugin::<NoUserData>::default(),
-            DeformableTerrainPlugin { lods: false },
+            DeformableTerrainPlugin {
+                lods: false,
+                flat_terrain_height: Some(1.0),
+            },
             MaterialPlugin::<ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>>::default(
             ),
             // LogDiagnosticsPlugin::default(),

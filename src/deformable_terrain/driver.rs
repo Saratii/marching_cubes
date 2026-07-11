@@ -2,9 +2,10 @@ use crate::constants::SAMPLES_PER_CHUNK_PADDED;
 use crate::conversions::{chunk_coord_to_cluster_coord, cluster_coord_to_world_center};
 use crate::deformable_terrain::chunk_entity_map::ChunkEntityMap;
 use crate::deformable_terrain::chunk_generator::{
-    MaterialCode, calculate_chunk_start, chunk_contains_surface, compute_heightmap_gradients,
-    downscale, fast_get_uniformity, generate_chunk_into_buffers, generate_noise_height_samples,
-    generate_terrain_heights, get_fbm, padded_chunk_contains_surface,
+    HeightSource, MaterialCode, calculate_chunk_start, chunk_contains_surface,
+    compute_heightmap_and_gradients, compute_heightmap_gradients, downscale, fast_get_uniformity,
+    generate_chunk_into_buffers, generate_noise_height_samples, generate_terrain_heights, get_fbm,
+    padded_chunk_contains_surface,
 };
 use crate::deformable_terrain::column_range_map::ColumnRangeMap;
 #[cfg(feature = "debug")]
@@ -16,7 +17,7 @@ use crate::deformable_terrain::file_loader::{
     remove_uniform_chunk, update_chunk, write_chunk, write_uniform_chunk,
 };
 use crate::deformable_terrain::marching_cubes::mc::mc_mesh_generation;
-use crate::deformable_terrain::plugin::{ChunkTag, MoveableCenter, Uniformity};
+use crate::deformable_terrain::plugin::{ChunkTag, FlatTerrainHeight, MoveableCenter, Uniformity};
 use crate::deformable_terrain::sparse_voxel_octree::SvoNode;
 use crate::deformable_terrain::terrain::{
     NonUniformTerrainChunk, TerrainChunk, TerrainMaterialHandle, generate_bevy_mesh,
@@ -259,9 +260,12 @@ pub(crate) fn setup_chunk_driver(
     mut commands: Commands,
     moveable_center: Res<MoveableCenter>,
     lods: Res<Lods>,
+    flat_terrain: Res<FlatTerrainHeight>,
 ) {
     let lods: bool = lods.0;
+    let flat_terrain_height = flat_terrain.0;
     commands.remove_resource::<Lods>();
+    commands.remove_resource::<FlatTerrainHeight>();
     #[cfg(feature = "timers")]
     {
         std::fs::create_dir_all("plots").unwrap();
@@ -315,6 +319,10 @@ pub(crate) fn setup_chunk_driver(
     let column_range_map = Arc::new(column_range_map);
     let fbm = get_fbm();
     commands.insert_resource(NoiseGenerator(fbm.clone()));
+    let height_source = match flat_terrain_height {
+        Some(height) => HeightSource::Flat(height),
+        None => HeightSource::Noise(fbm.clone()),
+    };
     let (write_tx, write_rx) = crossbeam_channel::unbounded();
     let index_map_delta_arc = Arc::clone(&index_map_delta);
     let data_file_write = OpenOptions::new()
@@ -363,7 +371,7 @@ pub(crate) fn setup_chunk_driver(
             .unwrap();
         let res_tx_clone = res_tx.clone();
         let chunk_spawn_channel = chunk_spawn_sender.clone();
-        let fbm_clone = fbm.clone();
+        let height_source_clone = height_source.clone();
         let column_range_map_read_only = Arc::clone(&column_range_map);
         let write_sender_clone = write_tx.clone();
         let priority_queue_arc = Arc::clone(&priority_queue);
@@ -380,7 +388,7 @@ pub(crate) fn setup_chunk_driver(
                         index_map_delta,
                         chunk_data_file_read,
                         chunk_spawn_channel,
-                        fbm_clone,
+                        height_source_clone,
                         column_range_map_read_only,
                         write_sender_clone,
                         priority_queue_arc,
@@ -394,7 +402,7 @@ pub(crate) fn setup_chunk_driver(
                         index_map_delta,
                         chunk_data_file_read,
                         chunk_spawn_channel,
-                        fbm_clone,
+                        height_source_clone,
                         column_range_map_read_only,
                         write_sender_clone,
                         priority_queue_arc,
@@ -500,7 +508,7 @@ fn lod_chunk_loader_thread(
     index_map_delta: Arc<RwLock<FxHashMap<(i16, i16, i16), u64>>>,
     mut chunk_data_file_read: File,
     chunk_spawn_channel: Sender<ChunkSpawnResult>,
-    fbm: GeneratorWrapper<SafeNode>,
+    height_source: HeightSource,
     column_range_map_read_only: Arc<ColumnRangeMap>,
     write_sender: Sender<WriteCmd>,
     priority_queue: Arc<(Mutex<BinaryHeap<ClusterRequest>>, Condvar)>,
@@ -582,19 +590,13 @@ fn lod_chunk_loader_thread(
                         let chunk_start = calculate_chunk_start(&chunk_coord);
                         if uniformity == Uniformity::Unknown {
                             if !has_heightmap_been_calculated {
-                                let noise_samples = generate_noise_height_samples(
+                                compute_heightmap_and_gradients(
                                     chunk_start.x,
                                     chunk_start.z,
-                                    &fbm,
-                                );
-                                generate_terrain_heights(
+                                    &height_source,
                                     &mut chunk_buffers.heightmap,
-                                    &noise_samples,
-                                );
-                                compute_heightmap_gradients(
                                     &mut chunk_buffers.dhdx,
                                     &mut chunk_buffers.dhdz,
-                                    &noise_samples,
                                 );
                                 has_heightmap_been_calculated = true;
                             }
@@ -687,7 +689,7 @@ fn chunk_loader_thread(
     index_map_delta: Arc<RwLock<FxHashMap<(i16, i16, i16), u64>>>,
     mut chunk_data_file_read: File,
     chunk_spawn_channel: Sender<ChunkSpawnResult>,
-    fbm: GeneratorWrapper<SafeNode>,
+    height_source: HeightSource,
     column_range_map_read_only: Arc<ColumnRangeMap>,
     write_sender: Sender<WriteCmd>,
     priority_queue: Arc<(Mutex<BinaryHeap<ClusterRequest>>, Condvar)>,
@@ -768,19 +770,13 @@ fn chunk_loader_thread(
                         let chunk_start = calculate_chunk_start(&chunk_coord);
                         if uniformity == Uniformity::Unknown {
                             if !has_heightmap_been_calculated {
-                                let noise_samples = generate_noise_height_samples(
+                                compute_heightmap_and_gradients(
                                     chunk_start.x,
                                     chunk_start.z,
-                                    &fbm,
-                                );
-                                generate_terrain_heights(
+                                    &height_source,
                                     &mut chunk_buffers.heightmap,
-                                    &noise_samples,
-                                );
-                                compute_heightmap_gradients(
                                     &mut chunk_buffers.dhdx,
                                     &mut chunk_buffers.dhdz,
-                                    &noise_samples,
                                 );
                                 has_heightmap_been_calculated = true;
                             }
