@@ -12,11 +12,11 @@ use marching_cubes::{
         chunk_generator::{
             calculate_chunk_start, chunk_contains_surface, compute_heightmap_gradients, downscale,
             fast_get_uniformity, fill_voxel_densities, generate_chunk_into_buffers,
-            generate_noise_height_samples, generate_terrain_heights, get_fbm,
+            generate_noise_height_samples, generate_terrain_heights,
         },
         driver::{ChunkBuffers, LodBuffers},
         marching_cubes::mc::mc_mesh_generation,
-        plugin::Uniformity,
+        plugin::{NoiseHeightConfig, Uniformity},
     },
 };
 use std::{hint::black_box, time::Duration};
@@ -25,7 +25,7 @@ use crate::bench_util::find_chunk_with_surface;
 
 fn benchmark_generate_chunk_into_buffers(c: &mut Criterion) {
     let chunk_coord = find_chunk_with_surface();
-    let fbm = get_fbm();
+    let fbm = NoiseHeightConfig::default();
     let mut chunk_buffers = ChunkBuffers::new();
     let chunk_start = calculate_chunk_start(&chunk_coord);
     let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
@@ -55,7 +55,7 @@ fn benchmark_generate_chunk_into_buffers(c: &mut Criterion) {
 }
 
 fn benchmark_generate_uniform_densities_cpu(c: &mut Criterion) {
-    let fbm = get_fbm();
+    let fbm = NoiseHeightConfig::default();
     let chunk_start = calculate_chunk_start(&(0, 2000, 0));
     let mut chunk_buffers = ChunkBuffers::new();
     let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
@@ -77,7 +77,7 @@ fn benchmark_generate_uniform_densities_cpu(c: &mut Criterion) {
 
 fn benchmark_marching_cubes(c: &mut Criterion) {
     let chunk = find_chunk_with_surface();
-    let fbm = get_fbm();
+    let fbm = NoiseHeightConfig::default();
     let chunk_start = calculate_chunk_start(&chunk);
     let mut chunk_buffers = ChunkBuffers::new();
     let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
@@ -103,7 +103,7 @@ fn benchmark_marching_cubes(c: &mut Criterion) {
 
 fn benchmark_compute_heightmap_gradients(c: &mut Criterion) {
     let chunk_coord = find_chunk_with_surface();
-    let fbm = get_fbm();
+    let fbm = NoiseHeightConfig::default();
     let chunk_start = calculate_chunk_start(&chunk_coord);
     let height_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
     let mut dhdx_buffer = [0.0; SAMPLES_PER_CHUNK_2D_PADDED];
@@ -124,7 +124,7 @@ fn bench_downscale(c: &mut Criterion) {
     let mut chunk_buffers = ChunkBuffers::new();
     let mut lod_buffers = LodBuffers::new();
     let chunk_start = calculate_chunk_start(&chunk_coord);
-    let fbm = get_fbm();
+    let fbm = NoiseHeightConfig::default();
     let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
     generate_terrain_heights(&mut chunk_buffers.heightmap, &noise_samples);
     compute_heightmap_gradients(
@@ -186,7 +186,7 @@ fn bench_chunk_contains_surface_r5(c: &mut Criterion) {
 fn bench_generate_noise_height_samples(c: &mut Criterion) {
     let chunk_start_x = -894.;
     let chunk_start_z = 1242.;
-    let fbm: fastnoise2::generator::GeneratorWrapper<fastnoise2::SafeNode> = get_fbm();
+    let fbm = NoiseHeightConfig::default();
     c.bench_function("generate_noise_height_samples", |b| {
         b.iter(|| {
             black_box(generate_noise_height_samples(
@@ -202,7 +202,7 @@ fn bench_generate_terrain_heights(c: &mut Criterion) {
     let mut heightmap_buffer = [0.0; SAMPLES_PER_CHUNK_2D_PADDED];
     let chunk_start_x = -894.;
     let chunk_start_z = 1242.;
-    let fbm: fastnoise2::generator::GeneratorWrapper<fastnoise2::SafeNode> = get_fbm();
+    let fbm = NoiseHeightConfig::default();
     let noise_samples = generate_noise_height_samples(chunk_start_x, chunk_start_z, &fbm);
     c.bench_function("generate_terrain_heights", |b| {
         b.iter(|| {
@@ -216,7 +216,7 @@ fn bench_generate_terrain_heights(c: &mut Criterion) {
 
 fn bench_fill_voxel_densities(c: &mut Criterion) {
     let chunk_coord = find_chunk_with_surface();
-    let fbm = get_fbm();
+    let fbm = NoiseHeightConfig::default();
     let mut chunk_buffers = ChunkBuffers::new();
     let chunk_start = calculate_chunk_start(&chunk_coord);
     let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
@@ -246,7 +246,7 @@ fn bench_fast_get_uniformity_uniform(c: &mut Criterion) {
     let chunk_coord = (0, 2000, 0);
     let mut chunk_buffers = ChunkBuffers::new();
     let chunk_start = calculate_chunk_start(&chunk_coord);
-    let fbm = get_fbm();
+    let fbm = NoiseHeightConfig::default();
     let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
     generate_terrain_heights(&mut chunk_buffers.heightmap, &noise_samples);
     compute_heightmap_gradients(
@@ -278,7 +278,7 @@ fn bench_fast_get_uniformity_non_uniform(c: &mut Criterion) {
     let chunk_coord = find_chunk_with_surface();
     let mut chunk_buffers = ChunkBuffers::new();
     let chunk_start = calculate_chunk_start(&chunk_coord);
-    let fbm = get_fbm();
+    let fbm = NoiseHeightConfig::default();
     let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
     generate_terrain_heights(&mut chunk_buffers.heightmap, &noise_samples);
     compute_heightmap_gradients(

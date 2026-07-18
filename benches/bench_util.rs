@@ -2,16 +2,16 @@ use marching_cubes::deformable_terrain::{
     chunk_generator::{
         calculate_chunk_start, chunk_contains_surface, compute_heightmap_gradients,
         generate_chunk_into_buffers, generate_noise_height_samples, generate_terrain_heights,
-        get_fbm,
     },
     driver::ChunkBuffers,
+    plugin::NoiseHeightConfig,
 };
 
 pub fn find_chunk_with_surface() -> (i16, i16, i16) {
     let mut chunk_buffers = ChunkBuffers::new();
     let chunk_coord = (0, 0, 0);
     let chunk_start = calculate_chunk_start(&chunk_coord);
-    let fbm = get_fbm();
+    let fbm = NoiseHeightConfig::default();
     let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
     generate_terrain_heights(&mut chunk_buffers.heightmap, &noise_samples);
     compute_heightmap_gradients(

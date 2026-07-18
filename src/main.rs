@@ -19,7 +19,6 @@ use iyes_perf_ui::PerfUiPlugin;
 use iyes_perf_ui::prelude::PerfUiDefaultEntries;
 
 use marching_cubes::build_initial_area::build_initial_area;
-use marching_cubes::deformable_terrain::chunk_generator::get_fbm;
 #[cfg(feature = "debug")]
 use marching_cubes::deformable_terrain::debug_lines::{
     draw_cluster_debug, draw_collider_debug, draw_lod_debug, draw_voxel_surface_debug,
@@ -32,7 +31,7 @@ use marching_cubes::deformable_terrain::driver::{
 use marching_cubes::deformable_terrain::driver_debug_ui::{spawn_debug_texts, update_debug_texts};
 use marching_cubes::deformable_terrain::file_loader::setup_chunk_loading;
 use marching_cubes::deformable_terrain::plugin::{
-    DeformableTerrainConfig, DeformableTerrainPlugin, NoiseFunction,
+    DeformableTerrainConfig, DeformableTerrainPlugin, HeightSource, NoiseHeightConfig,
 };
 use marching_cubes::deformable_terrain::terrain_material::TerrainMaterialExtension;
 use marching_cubes::lighting::lighting_main::{
@@ -77,7 +76,6 @@ fn main() {
             focused_mode: update_mode,
             unfocused_mode: update_mode,
         })
-        .insert_resource(NoiseFunction(get_fbm()))
         .add_plugins((
             DefaultPlugins
                 .set(WindowPlugin {
@@ -111,7 +109,8 @@ fn main() {
             MaterialAllocatorDiagnosticPlugin::<StandardMaterial>::default(),
             DeformableTerrainPlugin {
                 lods: false,
-                flat_terrain_height: Some(1.0),
+                height_source: HeightSource::Flat(1.0),
+                // height_source: HeightSource::Noise(NoiseHeightConfig::default()),
             },
             MaterialPlugin::<ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>>::default(
             ),

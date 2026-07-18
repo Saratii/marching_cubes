@@ -7,11 +7,13 @@ use fastnoise2::{
 
 use crate::{
     constants::{
-        CHUNK_WORLD_SIZE, HALF_CHUNK, NOISE_AMPLITUDE, NOISE_FREQUENCY, SAMPLES_PER_CHUNK_2D,
-        SAMPLES_PER_CHUNK_2D_PADDED, SAMPLES_PER_CHUNK_DIM, SAMPLES_PER_CHUNK_DIM_PADDED,
-        VOXEL_WORLD_SIZE, WORLD_SEED,
+        CHUNK_WORLD_SIZE, HALF_CHUNK, SAMPLES_PER_CHUNK_2D, SAMPLES_PER_CHUNK_2D_PADDED,
+        SAMPLES_PER_CHUNK_DIM, SAMPLES_PER_CHUNK_DIM_PADDED, VOXEL_WORLD_SIZE,
     },
-    deformable_terrain::{driver::ChunkBuffers, plugin::Uniformity},
+    deformable_terrain::{
+        driver::ChunkBuffers,
+        plugin::{HeightSource, NoiseHeightConfig, Uniformity},
+    },
 };
 
 const SCALE: f32 = 32767.0 / 10.0; // Map [-10, 10] to [-32767, 32767]
@@ -31,12 +33,6 @@ pub fn get_fbm() -> GeneratorWrapper<SafeNode> {
     (mountains).build()
 }
 
-#[derive(Clone)]
-pub enum HeightSource {
-    Noise(GeneratorWrapper<SafeNode>),
-    Flat(f32),
-}
-
 //dispatches once per column; Flat is strictly cheaper than Noise (no bicubic, no sampling)
 pub fn compute_heightmap_and_gradients(
     chunk_start_x: f32, //assumed to be even and integer
@@ -47,8 +43,8 @@ pub fn compute_heightmap_and_gradients(
     dhdz: &mut [f32],
 ) {
     match height_source {
-        HeightSource::Noise(fbm) => {
-            let noise_samples = generate_noise_height_samples(chunk_start_x, chunk_start_z, fbm);
+        HeightSource::Noise(config) => {
+            let noise_samples = generate_noise_height_samples(chunk_start_x, chunk_start_z, config);
             generate_terrain_heights(heightmap_buffer, &noise_samples);
             compute_heightmap_gradients(dhdx, dhdz, &noise_samples);
         }
@@ -69,22 +65,22 @@ pub fn generate_chunk_into_buffers(chunk_start: Vec3, chunk_buffers: &mut ChunkB
 pub fn generate_noise_height_samples(
     chunk_start_x: f32, //assumed to be even and integer
     chunk_start_z: f32, //assumed to be even and integer
-    fbm: &GeneratorWrapper<SafeNode>,
+    config: &NoiseHeightConfig,
 ) -> [f32; 25] {
     let mut noise_grid = [0.0; 25];
     let x_start = ((chunk_start_x - HALF_CHUNK) / HALF_CHUNK) as i32;
     let z_start = ((chunk_start_z - HALF_CHUNK) / HALF_CHUNK) as i32;
-    fbm.gen_uniform_grid_2d(
+    config.generator.gen_uniform_grid_2d(
         &mut noise_grid,
         x_start,
         z_start,
         5,
         5,
-        NOISE_FREQUENCY * HALF_CHUNK,
-        WORLD_SEED,
+        config.frequency * HALF_CHUNK,
+        config.seed,
     );
     for v in &mut noise_grid {
-        *v *= NOISE_AMPLITUDE;
+        *v *= config.amplitude;
     }
     noise_grid
 }

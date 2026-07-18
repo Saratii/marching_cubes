@@ -4,14 +4,14 @@ use crossbeam_channel::unbounded;
 use marching_cubes::deformable_terrain::chunk_generator::{
     calculate_chunk_start, chunk_contains_surface, compute_heightmap_gradients,
     fast_get_uniformity, generate_chunk_into_buffers, generate_noise_height_samples,
-    generate_terrain_heights, get_fbm,
+    generate_terrain_heights,
 };
 use marching_cubes::deformable_terrain::driver::{
     ChunkBuffers, ChunkSpawnResult, ClusterRequest, FullLodMode, LoadStateTransition, LodBuffers,
     build_full_mesh_and_spawn, lod_resolve_has_surface, try_load_chunk,
 };
 use marching_cubes::deformable_terrain::file_loader::load_chunk_index_map;
-use marching_cubes::deformable_terrain::plugin::Uniformity;
+use marching_cubes::deformable_terrain::plugin::{NoiseHeightConfig, Uniformity};
 use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
 #[cfg(windows)]
@@ -26,7 +26,7 @@ fn benchmark_build_full_mesh_and_spawn_with_collider(c: &mut Criterion) {
     let chunk_coord = find_chunk_with_surface();
     let mut chunk_buffers = ChunkBuffers::new();
     let chunk_start = calculate_chunk_start(&chunk_coord);
-    let fbm = get_fbm();
+    let fbm = NoiseHeightConfig::default();
     let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
     generate_terrain_heights(&mut chunk_buffers.heightmap, &noise_samples);
     compute_heightmap_gradients(
@@ -70,7 +70,7 @@ fn benchmark_build_full_mesh_and_spawn_no_collider(c: &mut Criterion) {
     let chunk_coord = find_chunk_with_surface();
     let mut chunk_buffers = ChunkBuffers::new();
     let chunk_start = calculate_chunk_start(&chunk_coord);
-    let fbm = get_fbm();
+    let fbm = NoiseHeightConfig::default();
     let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
     generate_terrain_heights(&mut chunk_buffers.heightmap, &noise_samples);
     compute_heightmap_gradients(
@@ -115,7 +115,7 @@ fn bench_resolve_has_surface_lod5(c: &mut Criterion) {
     let mut chunk_buffers = ChunkBuffers::new();
     let mut lod_buffers = LodBuffers::new();
     let chunk_start = calculate_chunk_start(&chunk_coord);
-    let fbm = get_fbm();
+    let fbm = NoiseHeightConfig::default();
     let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
     generate_terrain_heights(&mut chunk_buffers.heightmap, &noise_samples);
     compute_heightmap_gradients(
@@ -151,7 +151,7 @@ fn bench_resolve_has_surface_lod1(c: &mut Criterion) {
     let mut chunk_buffers = ChunkBuffers::new();
     let mut lod_buffers = LodBuffers::new();
     let chunk_start = calculate_chunk_start(&chunk_coord);
-    let fbm = get_fbm();
+    let fbm = NoiseHeightConfig::default();
     let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
     generate_terrain_heights(&mut chunk_buffers.heightmap, &noise_samples);
     compute_heightmap_gradients(
@@ -187,7 +187,7 @@ fn bench_resolve_has_surface_full_collider(c: &mut Criterion) {
     let mut chunk_buffers = ChunkBuffers::new();
     let mut lod_buffers = LodBuffers::new();
     let chunk_start = calculate_chunk_start(&chunk_coord);
-    let fbm = get_fbm();
+    let fbm = NoiseHeightConfig::default();
     let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
     generate_terrain_heights(&mut chunk_buffers.heightmap, &noise_samples);
     compute_heightmap_gradients(
@@ -222,7 +222,7 @@ fn bench_try_load_chunk_fail(c: &mut Criterion) {
     let chunk_coord = find_chunk_with_surface();
     let mut chunk_buffers = ChunkBuffers::new();
     let chunk_start = calculate_chunk_start(&chunk_coord);
-    let fbm = get_fbm();
+    let fbm = NoiseHeightConfig::default();
     let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
     generate_terrain_heights(&mut chunk_buffers.heightmap, &noise_samples);
     compute_heightmap_gradients(
@@ -262,7 +262,7 @@ fn bench_try_load_chunk_success(c: &mut Criterion) {
     let chunk_coord = find_chunk_with_surface();
     let mut chunk_buffers = ChunkBuffers::new();
     let chunk_start = calculate_chunk_start(&chunk_coord);
-    let fbm = get_fbm();
+    let fbm = NoiseHeightConfig::default();
     let noise_samples = generate_noise_height_samples(chunk_start.x, chunk_start.z, &fbm);
     generate_terrain_heights(&mut chunk_buffers.heightmap, &noise_samples);
     compute_heightmap_gradients(

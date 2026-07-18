@@ -2,10 +2,8 @@ use crate::constants::SAMPLES_PER_CHUNK_PADDED;
 use crate::conversions::{chunk_coord_to_cluster_coord, cluster_coord_to_world_center};
 use crate::deformable_terrain::chunk_entity_map::ChunkEntityMap;
 use crate::deformable_terrain::chunk_generator::{
-    HeightSource, MaterialCode, calculate_chunk_start, chunk_contains_surface,
-    compute_heightmap_and_gradients, compute_heightmap_gradients, downscale, fast_get_uniformity,
-    generate_chunk_into_buffers, generate_noise_height_samples, generate_terrain_heights, get_fbm,
-    padded_chunk_contains_surface,
+    MaterialCode, calculate_chunk_start, chunk_contains_surface, compute_heightmap_and_gradients,
+    downscale, fast_get_uniformity, generate_chunk_into_buffers, padded_chunk_contains_surface,
 };
 use crate::deformable_terrain::column_range_map::ColumnRangeMap;
 #[cfg(feature = "debug")]
@@ -17,7 +15,9 @@ use crate::deformable_terrain::file_loader::{
     remove_uniform_chunk, update_chunk, write_chunk, write_uniform_chunk,
 };
 use crate::deformable_terrain::marching_cubes::mc::mc_mesh_generation;
-use crate::deformable_terrain::plugin::{ChunkTag, FlatTerrainHeight, MoveableCenter, Uniformity};
+use crate::deformable_terrain::plugin::{
+    ChunkTag, HeightSource, MoveableCenter, TerrainHeightSource, Uniformity,
+};
 use crate::deformable_terrain::sparse_voxel_octree::SvoNode;
 use crate::deformable_terrain::terrain::{
     NonUniformTerrainChunk, TerrainChunk, TerrainMaterialHandle, generate_bevy_mesh,
@@ -33,7 +33,6 @@ use crate::{
 use bevy::{camera::primitives::MeshAabb, prelude::*};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use fastnoise2::{SafeNode, generator::GeneratorWrapper};
 use parking_lot::RwLock;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cmp::Ordering::Equal;
@@ -122,9 +121,6 @@ pub struct FrameStart(pub Instant);
 
 #[derive(Resource)]
 pub struct LogicalProcesors(pub usize);
-
-#[derive(Resource)]
-pub struct NoiseGenerator(pub GeneratorWrapper<SafeNode>);
 
 //stores the data for all chunks in Z0 radius on the bevy thread. Chunk loader can write to the mutex and bevy can modify it for digging operations.
 #[derive(Resource)]
@@ -260,12 +256,11 @@ pub(crate) fn setup_chunk_driver(
     mut commands: Commands,
     moveable_center: Res<MoveableCenter>,
     lods: Res<Lods>,
-    flat_terrain: Res<FlatTerrainHeight>,
+    terrain_height_source: Res<TerrainHeightSource>,
 ) {
     let lods: bool = lods.0;
-    let flat_terrain_height = flat_terrain.0;
+    let height_source = terrain_height_source.0.clone();
     commands.remove_resource::<Lods>();
-    commands.remove_resource::<FlatTerrainHeight>();
     #[cfg(feature = "timers")]
     {
         std::fs::create_dir_all("plots").unwrap();
@@ -318,12 +313,6 @@ pub(crate) fn setup_chunk_driver(
         t0.elapsed().as_millis()
     );
     let column_range_map = Arc::new(column_range_map);
-    let fbm = get_fbm();
-    commands.insert_resource(NoiseGenerator(fbm.clone()));
-    let height_source = match flat_terrain_height {
-        Some(height) => HeightSource::Flat(height),
-        None => HeightSource::Noise(fbm.clone()),
-    };
     let (write_tx, write_rx) = crossbeam_channel::unbounded();
     let index_map_delta_arc = Arc::clone(&index_map_delta);
     let data_file_write = OpenOptions::new()
@@ -532,6 +521,18 @@ fn lod_chunk_loader_thread(
 ) {
     let mut lod_buffers = LodBuffers::new();
     let mut chunk_buffers = ChunkBuffers::new();
+    //flat heightmaps are position independent: fill the buffers once and reuse them for the lifetime of the thread
+    let heightmap_is_static = matches!(height_source, HeightSource::Flat(_));
+    if heightmap_is_static {
+        compute_heightmap_and_gradients(
+            0.0,
+            0.0,
+            &height_source,
+            &mut chunk_buffers.heightmap,
+            &mut chunk_buffers.dhdx,
+            &mut chunk_buffers.dhdz,
+        );
+    }
     let mut internal_queue = Vec::with_capacity(INTERNAL_WORKER_QUEUE_SIZE);
     loop {
         let (binary_heap_lock, condvar) = &*priority_queue;
@@ -560,7 +561,7 @@ fn lod_chunk_loader_thread(
             let min_chunk = cluster_coord_to_min_chunk_coord(cluster_request.position);
             for chunk_x in min_chunk.0..min_chunk.0 + CHUNKS_PER_CLUSTER_DIM as i16 {
                 for chunk_z in min_chunk.2..min_chunk.2 + CHUNKS_PER_CLUSTER_DIM as i16 {
-                    let mut has_heightmap_been_calculated = false;
+                    let mut has_heightmap_been_calculated = heightmap_is_static;
                     let column_cache = column_range_map_read_only.get_column(chunk_x, chunk_z);
                     for chunk_y in min_chunk.1..min_chunk.1 + CHUNKS_PER_CLUSTER_DIM as i16 {
                         let chunk_coord = (chunk_x, chunk_y, chunk_z);
@@ -717,6 +718,18 @@ fn chunk_loader_thread(
     terrain_chunk_map_modification_sender: Sender<TerrainChunkMapModification>,
 ) {
     let mut chunk_buffers = ChunkBuffers::new();
+    //flat heightmaps are position independent: fill the buffers once and reuse them for the lifetime of the thread
+    let heightmap_is_static = matches!(height_source, HeightSource::Flat(_));
+    if heightmap_is_static {
+        compute_heightmap_and_gradients(
+            0.0,
+            0.0,
+            &height_source,
+            &mut chunk_buffers.heightmap,
+            &mut chunk_buffers.dhdx,
+            &mut chunk_buffers.dhdz,
+        );
+    }
     let mut internal_queue = Vec::with_capacity(INTERNAL_WORKER_QUEUE_SIZE);
     loop {
         let (binary_heap_lock, condvar) = &*priority_queue;
@@ -745,7 +758,7 @@ fn chunk_loader_thread(
             let min_chunk = cluster_coord_to_min_chunk_coord(cluster_request.position);
             for chunk_x in min_chunk.0..min_chunk.0 + CHUNKS_PER_CLUSTER_DIM as i16 {
                 for chunk_z in min_chunk.2..min_chunk.2 + CHUNKS_PER_CLUSTER_DIM as i16 {
-                    let mut has_heightmap_been_calculated = false;
+                    let mut has_heightmap_been_calculated = heightmap_is_static;
                     let column_cache = column_range_map_read_only.get_column(chunk_x, chunk_z);
                     for chunk_y in min_chunk.1..min_chunk.1 + CHUNKS_PER_CLUSTER_DIM as i16 {
                         let chunk_coord = (chunk_x, chunk_y, chunk_z);

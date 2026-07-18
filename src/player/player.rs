@@ -12,16 +12,13 @@ use bevy::{
 use bevy_rapier3d::prelude::*;
 
 use crate::{
-    constants::{
-        CAMERA_FIRST_PERSON_OFFSET, NOISE_AMPLITUDE, NOISE_FREQUENCY, PLAYER_CUBOID_SIZE,
-        PLAYER_SPAWN, WORLD_SEED,
-    },
+    constants::{CAMERA_FIRST_PERSON_OFFSET, PLAYER_CUBOID_SIZE, PLAYER_SPAWN},
     conversions::world_pos_to_chunk_coord,
     deformable_terrain::{
         chunk_entity_map::ChunkEntityMap,
         driver::INITIAL_CHUNKS_LOADED,
         file_loader::get_project_root,
-        plugin::{ChunkTag, MoveableCenter, NoiseFunction},
+        plugin::{ChunkTag, MoveableCenter, TerrainHeightSource},
     },
     ui::menu::MenuRoot,
 };
@@ -152,7 +149,7 @@ pub fn spawn_player(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    fbm: Res<NoiseFunction>,
+    height_source: Res<TerrainHeightSource>,
     main_camera: Query<Entity, With<MainCameraTag>>,
     mut camera_controller: ResMut<CameraController>,
     mut camera_transform: Query<&mut Transform, With<MainCameraTag>>,
@@ -175,17 +172,11 @@ pub fn spawn_player(
             camera_controller.player_pitch = data.pitch;
             data.position
         }
-        // None => Vec3::new(
-        //     PLAYER_SPAWN.x,
-        //     fbm.0.gen_single_2d(
-        //         PLAYER_SPAWN.x * NOISE_FREQUENCY,
-        //         PLAYER_SPAWN.z * NOISE_FREQUENCY,
-        //         WORLD_SEED,
-        //     ) * NOISE_AMPLITUDE
-        //         + 20.0,
-        //     PLAYER_SPAWN.z,
-        // ),
-        None => Vec3::new(0.0, 5.0, 0.0),
+        None => Vec3::new(
+            PLAYER_SPAWN.x,
+            height_source.0.height_at(PLAYER_SPAWN.x, PLAYER_SPAWN.z) + 20.0,
+            PLAYER_SPAWN.z,
+        ),
     };
     let player_mesh = Cuboid::new(
         PLAYER_CUBOID_SIZE.x,
