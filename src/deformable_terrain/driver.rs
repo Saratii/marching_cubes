@@ -250,6 +250,9 @@ struct ChunkResult {
 pub struct WriteCmdSender(pub Sender<WriteCmd>);
 
 #[derive(Resource)]
+pub struct DigEntityUpdateSender(pub Sender<((i16, i16, i16), bool)>);
+
+#[derive(Resource)]
 pub(crate) struct Lods(pub(crate) bool);
 
 pub(crate) fn setup_chunk_driver(
@@ -403,6 +406,7 @@ pub(crate) fn setup_chunk_driver(
             .expect("failed to spawn chunk loader thread");
     }
     let terrain_chunk_map_arc = Arc::clone(&terrain_chunk_map);
+    let (dig_entity_update_sender, dig_entity_update_reciever) = unbounded();
     thread::spawn(move || {
         svo_manager_thread(
             res_rx,
@@ -413,9 +417,11 @@ pub(crate) fn setup_chunk_driver(
             terrain_chunk_map_arc,
             terrain_chunk_map_modification_reciever,
             terrain_chunk_map_modification_sender,
+            dig_entity_update_reciever,
             lods,
         );
     });
+    commands.insert_resource(DigEntityUpdateSender(dig_entity_update_sender));
     commands.insert_resource(WriteCmdSender(write_tx));
     commands.insert_resource(TerrainChunkMap(terrain_chunk_map));
 }
@@ -913,6 +919,7 @@ fn svo_manager_thread(
     terrain_chunk_map: Arc<Mutex<FxHashMap<(i16, i16, i16), TerrainChunk>>>,
     terrain_chunk_map_modification_reciever: Receiver<TerrainChunkMapModification>,
     terrain_chunk_map_modification_sender: Sender<TerrainChunkMapModification>,
+    dig_entity_update_reciever: Receiver<((i16, i16, i16), bool)>,
     lods: bool,
 ) {
     #[cfg(feature = "timers")]
@@ -996,6 +1003,9 @@ fn svo_manager_thread(
             if chunks_being_loaded.remove(&result.cluster_coord) {
                 svo.insert(result.cluster_coord, result.has_entity, result.load_state);
             }
+        }
+        while let Ok((chunk_coord, has_entity)) = dig_entity_update_reciever.try_recv() {
+            svo.set_chunk_has_entity(chunk_coord, has_entity);
         }
         svo.query_chunks_outside_sphere(&moveable_center, &mut clusters_to_deallocate);
         for (chunk_coord, _) in &clusters_to_deallocate {

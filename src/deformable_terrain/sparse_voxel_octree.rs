@@ -7,7 +7,10 @@ use crate::{
         REDUCED_LOD_1_RADIUS_SQUARED, REDUCED_LOD_2_RADIUS_SQUARED, REDUCED_LOD_3_RADIUS_SQUARED,
         REDUCED_LOD_4_RADIUS_SQUARED, REDUCED_LOD_5_RADIUS_SQUARED, SIMULATION_RADIUS_SQUARED,
     },
-    conversions::{cluster_coord_to_world_center, cluster_coord_to_world_pos},
+    conversions::{
+        chunk_coord_to_cluster_coord, cluster_coord_to_min_chunk_coord,
+        cluster_coord_to_world_center, cluster_coord_to_world_pos,
+    },
     deformable_terrain::driver::{ClusterRequest, LoadState, LoadStateTransition},
 };
 use bevy::prelude::*;
@@ -90,6 +93,32 @@ impl SvoNode {
             .as_mut()
             .unwrap()
             .insert(coord, has_entity, load_state);
+    }
+
+    pub fn set_chunk_has_entity(&mut self, chunk_coord: (i16, i16, i16), has_entity: bool) {
+        let cluster_coord = chunk_coord_to_cluster_coord(&chunk_coord);
+        let Some((has_entity_flags, _)) = self.find_cluster_mut(cluster_coord) else {
+            return;
+        };
+        let min_chunk = cluster_coord_to_min_chunk_coord(cluster_coord);
+        let index = ((chunk_coord.0 - min_chunk.0) as usize * CHUNKS_PER_CLUSTER_DIM
+            + (chunk_coord.2 - min_chunk.2) as usize)
+            * CHUNKS_PER_CLUSTER_DIM
+            + (chunk_coord.1 - min_chunk.1) as usize;
+        has_entity_flags[index] = has_entity;
+    }
+
+    fn find_cluster_mut(
+        &mut self,
+        cluster_coord: (i16, i16, i16),
+    ) -> Option<&mut ([bool; CHUNKS_PER_CLUSTER], LoadState)> {
+        if self.size == 1 {
+            return self.chunk.as_mut();
+        }
+        let index = self.child_index(&cluster_coord);
+        self.children.as_mut()?[index]
+            .as_mut()?
+            .find_cluster_mut(cluster_coord)
     }
 
     pub fn delete(&mut self, coord: (i16, i16, i16)) -> bool {
@@ -381,6 +410,58 @@ pub fn sphere_intersects_aabb(center: &Vec3, radius_squared: f32, min: &Vec3, ma
         d += (v - max.z) * (v - max.z);
     }
     d <= radius_squared
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::conversions::cluster_coord_to_min_chunk_coord;
+
+    /// set_chunk_has_entity must address the same slot the loader threads fill
+    /// for that chunk: they walk the cluster x-outer, z-middle, y-inner with a
+    /// rolling counter. A mismatch would silently patch the wrong chunk's bit
+    /// and resurrect the stale-collider bug this method exists to fix.
+    #[test]
+    fn set_chunk_has_entity_matches_the_loader_fill_order() {
+        //cluster away from the origin so coordinate offsets are exercised
+        let cluster_coord = (3, -2, 5);
+        let min_chunk = cluster_coord_to_min_chunk_coord(cluster_coord);
+        let dim = CHUNKS_PER_CLUSTER_DIM as i16;
+        let mut svo = SvoNode::world_root();
+        svo.insert(
+            cluster_coord,
+            [false; CHUNKS_PER_CLUSTER],
+            LoadState::FullWithCollider,
+        );
+
+        let mut rolling = 0;
+        for chunk_x in min_chunk.0..min_chunk.0 + dim {
+            for chunk_z in min_chunk.2..min_chunk.2 + dim {
+                for chunk_y in min_chunk.1..min_chunk.1 + dim {
+                    svo.set_chunk_has_entity((chunk_x, chunk_y, chunk_z), true);
+                    let (has_entity, _) = svo.find_cluster_mut(cluster_coord).unwrap();
+                    assert!(
+                        has_entity[rolling],
+                        "chunk ({chunk_x}, {chunk_y}, {chunk_z}) should map to rolling index {rolling}"
+                    );
+                    assert_eq!(
+                        has_entity.iter().filter(|b| **b).count(),
+                        rolling + 1,
+                        "exactly one new bit should be set per chunk"
+                    );
+                    rolling += 1;
+                }
+            }
+        }
+
+        //clearing goes through the same mapping
+        svo.set_chunk_has_entity(min_chunk, false);
+        let (has_entity, _) = svo.find_cluster_mut(cluster_coord).unwrap();
+        assert!(!has_entity[0]);
+
+        //a chunk whose cluster is not resident is a no-op, not a panic
+        svo.set_chunk_has_entity((min_chunk.0 + 100, min_chunk.1, min_chunk.2), true);
+    }
 }
 
 #[inline(always)]

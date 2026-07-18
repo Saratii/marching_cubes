@@ -15,7 +15,7 @@ use crate::{
     deformable_terrain::{
         chunk_entity_map::ChunkEntityMap,
         chunk_generator::{MaterialCode, dequantize_i16_to_f32, quantize_f32_to_i16},
-        driver::{TerrainChunkMap, WriteCmd, WriteCmdSender},
+        driver::{DigEntityUpdateSender, TerrainChunkMap, WriteCmd, WriteCmdSender},
         marching_cubes::mc::mc_mesh_generation,
         plugin::{ChunkTag, Deformation, Uniformity},
         sparse_voxel_octree::sphere_intersects_aabb,
@@ -207,6 +207,7 @@ pub(crate) fn deformation_message_reader(
     mut mesh_handles: ResMut<Assets<Mesh>>,
     mut terrain_io: TerrainIo,
     write_cmd_sender: Res<WriteCmdSender>,
+    dig_entity_update_sender: Res<DigEntityUpdateSender>,
 ) {
     for deformation in deformation_reader.read() {
         let modified_chunks = match *deformation {
@@ -227,6 +228,7 @@ pub(crate) fn deformation_message_reader(
             &mut mesh_handles,
             &mut terrain_io,
             &write_cmd_sender,
+            &dig_entity_update_sender,
         );
     }
 }
@@ -239,6 +241,7 @@ fn apply_modified_chunks(
     mesh_handles: &mut Assets<Mesh>,
     terrain_io: &mut TerrainIo,
     write_cmd_sender: &WriteCmdSender,
+    dig_entity_update_sender: &DigEntityUpdateSender,
 ) {
     for (chunk_coord, densities, materials, uniformity) in modified_chunks {
         let entity = terrain_io.chunk_entity_map.get_option(chunk_coord);
@@ -304,6 +307,7 @@ fn apply_modified_chunks(
                     terrain_io
                         .chunk_entity_map
                         .insert(chunk_coord, (new_entity, new_mesh_handle));
+                    let _ = dig_entity_update_sender.0.send((chunk_coord, true));
                 }
             }
         } else {
@@ -311,6 +315,7 @@ fn apply_modified_chunks(
                 commands.entity(*entity).despawn();
                 mesh_handles.remove(mesh_handle);
                 terrain_io.chunk_entity_map.remove(chunk_coord);
+                let _ = dig_entity_update_sender.0.send((chunk_coord, false));
             }
         }
         let mut terrain_chunk_map_lock = terrain_io.terrain_chunk_map.0.lock().unwrap();
