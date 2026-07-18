@@ -287,17 +287,18 @@ pub(crate) fn setup_chunk_driver(
     let svo = SvoNode::world_root();
     commands.insert_resource(ChunkSpawnReciever(chunk_spawn_reciever));
     let root = get_project_root();
+    std::fs::create_dir_all(root.join("data/terrain")).unwrap();
     let mut air_compression_file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
-        .open(root.join("data/air_compression_data.txt"))
+        .open(root.join("data/terrain/air_compression_data.txt"))
         .unwrap();
     let mut dirt_compression_file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
-        .open(root.join("data/dirt_compression_data.txt"))
+        .open(root.join("data/terrain/dirt_compression_data.txt"))
         .unwrap();
     let t0 = Instant::now();
     let mut column_range_map = ColumnRangeMap::new();
@@ -329,13 +330,13 @@ pub(crate) fn setup_chunk_driver(
         .read(true)
         .write(true)
         .create(true)
-        .open(root.join("data/chunk_data.txt"))
+        .open(root.join("data/terrain/chunk_data.txt"))
         .unwrap();
     let mut chunk_index_file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
-        .open(root.join("data/chunk_index_data.txt"))
+        .open(root.join("data/terrain/chunk_index_data.txt"))
         .unwrap();
     let t0 = Instant::now();
     let index_map_read = Arc::new(load_chunk_index_map(&mut chunk_index_file));
@@ -367,7 +368,7 @@ pub(crate) fn setup_chunk_driver(
         let index_map_delta = Arc::clone(&index_map_delta);
         let chunk_data_file_read = OpenOptions::new()
             .read(true)
-            .open(root.join("data/chunk_data.txt"))
+            .open(root.join("data/terrain/chunk_data.txt"))
             .unwrap();
         let res_tx_clone = res_tx.clone();
         let chunk_spawn_channel = chunk_spawn_sender.clone();
