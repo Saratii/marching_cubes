@@ -8,3 +8,4 @@ pub mod lighting;
 pub mod player;
 pub mod settings;
 pub mod ui;
+pub mod build_initial_area;

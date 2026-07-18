@@ -498,6 +498,21 @@ fn dedicated_write_thread(
     }
 }
 
+fn resolve_cached_uniformity(
+    cached: Uniformity,
+    chunk_coord: &(i16, i16, i16),
+    index_map_read: &FxHashMap<(i16, i16, i16), u64>,
+    index_map_delta: &RwLock<FxHashMap<(i16, i16, i16), u64>>,
+) -> Uniformity {
+    if (cached == Uniformity::Air || cached == Uniformity::Dirt)
+        && (index_map_read.contains_key(chunk_coord)
+            || index_map_delta.read().contains_key(chunk_coord))
+    {
+        return Uniformity::Unknown;
+    }
+    cached
+}
+
 //compute thread for loading or generating chunks
 //recieves chunk load requests from svo_manager_thread and returns the data
 //uses a fast uniformity check to skip most of the chunk calculation on uniform chunks
@@ -548,7 +563,12 @@ fn lod_chunk_loader_thread(
                     let column_cache = column_range_map_read_only.get_column(chunk_x, chunk_z);
                     for chunk_y in min_chunk.1..min_chunk.1 + CHUNKS_PER_CLUSTER_DIM as i16 {
                         let chunk_coord = (chunk_x, chunk_y, chunk_z);
-                        let mut uniformity = column_cache.uniformity_at_y(chunk_y);
+                        let mut uniformity = resolve_cached_uniformity(
+                            column_cache.uniformity_at_y(chunk_y),
+                            &chunk_coord,
+                            &index_map_read,
+                            &index_map_delta,
+                        );
                         if uniformity == Uniformity::Air {
                             //cache hit
                             if in_simulation_range {
@@ -728,7 +748,12 @@ fn chunk_loader_thread(
                     let column_cache = column_range_map_read_only.get_column(chunk_x, chunk_z);
                     for chunk_y in min_chunk.1..min_chunk.1 + CHUNKS_PER_CLUSTER_DIM as i16 {
                         let chunk_coord = (chunk_x, chunk_y, chunk_z);
-                        let mut uniformity = column_cache.uniformity_at_y(chunk_y);
+                        let mut uniformity = resolve_cached_uniformity(
+                            column_cache.uniformity_at_y(chunk_y),
+                            &chunk_coord,
+                            &index_map_read,
+                            &index_map_delta,
+                        );
                         if uniformity == Uniformity::Air {
                             //cache hit
                             if in_simulation_range {
@@ -927,7 +952,16 @@ fn svo_manager_thread(
         while let Ok(modification) = terrain_chunk_map_modification_reciever.try_recv() {
             match modification {
                 TerrainChunkMapModification::Insert(chunk_coord, terrain_chunk) => {
-                    terrain_map_lock.insert(chunk_coord, terrain_chunk);
+                    let stale_uniform_overwrite = matches!(
+                        (&terrain_chunk, terrain_map_lock.get(&chunk_coord)),
+                        (
+                            TerrainChunk::UniformAir | TerrainChunk::UniformDirt,
+                            Some(TerrainChunk::NonUniformTerrainChunk(_))
+                        )
+                    );
+                    if !stale_uniform_overwrite {
+                        terrain_map_lock.insert(chunk_coord, terrain_chunk);
+                    }
                 }
                 TerrainChunkMapModification::Remove(chunk_coord) => {
                     terrain_map_lock.remove(&chunk_coord);
@@ -945,32 +979,27 @@ fn svo_manager_thread(
         }
         drop(terrain_map_lock);
         while let Ok(result) = results_channel.try_recv() {
-            svo.insert(result.cluster_coord, result.has_entity, result.load_state);
-            chunks_being_loaded.remove(&result.cluster_coord);
+            if chunks_being_loaded.remove(&result.cluster_coord) {
+                svo.insert(result.cluster_coord, result.has_entity, result.load_state);
+            }
         }
         svo.query_chunks_outside_sphere(&moveable_center, &mut clusters_to_deallocate);
         for (chunk_coord, _) in &clusters_to_deallocate {
             svo.delete(*chunk_coord);
         }
-        let mut roller = 0;
         let mut terrain_map_lock = terrain_chunk_map.lock().unwrap();
-        for (cluster_coord, has_entity) in clusters_to_deallocate.drain(..) {
+        for (cluster_coord, _) in clusters_to_deallocate.drain(..) {
             let min_chunk = cluster_coord_to_min_chunk_coord(cluster_coord);
             for chunk_x in min_chunk.0..min_chunk.0 + CHUNKS_PER_CLUSTER_DIM as i16 {
                 for chunk_z in min_chunk.2..min_chunk.2 + CHUNKS_PER_CLUSTER_DIM as i16 {
                     for chunk_y in min_chunk.1..min_chunk.1 + CHUNKS_PER_CLUSTER_DIM as i16 {
                         let chunk_coord = (chunk_x, chunk_y, chunk_z);
-                        if has_entity[roller] {
-                            let _ =
-                                chunk_spawn_channel.send(ChunkSpawnResult::ToDespawn(chunk_coord));
-                        }
+                        let _ = chunk_spawn_channel.send(ChunkSpawnResult::ToDespawn(chunk_coord));
                         terrain_map_lock.remove(&chunk_coord);
-                        roller += 1;
                     }
                 }
             }
             chunks_being_loaded.remove(&cluster_coord);
-            roller = 0;
         }
         drop(terrain_map_lock);
         if QUEUE_SIZE.load(Ordering::Relaxed) < PRIORITY_QUEUE_MAX_SIZE {
@@ -1048,12 +1077,16 @@ pub fn chunk_spawn_reciever(
                 }
             }
             ChunkSpawnResult::ToGiveCollider((chunk_coord, collider)) => {
-                let (entity, _) = chunk_entity_map.get(chunk_coord);
-                commands.entity(entity).insert(collider);
+                //use option to handle the case where the chunk was despawned (or dug to air) while the collider was in flight
+                if let Some((entity, _)) = chunk_entity_map.get_option(chunk_coord) {
+                    commands.entity(*entity).insert(collider);
+                }
             }
             ChunkSpawnResult::ToRemoveCollider(chunk_coord) => {
-                let (entity, _) = chunk_entity_map.get(chunk_coord);
-                commands.entity(entity).remove::<Collider>();
+                //use option to handle the case where the chunk was despawned while the command was in flight
+                if let Some((entity, _)) = chunk_entity_map.get_option(chunk_coord) {
+                    commands.entity(*entity).remove::<Collider>();
+                }
             }
             ChunkSpawnResult::ToDespawn(chunk_coord) => {
                 //use option in case the corresponding ToSpawn was skipped due to a duplicate, leaving nothing to remove
@@ -1085,12 +1118,14 @@ pub fn chunk_spawn_reciever(
                 }
             }
             ChunkSpawnResult::ToChangeLodRemoveCollider((chunk_coord, new_mesh)) => {
-                let (entity, mesh_handle) = chunk_entity_map.get(chunk_coord);
-                if let Some(aabb) = new_mesh.compute_aabb() {
-                    commands.entity(entity).insert(aabb);
+                //use option to handle the case where the chunk was despawned while the LOD change was in flight
+                if let Some((entity, mesh_handle)) = chunk_entity_map.get_option(chunk_coord) {
+                    if let Some(aabb) = new_mesh.compute_aabb() {
+                        commands.entity(*entity).insert(aabb);
+                    }
+                    mesh_handles.insert(mesh_handle, new_mesh).unwrap();
+                    commands.entity(*entity).remove::<Collider>();
                 }
-                mesh_handles.insert(&mesh_handle, new_mesh).unwrap();
-                commands.entity(entity).remove::<Collider>();
             }
             ChunkSpawnResult::ToSpawnWithCollider((chunk_coord, collider, mesh)) => {
                 //use option in case a chunk is spawned, despawned, and spawned again but the second spawn comes before the despawn
@@ -1473,4 +1508,183 @@ pub(crate) fn info_print() {
     info!("fma: {}", std::is_x86_feature_detected!("fma"));
     info!("avx2: {}", std::is_x86_feature_detected!("avx2"));
     info!("sse2: {}", std::is_x86_feature_detected!("sse2"));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The crash this hunts for: build_full_mesh_and_spawn trusts
+    /// padded_chunk_contains_surface before calling
+    /// Collider::from_bevy_mesh(..).unwrap(). If the sign scan says "surface"
+    /// but marching cubes emits zero triangles, the trimesh builder returns
+    /// None (parry rejects an empty index buffer) and the unwrap kills a
+    /// worker thread. The scan counts strictly positive/negative samples
+    /// anywhere in the interior, while mc classifies density >= 0 as outside
+    /// per cube, so samples of exactly 0 are where the two could disagree.
+    /// A failure here is a repro of that crash.
+    #[test]
+    fn surface_scan_positive_implies_collider_builds() {
+        const N: usize = SAMPLES_PER_CHUNK_DIM;
+        const P: usize = N + 2;
+        let idx = |x: usize, y: usize, z: usize| (z * P + y) * P + x;
+        let mut fields: Vec<(&str, Vec<i16>)> = Vec::new();
+
+        // both signs present but every transition passes through a plane of exact zeros
+        let mut f = vec![0i16; SAMPLES_PER_CHUNK_PADDED];
+        for z in 1..=N {
+            for y in 1..=N {
+                for x in 1..=N {
+                    f[idx(x, y, z)] = match x {
+                        _ if x < N / 2 => 1000,
+                        _ if x == N / 2 => 0,
+                        _ => -1000,
+                    };
+                }
+            }
+        }
+        fields.push(("zero_plane_between_signs", f));
+
+        // signs separated by a 20-sample-thick slab of exact zeros
+        let mut f = vec![0i16; SAMPLES_PER_CHUNK_PADDED];
+        for z in 1..=N {
+            for y in 1..=N {
+                for x in 1..=N {
+                    f[idx(x, y, z)] = match x {
+                        _ if x < 20 => 800,
+                        _ if x <= 40 => 0,
+                        _ => -800,
+                    };
+                }
+            }
+        }
+        fields.push(("thick_zero_slab", f));
+
+        // all zeros except one negative and one positive sample at opposite interior corners:
+        // the scan trips on the pair, but only the negative sample's cubes are mixed-sign
+        let mut f = vec![0i16; SAMPLES_PER_CHUNK_PADDED];
+        f[idx(1, 1, 1)] = -1;
+        f[idx(N, N, N)] = 1;
+        fields.push(("lone_signs_in_zero_field", f));
+
+        // extreme magnitudes, single inside sample at the interior corner
+        let mut f = vec![32767i16; SAMPLES_PER_CHUNK_PADDED];
+        f[idx(1, 1, 1)] = -32768;
+        fields.push(("extreme_isolated_corner", f));
+
+        // alternating +/-32767 checkerboard pocket in a zero field: every cube in the
+        // pocket is mixed-sign with vertices interpolated hard against the corners
+        let mut f = vec![0i16; SAMPLES_PER_CHUNK_PADDED];
+        for z in 10..=13 {
+            for y in 10..=13 {
+                for x in 10..=13 {
+                    f[idx(x, y, z)] = if (x + y + z) % 2 == 0 { 32767 } else { -32767 };
+                }
+            }
+        }
+        fields.push(("checkerboard_pocket", f));
+
+        // blocky pseudo-random field over {negative, zero, positive} per 8^3 block
+        let mut f = vec![0i16; SAMPLES_PER_CHUNK_PADDED];
+        let mut lcg: u32 = 0xdeadbeef;
+        for bz in 0..8 {
+            for by in 0..8 {
+                for bx in 0..8 {
+                    lcg = lcg.wrapping_mul(1664525).wrapping_add(1013904223);
+                    let value = [-32000i16, 0, 0, 32000][(lcg >> 30) as usize];
+                    for z in 0..8 {
+                        for y in 0..8 {
+                            for x in 0..8 {
+                                f[idx(bx * 8 + x + 1, by * 8 + y + 1, bz * 8 + z + 1)] = value;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        fields.push(("blocky_random", f));
+
+        let materials = vec![MaterialCode::Dirt; SAMPLES_PER_CHUNK];
+        for (name, densities) in &fields {
+            if !padded_chunk_contains_surface(densities) {
+                assert_ne!(
+                    *name, "zero_plane_between_signs",
+                    "deterministic fields must trip the surface scan"
+                );
+                continue;
+            }
+            let (vertices, normals, material_ids, indices) = mc_mesh_generation(
+                densities,
+                &materials,
+                SAMPLES_PER_CHUNK_DIM,
+                true,
+                densities,
+            );
+            assert!(
+                !indices.is_empty(),
+                "{name}: surface scan passed but mc emitted no triangles - \
+                 build_full_mesh_and_spawn would panic on Collider::from_bevy_mesh"
+            );
+            let mesh = generate_bevy_mesh(vertices, normals, material_ids, indices);
+            assert!(
+                Collider::from_bevy_mesh(
+                    &mesh,
+                    &ComputedColliderShape::TriMesh(TriMeshFlags::default())
+                )
+                .is_some(),
+                "{name}: trimesh collider failed to build - \
+                 build_full_mesh_and_spawn would panic on the unwrap"
+            );
+        }
+
+        // the reverse disagreement: a lone negative pocket in a zero field produces real
+        // mc geometry, but the scan reports no surface so the chunk is silently skipped.
+        // non-fatal (nothing unwraps), documented here so the asymmetry is intentional.
+        let mut f = vec![0i16; SAMPLES_PER_CHUNK_PADDED];
+        f[idx(30, 30, 30)] = -5;
+        assert!(!padded_chunk_contains_surface(&f));
+    }
+
+    /// The bug this guards: the ColumnRangeMap uniformity cache is a startup
+    /// snapshot, so after a dig turns a uniform chunk non-uniform, a cache
+    /// hit would re-insert pristine UniformDirt/UniformAir over the dug
+    /// chunk while its neighbors keep dug data -- adjacent surfaces then
+    /// stop lining up at chunk borders.
+    #[test]
+    fn stale_uniformity_cache_hits_defer_to_the_chunk_index() {
+        let mut index_read: FxHashMap<(i16, i16, i16), u64> = FxHashMap::default();
+        let delta = RwLock::new(FxHashMap::default());
+        let coord = (1, 2, 3);
+
+        // pristine chunk: the cache is trusted
+        assert_eq!(
+            resolve_cached_uniformity(Uniformity::Dirt, &coord, &index_read, &delta),
+            Uniformity::Dirt
+        );
+        assert_eq!(
+            resolve_cached_uniformity(Uniformity::Air, &coord, &index_read, &delta),
+            Uniformity::Air
+        );
+
+        // dug this session: recorded in the delta index
+        delta.write().insert(coord, 0);
+        assert_eq!(
+            resolve_cached_uniformity(Uniformity::Dirt, &coord, &index_read, &delta),
+            Uniformity::Unknown
+        );
+        delta.write().clear();
+
+        // dug in an earlier session: recorded in the base index
+        index_read.insert(coord, 0);
+        assert_eq!(
+            resolve_cached_uniformity(Uniformity::Air, &coord, &index_read, &delta),
+            Uniformity::Unknown
+        );
+
+        // non-cache-hit results pass through untouched
+        assert_eq!(
+            resolve_cached_uniformity(Uniformity::Unknown, &coord, &index_read, &delta),
+            Uniformity::Unknown
+        );
+    }
 }

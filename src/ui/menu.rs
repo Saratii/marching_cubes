@@ -18,10 +18,10 @@ const HIGHLIGHT_COLOR: Color = Color::srgba(0.8, 0.4, 0.8, 1.0); // Brighter pin
 const ACTIVE_TAB_COLOR: Color = Color::srgba(0.4, 0.4, 0.6, 1.0); // Purple for active tab background
 const INACTIVE_TAB_COLOR: Color = Color::srgba(0.25, 0.25, 0.4, 1.0); // Darker for inactive
 const INACTIVE_BORDER_COLOR: Color = Color::srgba(0.5, 0.5, 0.7, 1.0);
-const FONT_SIZE: f32 = 24.0;
+const FONT_SIZE: FontSize = FontSize::Px(24.0);
 const SETTINGS_ROW_HEIGHT: f32 = 40.0;
 const SETTINGS_ROW_BORDER_SIZE: f32 = 3.0;
-const GENERAL_SETTINGS: [SettingsType; 7] = [
+const GENERAL_SETTINGS: [SettingsType; 9] = [
     SettingsType::FpsChange,
     SettingsType::ShadowsToggle,
     SettingsType::RenderRadiusChange,
@@ -29,6 +29,8 @@ const GENERAL_SETTINGS: [SettingsType; 7] = [
     SettingsType::FogStartMultiplier,
     SettingsType::FogEndMultiplier,
     SettingsType::OcclusionCullingToggle,
+    SettingsType::DigRadiusChange,
+    SettingsType::DigStrengthChange,
 ];
 #[cfg(feature = "debug")]
 const DEBUG_SETTINGS: [SettingsType; 7] = [
@@ -216,7 +218,7 @@ fn spawn_menu(commands: &mut Commands, settings: &ConfigurableSettings) {
                 .spawn((
                     Node {
                         width: Val::Px(400.0),
-                        height: Val::Px(400.0),
+                        height: Val::Px(470.0),
                         flex_direction: FlexDirection::Column,
                         ..default()
                     },
@@ -291,7 +293,7 @@ fn spawn_menu(commands: &mut Commands, settings: &ConfigurableSettings) {
                     parent
                         .spawn(Node {
                             width: Val::Percent(100.0),
-                            height: Val::Px(300.0),
+                            height: Val::Px(420.0),
                             padding: UiRect::all(Val::Px(5.0)),
                             flex_direction: FlexDirection::Column,
                             justify_content: JustifyContent::Start,
@@ -312,197 +314,35 @@ fn spawn_menu(commands: &mut Commands, settings: &ConfigurableSettings) {
                                     TabContent(MenuTab::General),
                                 ))
                                 .with_children(|parent| {
-                                    parent
-                                        .spawn((
-                                            Node {
-                                                width: Val::Percent(100.0),
-                                                height: Val::Px(SETTINGS_ROW_HEIGHT),
-                                                justify_content: JustifyContent::Center,
-                                                align_items: AlignItems::Center,
-                                                border: UiRect::all(Val::Px(
-                                                    SETTINGS_ROW_BORDER_SIZE,
-                                                )),
-                                                ..default()
-                                            },
-                                            BorderColor::all(INACTIVE_BORDER_COLOR),
-                                            SettingRow(SettingsType::FpsChange),
-                                        ))
-                                        .with_children(|parent| {
-                                            parent.spawn((
-                                                SettingLabel(SettingsType::FpsChange),
-                                                Text(SettingsType::FpsChange.text(settings)),
-                                                TextFont {
-                                                    font_size: FONT_SIZE,
+                                    for &setting_type in GENERAL_SETTINGS.iter() {
+                                        let settings_text = setting_type.text(settings);
+                                        parent
+                                            .spawn((
+                                                Node {
+                                                    width: Val::Percent(100.0),
+                                                    height: Val::Px(SETTINGS_ROW_HEIGHT),
+                                                    justify_content: JustifyContent::Center,
+                                                    align_items: AlignItems::Center,
+                                                    border: UiRect::all(Val::Px(
+                                                        SETTINGS_ROW_BORDER_SIZE,
+                                                    )),
                                                     ..default()
                                                 },
-                                                TextColor(Color::WHITE),
-                                            ));
-                                        });
-                                    parent
-                                        .spawn((
-                                            Node {
-                                                width: Val::Percent(100.0),
-                                                height: Val::Px(SETTINGS_ROW_HEIGHT),
-                                                justify_content: JustifyContent::Center,
-                                                align_items: AlignItems::Center,
-                                                border: UiRect::all(Val::Px(
-                                                    SETTINGS_ROW_BORDER_SIZE,
-                                                )),
-                                                ..default()
-                                            },
-                                            BorderColor::all(INACTIVE_BORDER_COLOR),
-                                            SettingRow(SettingsType::ShadowsToggle),
-                                        ))
-                                        .with_children(|parent| {
-                                            parent.spawn((
-                                                SettingLabel(SettingsType::ShadowsToggle),
-                                                Text(SettingsType::ShadowsToggle.text(settings)),
-                                                TextFont {
-                                                    font_size: FONT_SIZE,
-                                                    ..default()
-                                                },
-                                                TextColor(Color::WHITE),
-                                            ));
-                                        });
-                                    parent
-                                        .spawn((
-                                            Node {
-                                                width: Val::Percent(100.0),
-                                                height: Val::Px(SETTINGS_ROW_HEIGHT),
-                                                justify_content: JustifyContent::Center,
-                                                align_items: AlignItems::Center,
-                                                border: UiRect::all(Val::Px(
-                                                    SETTINGS_ROW_BORDER_SIZE,
-                                                )),
-                                                ..default()
-                                            },
-                                            BorderColor::all(INACTIVE_BORDER_COLOR),
-                                            SettingRow(SettingsType::RenderRadiusChange),
-                                        ))
-                                        .with_children(|parent| {
-                                            parent.spawn((
-                                                SettingLabel(SettingsType::RenderRadiusChange),
-                                                Text(
-                                                    SettingsType::RenderRadiusChange.text(settings),
-                                                ),
-                                                TextFont {
-                                                    font_size: FONT_SIZE,
-                                                    ..default()
-                                                },
-                                                TextColor(Color::WHITE),
-                                            ));
-                                        });
-                                    parent
-                                        .spawn((
-                                            Node {
-                                                width: Val::Percent(100.0),
-                                                height: Val::Px(SETTINGS_ROW_HEIGHT),
-                                                justify_content: JustifyContent::Center,
-                                                align_items: AlignItems::Center,
-                                                border: UiRect::all(Val::Px(
-                                                    SETTINGS_ROW_BORDER_SIZE,
-                                                )),
-                                                ..default()
-                                            },
-                                            BorderColor::all(INACTIVE_BORDER_COLOR),
-                                            SettingRow(SettingsType::DistanceFogToggle),
-                                        ))
-                                        .with_children(|parent| {
-                                            parent.spawn((
-                                                SettingLabel(SettingsType::DistanceFogToggle),
-                                                Text(
-                                                    SettingsType::DistanceFogToggle.text(settings),
-                                                ),
-                                                TextFont {
-                                                    font_size: FONT_SIZE,
-                                                    ..default()
-                                                },
-                                                TextColor(Color::WHITE),
-                                            ));
-                                        });
-                                    parent
-                                        .spawn((
-                                            Node {
-                                                width: Val::Percent(100.0),
-                                                height: Val::Px(SETTINGS_ROW_HEIGHT),
-                                                justify_content: JustifyContent::Center,
-                                                align_items: AlignItems::Center,
-                                                border: UiRect::all(Val::Px(
-                                                    SETTINGS_ROW_BORDER_SIZE,
-                                                )),
-                                                ..default()
-                                            },
-                                            BorderColor::all(INACTIVE_BORDER_COLOR),
-                                            SettingRow(SettingsType::FogStartMultiplier),
-                                        ))
-                                        .with_children(|parent| {
-                                            parent.spawn((
-                                                SettingLabel(SettingsType::FogStartMultiplier),
-                                                Text(
-                                                    SettingsType::FogStartMultiplier.text(settings),
-                                                ),
-                                                TextFont {
-                                                    font_size: FONT_SIZE,
-                                                    ..default()
-                                                },
-                                                TextColor(Color::WHITE),
-                                            ));
-                                        });
-                                    parent
-                                        .spawn((
-                                            Node {
-                                                width: Val::Percent(100.0),
-                                                height: Val::Px(SETTINGS_ROW_HEIGHT),
-                                                justify_content: JustifyContent::Center,
-                                                align_items: AlignItems::Center,
-                                                border: UiRect::all(Val::Px(
-                                                    SETTINGS_ROW_BORDER_SIZE,
-                                                )),
-                                                ..default()
-                                            },
-                                            BorderColor::all(INACTIVE_BORDER_COLOR),
-                                            SettingRow(SettingsType::FogEndMultiplier),
-                                        ))
-                                        .with_children(|parent| {
-                                            parent.spawn((
-                                                SettingLabel(SettingsType::FogEndMultiplier),
-                                                Text(SettingsType::FogEndMultiplier.text(settings)),
-                                                TextFont {
-                                                    font_size: FONT_SIZE,
-                                                    ..default()
-                                                },
-                                                TextColor(Color::WHITE),
-                                            ));
-                                        });
-                                    parent
-                                        .spawn((
-                                            Node {
-                                                width: Val::Percent(100.0),
-                                                height: Val::Px(SETTINGS_ROW_HEIGHT),
-                                                justify_content: JustifyContent::Center,
-                                                align_items: AlignItems::Center,
-                                                border: UiRect::all(Val::Px(
-                                                    SETTINGS_ROW_BORDER_SIZE,
-                                                )),
-                                                ..default()
-                                            },
-                                            BorderColor::all(INACTIVE_BORDER_COLOR),
-                                            SettingRow(SettingsType::OcclusionCullingToggle),
-                                        ))
-                                        .with_children(|parent| {
-                                            parent.spawn((
-                                                SettingLabel(SettingsType::OcclusionCullingToggle),
-                                                Text(
-                                                    SettingsType::OcclusionCullingToggle
-                                                        .text(settings),
-                                                ),
-                                                TextFont {
-                                                    font_size: FONT_SIZE,
-                                                    ..default()
-                                                },
-                                                TextColor(Color::WHITE),
-                                            ));
-                                        });
+                                                BorderColor::all(INACTIVE_BORDER_COLOR),
+                                                SettingRow(setting_type),
+                                            ))
+                                            .with_children(|parent| {
+                                                parent.spawn((
+                                                    SettingLabel(setting_type),
+                                                    Text(settings_text),
+                                                    TextFont {
+                                                        font_size: FONT_SIZE,
+                                                        ..default()
+                                                    },
+                                                    TextColor(Color::WHITE),
+                                                ));
+                                            });
+                                    }
                                 });
                             #[cfg(feature = "debug")]
                             parent

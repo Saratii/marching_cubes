@@ -175,16 +175,17 @@ pub fn spawn_player(
             camera_controller.player_pitch = data.pitch;
             data.position
         }
-        None => Vec3::new(
-            PLAYER_SPAWN.x,
-            fbm.0.gen_single_2d(
-                PLAYER_SPAWN.x * NOISE_FREQUENCY,
-                PLAYER_SPAWN.z * NOISE_FREQUENCY,
-                WORLD_SEED,
-            ) * NOISE_AMPLITUDE
-                + 20.0,
-            PLAYER_SPAWN.z,
-        ),
+        // None => Vec3::new(
+        //     PLAYER_SPAWN.x,
+        //     fbm.0.gen_single_2d(
+        //         PLAYER_SPAWN.x * NOISE_FREQUENCY,
+        //         PLAYER_SPAWN.z * NOISE_FREQUENCY,
+        //         WORLD_SEED,
+        //     ) * NOISE_AMPLITUDE
+        //         + 20.0,
+        //     PLAYER_SPAWN.z,
+        // ),
+        None => Vec3::new(0.0, 5.0, 0.0),
     };
     let player_mesh = Cuboid::new(
         PLAYER_CUBOID_SIZE.x,

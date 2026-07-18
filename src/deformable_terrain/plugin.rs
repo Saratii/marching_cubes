@@ -1,14 +1,11 @@
 use std::sync::{Arc, Mutex, atomic::Ordering};
 
-use bevy::{
-    app::{App, Plugin, Startup, Update},
-    ecs::{component::Component, resource::Resource},
-    math::Vec3,
-};
+use bevy::prelude::*;
 use fastnoise2::{SafeNode, generator::GeneratorWrapper};
 use serde::{Deserialize, Serialize};
 
 use crate::deformable_terrain::{
+    digging::deformation_message_reader,
     driver::{Lods, RENDER_RADIUS_SQUARED, chunk_spawn_reciever, info_print, setup_chunk_driver},
     file_loader::setup_chunk_loading,
     terrain::setup_map,
@@ -22,6 +19,19 @@ pub struct NoiseFunction(pub GeneratorWrapper<SafeNode>);
 
 #[derive(Component)]
 pub struct ChunkTag;
+
+#[derive(Message, Copy, Clone)]
+pub enum Deformation {
+    Sphere {
+        center: Vec3,
+        radius: f32,
+        strength: f32,
+    },
+    SphereCarve {
+        center: Vec3,
+        radius: f32,
+    },
+}
 
 #[repr(u8)]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy)]
@@ -82,6 +92,7 @@ impl Plugin for DeformableTerrainPlugin {
         .insert_resource(DeformableTerrainConfig::default())
         .insert_resource(Lods(self.lods))
         .insert_resource(FlatTerrainHeight(self.flat_terrain_height))
+        .add_message::<Deformation>()
         .add_systems(
             Startup,
             (
@@ -91,6 +102,9 @@ impl Plugin for DeformableTerrainPlugin {
                 setup_map,
             ),
         )
-        .add_systems(Update, chunk_spawn_reciever);
+        .add_systems(
+            Update,
+            (chunk_spawn_reciever, deformation_message_reader).chain(),
+        );
     }
 }

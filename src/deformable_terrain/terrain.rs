@@ -68,22 +68,21 @@ pub(crate) fn setup_map(
 ) {
     let root = get_project_root();
     let texture_array_handle: Handle<Image> = asset_server
-        .load_with_settings::<Image, ImageLoaderSettings>(
-            root.join("assets/texture_array.ktx2"),
-            |settings| {
-                settings.sampler = ImageSampler::Descriptor(
-                    SamplerDescriptor {
-                        address_mode_u: AddressMode::ClampToEdge,
-                        address_mode_v: AddressMode::ClampToEdge,
-                        address_mode_w: AddressMode::ClampToEdge,
-                        lod_min_clamp: 0.0,
-                        lod_max_clamp: 5.0,
-                        ..Default::default()
-                    }
-                    .into(),
-                );
-            },
-        );
+        .load_builder()
+        .with_settings(|settings: &mut ImageLoaderSettings| {
+            settings.sampler = ImageSampler::Descriptor(
+                SamplerDescriptor {
+                    address_mode_u: AddressMode::ClampToEdge,
+                    address_mode_v: AddressMode::ClampToEdge,
+                    address_mode_w: AddressMode::ClampToEdge,
+                    lod_min_clamp: 0.0,
+                    lod_max_clamp: 5.0,
+                    ..Default::default()
+                }
+                .into(),
+            );
+        })
+        .load(root.join("assets/texture_array.ktx2"));
     let standard_terrain_material_handle = materials.add(ExtendedMaterial {
         base: StandardMaterial {
             perceptual_roughness: 0.8,

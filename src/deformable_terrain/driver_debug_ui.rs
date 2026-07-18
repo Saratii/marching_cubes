@@ -25,7 +25,7 @@ pub fn spawn_debug_texts(mut commands: Commands) {
         PriorityQueueSizeText,
         Text::new("Compute Priority Queue Size: 0"),
         TextFont {
-            font_size: 24.0,
+            font_size: FontSize::Px(24.0),
             ..default()
         },
         TextColor(Color::WHITE),
@@ -40,7 +40,7 @@ pub fn spawn_debug_texts(mut commands: Commands) {
         ChunkSpawnReceiverText,
         Text::new("Spawn Receiver Queue: 0"),
         TextFont {
-            font_size: 24.0,
+            font_size: FontSize::Px(24.0),
             ..default()
         },
         TextColor(Color::WHITE),
@@ -55,7 +55,7 @@ pub fn spawn_debug_texts(mut commands: Commands) {
         InternalQueueSizeText,
         Text::new("Internal Queues: []"),
         TextFont {
-            font_size: 24.0,
+            font_size: FontSize::Px(24.0),
             ..default()
         },
         TextColor(Color::WHITE),

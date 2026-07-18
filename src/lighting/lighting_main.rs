@@ -3,11 +3,11 @@ use std::f32::consts::FRAC_PI_4;
 use bevy::{
     camera::Exposure,
     core_pipeline::{prepass::DepthPrepass, tonemapping::Tonemapping},
-    light::AtmosphereEnvironmentMapLight,
-    pbr::{Atmosphere, AtmosphereSettings, ScatteringMedium, ScreenSpaceReflections},
+    light::{Atmosphere, AtmosphereEnvironmentMapLight, atmosphere::ScatteringMedium},
+    pbr::{AtmosphereSettings, ScreenSpaceReflections},
     post_process::bloom::Bloom,
     prelude::*,
-    render::experimental::occlusion_culling::OcclusionCulling,
+    render::occlusion_culling::OcclusionCulling,
 };
 
 use crate::{
@@ -22,7 +22,7 @@ pub fn setup_lighting(mut commands: Commands) {
     commands.spawn((
         DirectionalLight {
             illuminance: 80000.,
-            shadows_enabled: true,
+            shadow_maps_enabled: true,
             ..default()
         },
         Transform::from_rotation(Quat::from_euler(EulerRot::ZYX, 0.0, 1.0, -FRAC_PI_4)),
@@ -41,7 +41,7 @@ pub fn apply_settings_changes(
         return;
     }
     if let Ok(mut light) = light_query.single_mut() {
-        light.shadows_enabled = settings.shadows;
+        light.shadow_maps_enabled = settings.shadows;
     }
     if let Ok(entity) = camera_entity_query.single() {
         if settings.distance_fog {
@@ -93,12 +93,6 @@ pub fn setup_camera(
         OcclusionCulling,
         MainCameraTag,
         DepthPrepass,
-        Atmosphere {
-            bottom_radius: 6_360_000.0,
-            top_radius: 6_460_000.0,
-            ground_albedo: Vec3::splat(0.3),
-            medium: scattering_mediums.add(ScatteringMedium::default()),
-        },
         AtmosphereSettings::default(),
         Exposure { ev100: 13.0 },
         Tonemapping::AcesFitted,
@@ -115,4 +109,10 @@ pub fn setup_camera(
             ..default()
         },
     ));
+    commands.spawn(Atmosphere {
+        inner_radius: 6_360_000.0,
+        outer_radius: 6_460_000.0,
+        ground_albedo: Vec3::splat(0.3),
+        medium: scattering_mediums.add(ScatteringMedium::default()),
+    });
 }

@@ -2,13 +2,15 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use bevy::asset::UnapprovedPathMode;
+use bevy::dev_tools::diagnostics_overlay::{DiagnosticsOverlay, DiagnosticsOverlayPlugin};
 use bevy::diagnostic::{
     EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin, SystemInformationDiagnosticsPlugin,
 };
 use bevy::image::ImageSamplerDescriptor;
+use bevy::pbr::diagnostic::MaterialAllocatorDiagnosticPlugin;
 use bevy::pbr::{ExtendedMaterial, PbrPlugin};
 use bevy::prelude::*;
-// use bevy::render::diagnostic::RenderDiagnosticsPlugin;
+use bevy::render::diagnostic::MeshAllocatorDiagnosticPlugin;
 use bevy::window::{PresentMode, WindowMode};
 use bevy::winit::{UpdateMode, WinitSettings};
 use bevy_rapier3d::plugin::{NoUserData, PhysicsSet, RapierPhysicsPlugin};
@@ -16,6 +18,7 @@ use bevy_rapier3d::plugin::{NoUserData, PhysicsSet, RapierPhysicsPlugin};
 use iyes_perf_ui::PerfUiPlugin;
 use iyes_perf_ui::prelude::PerfUiDefaultEntries;
 
+use marching_cubes::build_initial_area::build_initial_area;
 use marching_cubes::deformable_terrain::chunk_generator::get_fbm;
 #[cfg(feature = "debug")]
 use marching_cubes::deformable_terrain::debug_lines::{
@@ -99,11 +102,13 @@ fn main() {
                     unapproved_path_mode: UnapprovedPathMode::Allow,
                     ..default()
                 }),
-            FrameTimeDiagnosticsPlugin::default(),
             EntityCountDiagnosticsPlugin::default(),
             SystemInformationDiagnosticsPlugin,
-            PerfUiPlugin,
             RapierPhysicsPlugin::<NoUserData>::default(),
+            DiagnosticsOverlayPlugin,
+            MeshAllocatorDiagnosticPlugin,
+            FrameTimeDiagnosticsPlugin::default(),
+            MaterialAllocatorDiagnosticPlugin::<StandardMaterial>::default(),
             DeformableTerrainPlugin {
                 lods: false,
                 flat_terrain_height: Some(1.0),
@@ -113,6 +118,7 @@ fn main() {
             // LogDiagnosticsPlugin::default(),
             // RapierDebugRenderPlugin::default(),
         ))
+        .add_plugins(PerfUiPlugin)
         // .add_plugins(RenderDiagnosticsPlugin::default())
         .add_systems(
             Startup,
@@ -133,6 +139,7 @@ fn main() {
         .add_systems(
             Update,
             (
+                build_initial_area,
                 handle_digging_input,
                 toggle_first_person,
                 camera_zoom,
@@ -143,8 +150,6 @@ fn main() {
                     .after(PhysicsSet::SyncBackend)
                     .run_if(|| !INITIAL_CHUNKS_LOADED.load(Ordering::Relaxed)),
                 save_monitor_on_move,
-                // #[cfg(feature = "debug")]
-                // update_debug_sphere_positions,
                 #[cfg(feature = "debug")]
                 draw_cluster_debug,
                 #[cfg(feature = "debug")]
@@ -175,5 +180,6 @@ fn main() {
 }
 
 fn setup(mut commands: Commands) {
+    commands.spawn(DiagnosticsOverlay::mesh_and_standard_material());
     commands.spawn(PerfUiDefaultEntries::default());
 }
