@@ -7,8 +7,8 @@ use bevy::diagnostic::{
     EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin, SystemInformationDiagnosticsPlugin,
 };
 use bevy::image::ImageSamplerDescriptor;
+use bevy::pbr::PbrPlugin;
 use bevy::pbr::diagnostic::MaterialAllocatorDiagnosticPlugin;
-use bevy::pbr::{ExtendedMaterial, PbrPlugin};
 use bevy::prelude::*;
 use bevy::render::diagnostic::MeshAllocatorDiagnosticPlugin;
 use bevy::window::{PresentMode, WindowMode};
@@ -33,7 +33,6 @@ use marching_cubes::deformable_terrain::file_loader::setup_chunk_loading;
 use marching_cubes::deformable_terrain::plugin::{
     DeformableTerrainConfig, DeformableTerrainPlugin, HeightSource,
 };
-use marching_cubes::deformable_terrain::terrain_material::TerrainMaterialExtension;
 use marching_cubes::lighting::lighting_main::{
     apply_settings_changes, setup_camera, setup_lighting,
 };
@@ -112,8 +111,6 @@ fn main() {
                 height_source: HeightSource::Flat(1.0),
                 // height_source: HeightSource::Noise(NoiseHeightConfig::default()),
             },
-            MaterialPlugin::<ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>>::default(
-            ),
             // LogDiagnosticsPlugin::default(),
             // RapierDebugRenderPlugin::default(),
         ))

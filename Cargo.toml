@@ -23,6 +23,7 @@ parking_lot = "0.12.5"
 [[bench]]
 name = "chunk_generation"
 harness = false
+required-features = ["bench-internals"]
 
 [[bench]]
 name = "file_io"
@@ -81,4 +82,5 @@ bevy_winit = { git = "https://github.com/Saratii/bevy", branch = "release-0.19.0
 [features]
 timers = [] #cargo run -r --features timers
 debug = []  #cargo run -r --features "timers,debug"
+bench-internals = [] #cargo bench --features bench-internals
 

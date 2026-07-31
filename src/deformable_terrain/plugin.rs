@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex, atomic::Ordering};
 
-use bevy::prelude::*;
+use bevy::{pbr::ExtendedMaterial, prelude::*};
 use fastnoise2::{SafeNode, generator::GeneratorWrapper};
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +14,7 @@ use crate::{
         },
         file_loader::setup_chunk_loading,
         terrain::setup_map,
+        terrain_material::TerrainMaterialExtension,
     },
 };
 
@@ -141,6 +142,9 @@ impl Plugin for DeformableTerrainPlugin {
         .insert_resource(Lods(self.lods))
         .insert_resource(TerrainHeightSource(self.height_source.clone()))
         .add_message::<Deformation>()
+        .add_plugins(MaterialPlugin::<
+            ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>,
+        >::default())
         .add_systems(
             Startup,
             (

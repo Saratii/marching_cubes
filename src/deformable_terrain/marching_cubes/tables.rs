@@ -15,7 +15,7 @@ pub(crate) const EDGE_VERTICES: [(usize, usize); 12] = [
     (3, 7),
 ];
 
-pub const CORNER_OFFSETS: [Vec3; 8] = [
+pub(crate) const CORNER_OFFSETS: [Vec3; 8] = [
     Vec3::new(0.0, 0.0, 0.0),
     Vec3::new(1.0, 0.0, 0.0),
     Vec3::new(1.0, 1.0, 0.0),
@@ -26,7 +26,7 @@ pub const CORNER_OFFSETS: [Vec3; 8] = [
     Vec3::new(0.0, 1.0, 1.0),
 ];
 
-pub const EDGE_ID_OFFSETS: [(u16, u16, u16, u8); 12] = [
+pub(crate) const EDGE_ID_OFFSETS: [(u16, u16, u16, u8); 12] = [
     (0, 0, 0, 0),
     (1, 0, 0, 1),
     (0, 1, 0, 0),
@@ -41,7 +41,7 @@ pub const EDGE_ID_OFFSETS: [(u16, u16, u16, u8); 12] = [
     (0, 1, 0, 2),
 ];
 
-pub const TRIANGLE_TABLE: [[i32; 16]; 256] = [
+pub(crate) const TRIANGLE_TABLE: [[i32; 16]; 256] = [
     [
         -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
     ],

@@ -24,7 +24,7 @@ pub(crate) const ATTRIBUTE_MATERIAL_ID: MeshVertexAttribute =
 
 #[derive(Resource)]
 pub struct TerrainMaterialHandle(
-    pub Handle<ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>>,
+    pub(crate) Handle<ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>>,
 );
 
 #[derive(Clone)]

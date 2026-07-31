@@ -13,7 +13,7 @@ use bevy::{
 use crate::deformable_terrain::{file_loader::get_project_root, terrain::ATTRIBUTE_MATERIAL_ID};
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
-pub struct TerrainMaterialExtension {
+pub(crate) struct TerrainMaterialExtension {
     #[texture(103, dimension = "2d_array")]
     #[sampler(104)]
     pub base_texture: Handle<Image>,
