@@ -27,11 +27,12 @@ const RENDER_RADIUS_STEPS: &[f32] = &[
 const _: () = assert!(RENDER_RADIUS_STEPS[0] as u64 >= SIMULATION_RADIUS as u64);
 pub const DEFAULT_RENDER_RADIUS_SQUARED: f32 = 1000.0 * 1000.0;
 const DEFAULT_DIG_RADIUS: f32 = 20.0;
-const DEFAULT_DIG_STRENGTH: f32 = 0.4;
+// dig_strength is world units/second the dug surface advances at the brush
+const DEFAULT_DIG_STRENGTH: f32 = 3.0;
 const DIG_RADIUS_STEP: f32 = 1.0;
 const DIG_RADIUS_RANGE: (f32, f32) = (1.0, 40.0);
-const DIG_STRENGTH_STEP: f32 = 0.05;
-const DIG_STRENGTH_RANGE: (f32, f32) = (0.05, 2.0);
+const DIG_STRENGTH_STEP: f32 = 0.25;
+const DIG_STRENGTH_RANGE: (f32, f32) = (0.25, 10.0);
 
 fn default_dig_radius() -> f32 {
     DEFAULT_DIG_RADIUS
@@ -174,7 +175,7 @@ impl SettingsType {
                 format!("Occlusion Culling: {}", on_off(s.occlusion_culling))
             }
             SettingsType::DigRadiusChange => format!("Dig Radius: {:.0}", s.dig_radius),
-            SettingsType::DigStrengthChange => format!("Dig Strength: {:.2}", s.dig_strength),
+            SettingsType::DigStrengthChange => format!("Dig Strength: {:.1} u/s", s.dig_strength),
         }
     }
 

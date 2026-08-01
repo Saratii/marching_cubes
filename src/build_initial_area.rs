@@ -4,7 +4,7 @@ use crate::deformable_terrain::{
     digging::chunk_coords_in_sphere, driver::TerrainChunkMap, plugin::Deformation,
 };
 
-const INITIAL_AREA_CENTER: Vec3 = Vec3::new(0.0, 0.0, 0.0);
+const INITIAL_AREA_CENTER: Vec3 = Vec3::new(0.0, -7.0, 0.0);
 const INITIAL_AREA_RADIUS: f32 = 10.0;
 
 pub fn build_initial_area(

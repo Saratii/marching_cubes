@@ -27,13 +27,12 @@ use crate::{
     ui::{configurable_settings::ConfigurableSettings, menu::MenuRoot},
 };
 
-/// Dig strength (configurable in the menu) is the world units the dug surface
-/// advances per brush application at the dig center; the advance tapers
-/// quadratically to zero at the sphere edge, which is what shapes a partial
-/// dig into a smooth crater instead of a flat-floored cylinder. Effective
-/// center dig speed is dig_strength / DIG_TIMER world units per second while
-/// held.
-const DIG_TIMER: f32 = 0.004; // seconds
+/// Dig strength (configurable in the menu) is in world units per second: how
+/// fast the dug surface advances at the brush center while held. The advance
+/// tapers quadratically to zero at the sphere edge
+/// The brush reapplies at a fixed real-time cadence (`DIG_TICK_INTERVAL`)
+/// rather than once per rendered frame.
+const DIG_TICK_INTERVAL: f32 = 1.0 / 30.0; // seconds
 
 /// How far past a brush's nominal radius its edits may reach, in world units.
 /// Samples farther than `radius + BRUSH_INFLUENCE_MARGIN` from the dig center
@@ -173,8 +172,8 @@ pub fn handle_digging_input(
     }
     let should_dig = if mouse_input.pressed(MouseButton::Left) {
         *dig_timer += time.delta_secs();
-        if *dig_timer >= DIG_TIMER {
-            *dig_timer = 0.0;
+        if *dig_timer >= DIG_TICK_INTERVAL {
+            *dig_timer -= DIG_TICK_INTERVAL;
             true
         } else {
             false
@@ -192,7 +191,7 @@ pub fn handle_digging_input(
                 deformation_writer.write(Deformation::Sphere {
                     center: world_pos,
                     radius: settings.dig_radius,
-                    strength: settings.dig_strength,
+                    strength: settings.dig_strength * DIG_TICK_INTERVAL,
                 });
             }
         }
