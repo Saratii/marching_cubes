@@ -21,9 +21,11 @@ const INACTIVE_BORDER_COLOR: Color = Color::srgba(0.5, 0.5, 0.7, 1.0);
 const FONT_SIZE: FontSize = FontSize::Px(24.0);
 const SETTINGS_ROW_HEIGHT: f32 = 40.0;
 const SETTINGS_ROW_BORDER_SIZE: f32 = 3.0;
-const GENERAL_SETTINGS: [SettingsType; 9] = [
+const GENERAL_SETTINGS: [SettingsType; 11] = [
     SettingsType::FpsChange,
     SettingsType::ShadowsToggle,
+    SettingsType::AmbientBrightnessChange,
+    SettingsType::SunIlluminanceChange,
     SettingsType::RenderRadiusChange,
     SettingsType::DistanceFogToggle,
     SettingsType::FogStartMultiplier,
@@ -218,7 +220,7 @@ fn spawn_menu(commands: &mut Commands, settings: &ConfigurableSettings) {
                 .spawn((
                     Node {
                         width: Val::Px(400.0),
-                        height: Val::Px(470.0),
+                        height: Val::Px(560.0),
                         flex_direction: FlexDirection::Column,
                         ..default()
                     },
@@ -293,7 +295,7 @@ fn spawn_menu(commands: &mut Commands, settings: &ConfigurableSettings) {
                     parent
                         .spawn(Node {
                             width: Val::Percent(100.0),
-                            height: Val::Px(420.0),
+                            height: Val::Px(510.0),
                             padding: UiRect::all(Val::Px(5.0)),
                             flex_direction: FlexDirection::Column,
                             justify_content: JustifyContent::Start,

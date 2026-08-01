@@ -18,11 +18,11 @@ use crate::{
 #[derive(Component)]
 pub struct SunLightTag;
 
-pub fn setup_lighting(mut commands: Commands) {
+pub fn setup_lighting(mut commands: Commands, settings: Res<ConfigurableSettings>) {
     commands.spawn((
         DirectionalLight {
-            illuminance: 80000.,
-            shadow_maps_enabled: true,
+            illuminance: settings.sun_illuminance,
+            shadow_maps_enabled: settings.shadows,
             ..default()
         },
         Transform::from_rotation(Quat::from_euler(EulerRot::ZYX, 0.0, 1.0, -FRAC_PI_4)),
@@ -36,12 +36,20 @@ pub fn apply_settings_changes(
     mut fog_query: Query<&mut DistanceFog, With<MainCameraTag>>,
     mut commands: Commands,
     camera_entity_query: Query<Entity, With<MainCameraTag>>,
+    mut ambient_query: Query<&mut AmbientLight, With<MainCameraTag>>,
 ) {
     if !settings.is_changed() {
         return;
     }
     if let Ok(mut light) = light_query.single_mut() {
         light.shadow_maps_enabled = settings.shadows;
+        light.illuminance = settings.sun_illuminance;
+    }
+    if let Ok(mut ambient) = ambient_query.single_mut() {
+        ambient.brightness = settings.ambient_brightness;
+        println!("updating to {:?}", settings.ambient_brightness);
+    } else {
+        println!("hm");
     }
     if let Ok(entity) = camera_entity_query.single() {
         if settings.distance_fog {
@@ -98,6 +106,10 @@ pub fn setup_camera(
         Tonemapping::AcesFitted,
         Bloom::NATURAL,
         AtmosphereEnvironmentMapLight::default(),
+        AmbientLight {
+            brightness: settings.ambient_brightness,
+            ..default()
+        },
         Msaa::Off,
         ScreenSpaceReflections::default(),
         DistanceFog {

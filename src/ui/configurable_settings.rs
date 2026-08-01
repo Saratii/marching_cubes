@@ -33,6 +33,14 @@ const DIG_RADIUS_STEP: f32 = 1.0;
 const DIG_RADIUS_RANGE: (f32, f32) = (1.0, 40.0);
 const DIG_STRENGTH_STEP: f32 = 0.25;
 const DIG_STRENGTH_RANGE: (f32, f32) = (0.25, 10.0);
+// ambient brightness is in cd/m^2 pre-exposure; at the camera's ev100 of 13 the
+// scene is scaled by ~1/9800, so values need to be in the thousands to be visible
+const DEFAULT_AMBIENT_BRIGHTNESS: f32 = 0.0;
+const AMBIENT_BRIGHTNESS_STEP: f32 = 2_500.0;
+const AMBIENT_BRIGHTNESS_RANGE: (f32, f32) = (0.0, 50_000.0);
+const DEFAULT_SUN_ILLUMINANCE: f32 = 80_000.0;
+const SUN_ILLUMINANCE_STEP: f32 = 5_000.0;
+const SUN_ILLUMINANCE_RANGE: (f32, f32) = (0.0, 150_000.0);
 
 fn default_dig_radius() -> f32 {
     DEFAULT_DIG_RADIUS
@@ -40,6 +48,14 @@ fn default_dig_radius() -> f32 {
 
 fn default_dig_strength() -> f32 {
     DEFAULT_DIG_STRENGTH
+}
+
+fn default_ambient_brightness() -> f32 {
+    DEFAULT_AMBIENT_BRIGHTNESS
+}
+
+fn default_sun_illuminance() -> f32 {
+    DEFAULT_SUN_ILLUMINANCE
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -143,6 +159,8 @@ pub enum SettingsType {
     OcclusionCullingToggle,
     DigRadiusChange,
     DigStrengthChange,
+    AmbientBrightnessChange,
+    SunIlluminanceChange,
 }
 
 impl SettingsType {
@@ -176,6 +194,12 @@ impl SettingsType {
             }
             SettingsType::DigRadiusChange => format!("Dig Radius: {:.0}", s.dig_radius),
             SettingsType::DigStrengthChange => format!("Dig Strength: {:.1} u/s", s.dig_strength),
+            SettingsType::AmbientBrightnessChange => {
+                format!("Ambient Light: {:.0}", s.ambient_brightness)
+            }
+            SettingsType::SunIlluminanceChange => {
+                format!("Sunlight: {:.0} lx", s.sun_illuminance)
+            }
         }
     }
 
@@ -235,6 +259,24 @@ impl SettingsType {
                 settings.dig_strength = (settings.dig_strength + step)
                     .clamp(DIG_STRENGTH_RANGE.0, DIG_STRENGTH_RANGE.1);
             }
+            SettingsType::AmbientBrightnessChange => {
+                let step = if dir_next {
+                    AMBIENT_BRIGHTNESS_STEP
+                } else {
+                    -AMBIENT_BRIGHTNESS_STEP
+                };
+                settings.ambient_brightness = (settings.ambient_brightness + step)
+                    .clamp(AMBIENT_BRIGHTNESS_RANGE.0, AMBIENT_BRIGHTNESS_RANGE.1);
+            }
+            SettingsType::SunIlluminanceChange => {
+                let step = if dir_next {
+                    SUN_ILLUMINANCE_STEP
+                } else {
+                    -SUN_ILLUMINANCE_STEP
+                };
+                settings.sun_illuminance = (settings.sun_illuminance + step)
+                    .clamp(SUN_ILLUMINANCE_RANGE.0, SUN_ILLUMINANCE_RANGE.1);
+            }
         }
     }
 }
@@ -259,6 +301,10 @@ pub struct ConfigurableSettings {
     pub dig_radius: f32,
     #[serde(default = "default_dig_strength")]
     pub dig_strength: f32,
+    #[serde(default = "default_ambient_brightness")]
+    pub ambient_brightness: f32,
+    #[serde(default = "default_sun_illuminance")]
+    pub sun_illuminance: f32,
 }
 
 pub fn load_configurable_settings() -> ConfigurableSettings {
@@ -287,6 +333,8 @@ impl Default for ConfigurableSettings {
             occlusion_culling: true,
             dig_radius: DEFAULT_DIG_RADIUS,
             dig_strength: DEFAULT_DIG_STRENGTH,
+            ambient_brightness: DEFAULT_AMBIENT_BRIGHTNESS,
+            sun_illuminance: DEFAULT_SUN_ILLUMINANCE,
         }
     }
 }
