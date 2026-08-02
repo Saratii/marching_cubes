@@ -107,15 +107,25 @@ pub(crate) fn chunk_coords_in_sphere(
 }
 
 /// Chunks whose padded sample grid a cylinder carve can touch: everything in
-/// the cylinder's AABB widened by the brush influence margin (plus a voxel for
-/// the padded border samples), mirroring `chunk_coords_in_sphere`.
+/// the rotated cylinder's world AABB widened by the brush influence margin
+/// (plus a voxel for the padded border samples), mirroring
+/// `chunk_coords_in_sphere`. Per world axis the rotated cylinder's exact
+/// half-extent is |axis_i| * half_height for the caps plus
+/// radius * sqrt(1 - axis_i²) for the widest point of the rim.
 pub(crate) fn chunk_coords_in_cylinder(
     center: Vec3,
     radius: f32,
     half_height: f32,
+    rotation: Quat,
 ) -> impl Iterator<Item = (i16, i16, i16)> {
+    let axis = rotation * Vec3::Y;
     let margin = BRUSH_INFLUENCE_MARGIN + 2.0 * VOXEL_WORLD_SIZE;
-    let extent = Vec3::new(radius + margin, half_height + margin, radius + margin);
+    let axis_extent = |a: f32| a.abs() * half_height + radius * (1.0 - a * a).max(0.0).sqrt();
+    let extent = Vec3::new(
+        axis_extent(axis.x),
+        axis_extent(axis.y),
+        axis_extent(axis.z),
+    ) + Vec3::splat(margin);
     let min_chunk = world_pos_to_chunk_coord(&(center - extent));
     let max_chunk = world_pos_to_chunk_coord(&(center + extent));
     (min_chunk.0..=max_chunk.0).flat_map(move |chunk_x| {
@@ -125,13 +135,28 @@ pub(crate) fn chunk_coords_in_cylinder(
     })
 }
 
-/// Exact SDF of a vertical (y-axis) capped cylinder, positive outside.
-fn cylinder_sdf(pos: Vec3, center: Vec3, radius: f32, half_height: f32) -> f32 {
-    let local = pos - center;
+/// Exact SDF of a capped cylinder in the brush's local frame (axis along Y,
+/// centered on the origin), positive outside.
+fn cylinder_sdf(local: Vec3, radius: f32, half_height: f32) -> f32 {
     let radial = Vec2::new(local.x, local.z).length() - radius;
     let vertical = local.y.abs() - half_height;
     let outside = Vec2::new(radial.max(0.0), vertical.max(0.0)).length();
     radial.max(vertical).min(0.0) + outside
+}
+
+/// Exact SDF of the upper half of a sphere in the brush's local frame — a
+/// dome above the origin with a flat floor at y = 0 — positive outside. For
+/// points above the floor plane the nearest surface is the dome shell or the
+/// floor; below it, the floor disk or its rim circle.
+fn half_sphere_sdf(local: Vec3, radius: f32) -> f32 {
+    let radial = Vec2::new(local.x, local.z).length();
+    if local.y >= 0.0 {
+        (local.length() - radius).max(-local.y)
+    } else if radial <= radius {
+        -local.y
+    } else {
+        Vec2::new(radial - radius, local.y).length()
+    }
 }
 
 fn read_chunk_for_deform(
@@ -250,7 +275,19 @@ pub(crate) fn deformation_message_reader(
                 center,
                 radius,
                 half_height,
-            } => carve_cylinder(center, radius, half_height, &terrain_io.terrain_chunk_map),
+                rotation,
+            } => carve_cylinder(
+                center,
+                radius,
+                half_height,
+                rotation,
+                &terrain_io.terrain_chunk_map,
+            ),
+            Deformation::HalfSphereCarve {
+                center,
+                radius,
+                rotation,
+            } => carve_half_sphere(center, radius, rotation, &terrain_io.terrain_chunk_map),
         };
         apply_modified_chunks(
             modified_chunks,
@@ -411,22 +448,61 @@ fn dig_sphere(
     chunks
 }
 
-/// Exact one-shot carve of a vertical capped cylinder, the cylinder analogue
-/// of `dig_sphere` with `f32::INFINITY`: gather every chunk the brush can
-/// touch, write the full brush field (new = max(old, brush)), and return the
-/// chunks that changed. Skipped entirely if any chunk in range is not loaded,
-/// for the same border-consistency reason as `dig_sphere`.
+/// Exact one-shot carve of a capped cylinder (axis toward `rotation * ±Y`),
+/// via `carve_shape`. As with the half sphere, rotation is rigid, so
+/// evaluating the local-frame SDF at the un-rotated sample position keeps the
+/// SDF exact.
 fn carve_cylinder(
     center: Vec3,
     radius: f32,
     half_height: f32,
+    rotation: Quat,
+    terrain_chunk_map: &TerrainChunkMap,
+) -> Vec<((i16, i16, i16), Arc<[i16]>, Arc<[MaterialCode]>, Uniformity)> {
+    let inverse_rotation = rotation.inverse();
+    carve_shape(
+        chunk_coords_in_cylinder(center, radius, half_height, rotation),
+        |pos| cylinder_sdf(inverse_rotation * (pos - center), radius, half_height),
+        terrain_chunk_map,
+    )
+}
+
+/// Exact one-shot carve of a half sphere (flat face through `center`, dome
+/// pointing toward `rotation * +Y`), via `carve_shape`. Rotation is rigid, so
+/// evaluating the local-frame SDF at the un-rotated sample position keeps the
+/// SDF exact; the half sphere and its influence region are subsets of the
+/// full sphere's in any orientation, so the sphere chunk gather is a valid
+/// (if slightly generous) bound.
+fn carve_half_sphere(
+    center: Vec3,
+    radius: f32,
+    rotation: Quat,
+    terrain_chunk_map: &TerrainChunkMap,
+) -> Vec<((i16, i16, i16), Arc<[i16]>, Arc<[MaterialCode]>, Uniformity)> {
+    let inverse_rotation = rotation.inverse();
+    carve_shape(
+        chunk_coords_in_sphere(center, radius),
+        |pos| half_sphere_sdf(inverse_rotation * (pos - center), radius),
+        terrain_chunk_map,
+    )
+}
+
+/// Exact one-shot carve of an arbitrary shape, the analogue of `dig_sphere`
+/// with `f32::INFINITY`: gather every chunk the brush can touch, write the
+/// full brush field (new = max(old, brush)), and return the chunks that
+/// changed. `chunk_coords` must cover every chunk whose padded samples the
+/// brush can write. Skipped entirely if any chunk in range is not loaded,
+/// for the same border-consistency reason as `dig_sphere`.
+fn carve_shape(
+    chunk_coords: impl Iterator<Item = (i16, i16, i16)>,
+    shape_sdf: impl Fn(Vec3) -> f32,
     terrain_chunk_map: &TerrainChunkMap,
 ) -> Vec<((i16, i16, i16), Arc<[i16]>, Arc<[MaterialCode]>, Uniformity)> {
     let map_lock = terrain_chunk_map.0.lock().unwrap();
     let mut chunks = Vec::new();
-    for chunk_coord in chunk_coords_in_cylinder(center, radius, half_height) {
+    for chunk_coord in chunk_coords {
         let Some(terrain_chunk) = map_lock.get(&chunk_coord) else {
-            warn!("skipping cylinder carve at {center}: chunk {chunk_coord:?} is not loaded");
+            warn!("skipping carve: chunk {chunk_coord:?} is not loaded");
             return Vec::new();
         };
         let (densities, materials, uniformity) =
@@ -435,23 +511,15 @@ fn carve_cylinder(
     }
     drop(map_lock);
     chunks.retain_mut(|(chunk_coord, densities, ..)| {
-        apply_cylinder_carve_to_chunk(
-            Arc::make_mut(densities),
-            chunk_coord,
-            center,
-            radius,
-            half_height,
-        )
+        apply_carve_to_chunk(Arc::make_mut(densities), chunk_coord, &shape_sdf)
     });
     chunks
 }
 
-fn apply_cylinder_carve_to_chunk(
+fn apply_carve_to_chunk(
     densities: &mut [i16],
     chunk_coord: &(i16, i16, i16),
-    center: Vec3,
-    radius: f32,
-    half_height: f32,
+    shape_sdf: impl Fn(Vec3) -> f32,
 ) -> bool {
     let mut chunk_modified = false;
     for z in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
@@ -460,12 +528,7 @@ fn apply_cylinder_carve_to_chunk(
             let world_y = padded_axis_world_coord(chunk_coord.1, y);
             for x in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
                 let world_x = padded_axis_world_coord(chunk_coord.0, x);
-                let sdf = cylinder_sdf(
-                    Vec3::new(world_x, world_y, world_z),
-                    center,
-                    radius,
-                    half_height,
-                );
+                let sdf = shape_sdf(Vec3::new(world_x, world_y, world_z));
                 if sdf > BRUSH_INFLUENCE_MARGIN {
                     continue;
                 }
@@ -813,7 +876,7 @@ mod tests {
         let half_height = CHUNK_WORLD_SIZE;
         let map = build_map(cube_range(1));
 
-        let modified = carve_cylinder(center, radius, half_height, &map);
+        let modified = carve_cylinder(center, radius, half_height, Quat::IDENTITY, &map);
         let modified_coords: Vec<_> = modified.iter().map(|(c, ..)| *c).collect();
         for expected in [(0, -1, 0), (0, 0, 0), (0, 1, 0)] {
             assert!(
@@ -829,10 +892,7 @@ mod tests {
         assert_padding_walls_consistent(&stored_nonuniform_chunks(&map));
 
         let dim = SAMPLES_PER_CHUNK_DIM_PADDED;
-        let (_, densities, ..) = modified
-            .iter()
-            .find(|(c, ..)| *c == (0, 0, 0))
-            .unwrap();
+        let (_, densities, ..) = modified.iter().find(|(c, ..)| *c == (0, 0, 0)).unwrap();
         // walk outward from the axis at the chunk's center row: air inside the
         // cylinder, a sign change within ~2 voxels of the radius, dirt outside
         let mid = dim / 2;
@@ -861,6 +921,134 @@ mod tests {
         assert!(
             (crossing_distance - radius).abs() <= 2.0 * VOXEL_WORLD_SIZE,
             "shaft wall at distance {crossing_distance} from the axis, expected close to radius {radius}"
+        );
+    }
+
+    #[test]
+    fn rotated_cylinder_carve_digs_a_horizontal_tunnel() {
+        let center = chunk_coord_to_world_pos(&(0, 0, 0));
+        let radius = 3.0;
+        let half_height = CHUNK_WORLD_SIZE;
+        let map = build_map(cube_range(1));
+        let rotation = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        let modified = carve_cylinder(center, radius, half_height, rotation, &map);
+        let modified_coords: Vec<_> = modified.iter().map(|(c, ..)| *c).collect();
+        for expected in [(-1, 0, 0), (0, 0, 0), (1, 0, 0)] {
+            assert!(
+                modified_coords.contains(&expected),
+                "the tunnel should modify the whole horizontal row, missing {expected:?}"
+            );
+        }
+        assert!(
+            !modified_coords.contains(&(0, 1, 0)),
+            "chunks beyond the influence margin must be untouched"
+        );
+        commit_modified(&modified, &map);
+        assert_padding_walls_consistent(&stored_nonuniform_chunks(&map));
+
+        let (_, densities, ..) = modified.iter().find(|(c, ..)| *c == (0, 0, 0)).unwrap();
+        let mid = SAMPLES_PER_CHUNK_DIM_PADDED / 2;
+        let ceiling = ceiling_height(densities, mid, mid);
+        assert!(
+            (ceiling - center.y - radius).abs() <= 2.0 * VOXEL_WORLD_SIZE,
+            "tunnel ceiling at y = {ceiling}, expected close to one radius above the axis"
+        );
+    }
+
+    /// A half-sphere carve in uniform dirt must leave a room with a flat
+    /// floor on the plane through the carve center and a domed ceiling at the
+    /// carve radius.
+    #[test]
+    fn half_sphere_carve_leaves_a_flat_floor_under_a_dome() {
+        let chunk_coord = (0, 0, 0);
+        let center = chunk_coord_to_world_pos(&chunk_coord);
+        let radius = 0.25 * CHUNK_WORLD_SIZE;
+        let map = build_map([chunk_coord]);
+
+        let modified = carve_half_sphere(center, radius, Quat::IDENTITY, &map);
+        commit_modified(&modified, &map);
+        assert_padding_walls_consistent(&stored_nonuniform_chunks(&map));
+        let (_, densities, ..) = modified.iter().find(|(c, ..)| *c == chunk_coord).unwrap();
+
+        let dim = SAMPLES_PER_CHUNK_DIM_PADDED;
+        let tolerance = 2.0 * VOXEL_WORLD_SIZE;
+        let mut columns_checked = 0;
+        for x in 0..dim {
+            let world_x = padded_axis_world_coord(chunk_coord.0, x);
+            for z in 0..dim {
+                let world_z = padded_axis_world_coord(chunk_coord.2, z);
+                let radial = Vec2::new(world_x - center.x, world_z - center.z).length();
+                if radial > radius - tolerance {
+                    continue;
+                }
+                let floor = surface_height(densities, x, z);
+                assert!(
+                    (floor - center.y).abs() <= tolerance,
+                    "floor in column ({x}, {z}) at y = {floor}, expected the flat plane y = {}",
+                    center.y
+                );
+                let ceiling = ceiling_height(densities, x, z);
+                assert!(ceiling > floor, "cavity in column ({x}, {z}) has no height");
+                let dome_distance =
+                    Vec3::new(world_x - center.x, ceiling - center.y, world_z - center.z).length();
+                assert!(
+                    (dome_distance - radius).abs() <= tolerance,
+                    "ceiling in column ({x}, {z}) was distance {dome_distance} from the center, expected close to radius {radius}"
+                );
+                columns_checked += 1;
+            }
+        }
+        assert!(
+            columns_checked > 0,
+            "no columns inside the room were checked"
+        );
+    }
+
+    /// The rotation reorients the flat face: flipped 180° about X, the carve
+    /// must leave a flat ceiling on the plane through the center and a domed
+    /// floor at the carve radius below it.
+    #[test]
+    fn rotated_half_sphere_carve_reorients_the_flat_face() {
+        let chunk_coord = (0, 0, 0);
+        let center = chunk_coord_to_world_pos(&chunk_coord);
+        let radius = 0.25 * CHUNK_WORLD_SIZE;
+        let map = build_map([chunk_coord]);
+
+        let rotation = Quat::from_rotation_x(std::f32::consts::PI);
+        let modified = carve_half_sphere(center, radius, rotation, &map);
+        let (_, densities, ..) = modified.iter().find(|(c, ..)| *c == chunk_coord).unwrap();
+
+        let dim = SAMPLES_PER_CHUNK_DIM_PADDED;
+        let tolerance = 2.0 * VOXEL_WORLD_SIZE;
+        let mut columns_checked = 0;
+        for x in 0..dim {
+            let world_x = padded_axis_world_coord(chunk_coord.0, x);
+            for z in 0..dim {
+                let world_z = padded_axis_world_coord(chunk_coord.2, z);
+                let radial = Vec2::new(world_x - center.x, world_z - center.z).length();
+                if radial > radius - tolerance {
+                    continue;
+                }
+                let ceiling = ceiling_height(densities, x, z);
+                assert!(
+                    (ceiling - center.y).abs() <= tolerance,
+                    "ceiling in column ({x}, {z}) at y = {ceiling}, expected the flat plane y = {}",
+                    center.y
+                );
+                let floor = surface_height(densities, x, z);
+                assert!(floor < ceiling, "cavity in column ({x}, {z}) has no height");
+                let dome_distance =
+                    Vec3::new(world_x - center.x, floor - center.y, world_z - center.z).length();
+                assert!(
+                    (dome_distance - radius).abs() <= tolerance,
+                    "floor in column ({x}, {z}) was distance {dome_distance} from the center, expected close to radius {radius}"
+                );
+                columns_checked += 1;
+            }
+        }
+        assert!(
+            columns_checked > 0,
+            "no columns inside the room were checked"
         );
     }
 
@@ -949,6 +1137,28 @@ mod tests {
             }
         }
         panic!("no surface crossing in column ({x}, {z})");
+    }
+
+    /// Interpolated solid->air crossing height (the ceiling of a carved
+    /// cavity) in one sample column of a chunk at cy = 0, scanning from the
+    /// top like `surface_height`.
+    fn ceiling_height(densities: &[i16], x: usize, z: usize) -> f32 {
+        let dim = SAMPLES_PER_CHUNK_DIM_PADDED;
+        for y in (0..dim - 1).rev() {
+            let upper = dequantize_i16_to_f32(
+                densities[flatten_index(x as u32, (y + 1) as u32, z as u32, dim) as usize],
+            );
+            let lower = dequantize_i16_to_f32(
+                densities[flatten_index(x as u32, y as u32, z as u32, dim) as usize],
+            );
+            if upper < 0.0 && lower >= 0.0 {
+                let t = upper / (upper - lower);
+                let y_up = padded_axis_world_coord(0, y + 1);
+                let y_low = padded_axis_world_coord(0, y);
+                return y_up + t * (y_low - y_up);
+            }
+        }
+        panic!("no ceiling crossing in column ({x}, {z})");
     }
 
     /// Regression test for the "shallow wide cylinder" bug: a partial dig

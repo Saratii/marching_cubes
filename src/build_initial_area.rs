@@ -6,10 +6,10 @@ use crate::deformable_terrain::{
     plugin::{Deformation, TerrainHeightSource},
 };
 
-/// Radius of the spherical underground room.
-const ROOM_RADIUS: f32 = 10.0;
-/// Depth of the room's center below the terrain surface at the origin.
-const ROOM_DEPTH: f32 = 25.0;
+/// Radius of the hemispherical underground room (flat floor, domed ceiling).
+const ROOM_RADIUS: f32 = 15.0;
+/// Depth of the room's flat floor below the terrain surface at the origin.
+const ROOM_DEPTH: f32 = 30.0;
 /// Radius of the vertical shaft connecting the surface to the room.
 const SHAFT_RADIUS: f32 = 3.0;
 /// How far above the surface the shaft carve starts, so it cleanly breaks
@@ -37,20 +37,23 @@ pub fn build_initial_area(
                 shaft_center,
                 SHAFT_RADIUS,
                 shaft_half_height,
+                Quat::IDENTITY,
             ))
             .all(|coord| map.contains_key(&coord))
     };
     if !ready {
         return;
     }
-    deformation_writer.write(Deformation::SphereCarve {
+    deformation_writer.write(Deformation::HalfSphereCarve {
         center: room_center,
         radius: ROOM_RADIUS,
+        rotation: Quat::IDENTITY,
     });
     deformation_writer.write(Deformation::CylinderCarve {
         center: shaft_center,
         radius: SHAFT_RADIUS,
         half_height: shaft_half_height,
+        rotation: Quat::IDENTITY,
     });
     *dispatched = true;
 }

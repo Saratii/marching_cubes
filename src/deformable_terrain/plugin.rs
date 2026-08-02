@@ -84,6 +84,12 @@ pub enum Deformation {
         center: Vec3,
         radius: f32,
         half_height: f32,
+        rotation: Quat,
+    },
+    HalfSphereCarve {
+        center: Vec3,
+        radius: f32,
+        rotation: Quat,
     },
 }
 
