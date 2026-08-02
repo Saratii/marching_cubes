@@ -56,7 +56,7 @@ const BRUSH_SKIRT_START: f32 = 3.0 * VOXEL_WORLD_SIZE;
 const BRUSH_SKIRT_SLOPE: f32 =
     (10.0 + VOXEL_WORLD_SIZE - BRUSH_SKIRT_START) / (BRUSH_INFLUENCE_MARGIN - BRUSH_SKIRT_START);
 
-/// Bounded brush field: an exact negated sphere SDF near the surface, then a
+/// Bounded brush field: an exact negated shape SDF near the surface, then a
 /// steep but CONTINUOUS ramp down to below the storage clamp at the influence
 /// margin. Truncating the brush with a hard distance cutoff instead leaves a
 /// value cliff buried below the dug surface (fine on its own — nothing reads
@@ -64,11 +64,11 @@ const BRUSH_SKIRT_SLOPE: f32 =
 /// values and meshes a jagged staircase along the old boundary. Continuity of
 /// the stored field under any dig sequence is the invariant that prevents it.
 #[inline(always)]
-fn brush_sdf(sphere_sdf: f32) -> f32 {
-    if sphere_sdf <= BRUSH_SKIRT_START {
-        -sphere_sdf
+fn brush_sdf(shape_sdf: f32) -> f32 {
+    if shape_sdf <= BRUSH_SKIRT_START {
+        -shape_sdf
     } else {
-        -BRUSH_SKIRT_START - (sphere_sdf - BRUSH_SKIRT_START) * BRUSH_SKIRT_SLOPE
+        -BRUSH_SKIRT_START - (shape_sdf - BRUSH_SKIRT_START) * BRUSH_SKIRT_SLOPE
     }
 }
 
@@ -104,6 +104,34 @@ pub(crate) fn chunk_coords_in_sphere(
             })
         })
     })
+}
+
+/// Chunks whose padded sample grid a cylinder carve can touch: everything in
+/// the cylinder's AABB widened by the brush influence margin (plus a voxel for
+/// the padded border samples), mirroring `chunk_coords_in_sphere`.
+pub(crate) fn chunk_coords_in_cylinder(
+    center: Vec3,
+    radius: f32,
+    half_height: f32,
+) -> impl Iterator<Item = (i16, i16, i16)> {
+    let margin = BRUSH_INFLUENCE_MARGIN + 2.0 * VOXEL_WORLD_SIZE;
+    let extent = Vec3::new(radius + margin, half_height + margin, radius + margin);
+    let min_chunk = world_pos_to_chunk_coord(&(center - extent));
+    let max_chunk = world_pos_to_chunk_coord(&(center + extent));
+    (min_chunk.0..=max_chunk.0).flat_map(move |chunk_x| {
+        (min_chunk.1..=max_chunk.1).flat_map(move |chunk_y| {
+            (min_chunk.2..=max_chunk.2).map(move |chunk_z| (chunk_x, chunk_y, chunk_z))
+        })
+    })
+}
+
+/// Exact SDF of a vertical (y-axis) capped cylinder, positive outside.
+fn cylinder_sdf(pos: Vec3, center: Vec3, radius: f32, half_height: f32) -> f32 {
+    let local = pos - center;
+    let radial = Vec2::new(local.x, local.z).length() - radius;
+    let vertical = local.y.abs() - half_height;
+    let outside = Vec2::new(radial.max(0.0), vertical.max(0.0)).length();
+    radial.max(vertical).min(0.0) + outside
 }
 
 fn read_chunk_for_deform(
@@ -218,6 +246,11 @@ pub(crate) fn deformation_message_reader(
             Deformation::SphereCarve { center, radius } => {
                 dig_sphere(center, radius, f32::INFINITY, &terrain_io.terrain_chunk_map)
             }
+            Deformation::CylinderCarve {
+                center,
+                radius,
+                half_height,
+            } => carve_cylinder(center, radius, half_height, &terrain_io.terrain_chunk_map),
         };
         apply_modified_chunks(
             modified_chunks,
@@ -279,15 +312,27 @@ fn apply_modified_chunks(
             .unwrap();
             match entity {
                 Some((entity, mesh_handle)) => {
-                    let (mut collider_component, mut mesh) =
-                        solid_chunk_query.get_mut(*entity).unwrap();
-                    *collider_component = collider;
                     mesh_handles.remove(mesh_handle);
                     if let Some(aabb) = new_mesh.compute_aabb() {
                         commands.entity(*entity).insert(aabb);
                     }
                     let new_mesh_handle = mesh_handles.add(new_mesh);
-                    *mesh = Mesh3d(new_mesh_handle.clone());
+                    match solid_chunk_query.get_mut(*entity) {
+                        Ok((mut collider_component, mut mesh)) => {
+                            *collider_component = collider;
+                            *mesh = Mesh3d(new_mesh_handle.clone());
+                        }
+                        // The entity was spawned by an earlier deformation in
+                        // this same system run, so its spawn command has not
+                        // been applied yet and the query cannot see it. Route
+                        // the update through commands, which apply in order
+                        // after the spawn.
+                        Err(_) => {
+                            commands
+                                .entity(*entity)
+                                .insert((collider, Mesh3d(new_mesh_handle.clone())));
+                        }
+                    }
                     terrain_io
                         .chunk_entity_map
                         .replace_mesh_handle(chunk_coord, new_mesh_handle);
@@ -364,6 +409,81 @@ fn dig_sphere(
         )
     });
     chunks
+}
+
+/// Exact one-shot carve of a vertical capped cylinder, the cylinder analogue
+/// of `dig_sphere` with `f32::INFINITY`: gather every chunk the brush can
+/// touch, write the full brush field (new = max(old, brush)), and return the
+/// chunks that changed. Skipped entirely if any chunk in range is not loaded,
+/// for the same border-consistency reason as `dig_sphere`.
+fn carve_cylinder(
+    center: Vec3,
+    radius: f32,
+    half_height: f32,
+    terrain_chunk_map: &TerrainChunkMap,
+) -> Vec<((i16, i16, i16), Arc<[i16]>, Arc<[MaterialCode]>, Uniformity)> {
+    let map_lock = terrain_chunk_map.0.lock().unwrap();
+    let mut chunks = Vec::new();
+    for chunk_coord in chunk_coords_in_cylinder(center, radius, half_height) {
+        let Some(terrain_chunk) = map_lock.get(&chunk_coord) else {
+            warn!("skipping cylinder carve at {center}: chunk {chunk_coord:?} is not loaded");
+            return Vec::new();
+        };
+        let (densities, materials, uniformity) =
+            read_chunk_for_deform(terrain_chunk, chunk_coord, &map_lock);
+        chunks.push((chunk_coord, densities, materials, uniformity));
+    }
+    drop(map_lock);
+    chunks.retain_mut(|(chunk_coord, densities, ..)| {
+        apply_cylinder_carve_to_chunk(
+            Arc::make_mut(densities),
+            chunk_coord,
+            center,
+            radius,
+            half_height,
+        )
+    });
+    chunks
+}
+
+fn apply_cylinder_carve_to_chunk(
+    densities: &mut [i16],
+    chunk_coord: &(i16, i16, i16),
+    center: Vec3,
+    radius: f32,
+    half_height: f32,
+) -> bool {
+    let mut chunk_modified = false;
+    for z in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
+        let world_z = padded_axis_world_coord(chunk_coord.2, z);
+        for y in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
+            let world_y = padded_axis_world_coord(chunk_coord.1, y);
+            for x in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
+                let world_x = padded_axis_world_coord(chunk_coord.0, x);
+                let sdf = cylinder_sdf(
+                    Vec3::new(world_x, world_y, world_z),
+                    center,
+                    radius,
+                    half_height,
+                );
+                if sdf > BRUSH_INFLUENCE_MARGIN {
+                    continue;
+                }
+                let brush = brush_sdf(sdf);
+                let flat_index =
+                    flatten_index(x as u32, y as u32, z as u32, SAMPLES_PER_CHUNK_DIM_PADDED);
+                let current_density = &mut densities[flat_index as usize];
+                let old = dequantize_i16_to_f32(*current_density);
+                let new_sdf = old.max(brush).clamp(-10.0, 10.0);
+                let new_quantized = quantize_f32_to_i16(new_sdf);
+                if new_quantized != *current_density {
+                    *current_density = new_quantized;
+                    chunk_modified = true;
+                }
+            }
+        }
+    }
+    chunk_modified
 }
 
 /// Raise the stored field toward the brush, at most `step` world units per
@@ -680,6 +800,68 @@ mod tests {
         assert!(matches!(uniformity, Uniformity::Dirt));
         assert_carve_surface_near_radius(chunk_coord, densities, center, radius);
         assert_normals_point_toward_center(chunk_coord, densities, materials, center);
+    }
+
+    /// A cylinder carve through a stack of uniform-dirt chunks must dig a
+    /// shaft: air along the axis, an untouched neighbor outside the influence
+    /// margin, a wall meshed close to the cylinder radius, and consistent
+    /// shared border samples across every modified chunk.
+    #[test]
+    fn cylinder_carve_digs_a_consistent_shaft_through_stacked_chunks() {
+        let center = chunk_coord_to_world_pos(&(0, 0, 0));
+        let radius = 3.0;
+        let half_height = CHUNK_WORLD_SIZE;
+        let map = build_map(cube_range(1));
+
+        let modified = carve_cylinder(center, radius, half_height, &map);
+        let modified_coords: Vec<_> = modified.iter().map(|(c, ..)| *c).collect();
+        for expected in [(0, -1, 0), (0, 0, 0), (0, 1, 0)] {
+            assert!(
+                modified_coords.contains(&expected),
+                "the shaft should modify the whole vertical stack, missing {expected:?}"
+            );
+        }
+        assert!(
+            !modified_coords.contains(&(1, 0, 0)),
+            "chunks beyond the influence margin must be untouched"
+        );
+        commit_modified(&modified, &map);
+        assert_padding_walls_consistent(&stored_nonuniform_chunks(&map));
+
+        let dim = SAMPLES_PER_CHUNK_DIM_PADDED;
+        let (_, densities, ..) = modified
+            .iter()
+            .find(|(c, ..)| *c == (0, 0, 0))
+            .unwrap();
+        // walk outward from the axis at the chunk's center row: air inside the
+        // cylinder, a sign change within ~2 voxels of the radius, dirt outside
+        let mid = dim / 2;
+        let mut previous: Option<(f32, f32)> = None;
+        let mut crossing_distance = None;
+        for x in mid..dim {
+            let world_x = padded_axis_world_coord(0, x);
+            let idx = flatten_index(x as u32, mid as u32, mid as u32, dim) as usize;
+            let value = dequantize_i16_to_f32(densities[idx]);
+            let distance = (Vec3::new(
+                world_x,
+                padded_axis_world_coord(0, mid),
+                padded_axis_world_coord(0, mid),
+            ) - center)
+                .x
+                .abs();
+            if let Some((prev_distance, prev_value)) = previous {
+                if prev_value > 0.0 && value <= 0.0 {
+                    let t = prev_value / (prev_value - value);
+                    crossing_distance = Some(prev_distance + t * (distance - prev_distance));
+                }
+            }
+            previous = Some((distance, value));
+        }
+        let crossing_distance = crossing_distance.expect("the shaft wall should cross this row");
+        assert!(
+            (crossing_distance - radius).abs() <= 2.0 * VOXEL_WORLD_SIZE,
+            "shaft wall at distance {crossing_distance} from the axis, expected close to radius {radius}"
+        );
     }
 
     #[test]

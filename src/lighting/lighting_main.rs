@@ -47,9 +47,6 @@ pub fn apply_settings_changes(
     }
     if let Ok(mut ambient) = ambient_query.single_mut() {
         ambient.brightness = settings.ambient_brightness;
-        println!("updating to {:?}", settings.ambient_brightness);
-    } else {
-        println!("hm");
     }
     if let Ok(entity) = camera_entity_query.single() {
         if settings.distance_fog {
