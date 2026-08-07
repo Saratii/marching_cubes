@@ -26,7 +26,13 @@ const SHAFT_CARVE_MARGIN: f32 = 0.4;
 /// through the ground instead of leaving a thin skin over the opening.
 const SHAFT_TOP_MARGIN: f32 = 2.0;
 
+/// Inserted once the initial room/shaft carve has been dispatched, so systems
+/// that need the room to be open air (e.g. lantern spawning) can wait for it.
+#[derive(Resource)]
+pub struct InitialAreaBuilt;
+
 pub fn build_initial_area(
+    mut commands: Commands,
     terrain_chunk_map: Res<TerrainChunkMap>,
     height_source: Res<TerrainHeightSource>,
     mut deformation_writer: MessageWriter<Deformation>,
@@ -67,5 +73,6 @@ pub fn build_initial_area(
         half_height: shaft_half_height,
         rotation: Quat::IDENTITY,
     });
+    commands.insert_resource(InitialAreaBuilt);
     *dispatched = true;
 }

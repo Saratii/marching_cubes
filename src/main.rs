@@ -18,7 +18,8 @@ use bevy_rapier3d::plugin::{NoUserData, PhysicsSet, RapierPhysicsPlugin};
 use iyes_perf_ui::PerfUiPlugin;
 use iyes_perf_ui::prelude::PerfUiDefaultEntries;
 
-use marching_cubes::build_initial_area::build_initial_area;
+use marching_cubes::build_initial_area::{InitialAreaBuilt, build_initial_area};
+use marching_cubes::lanterns::spawn_lanterns;
 #[cfg(feature = "debug")]
 use marching_cubes::deformable_terrain::debug_lines::{
     draw_cluster_debug, draw_collider_debug, draw_lod_debug, draw_voxel_surface_debug,
@@ -169,6 +170,7 @@ fn main() {
         .add_systems(
             Update,
             (
+                spawn_lanterns.run_if(resource_exists::<InitialAreaBuilt>),
                 toggle_free_cam,
                 free_cam_movement,
                 sync_player_rotation,

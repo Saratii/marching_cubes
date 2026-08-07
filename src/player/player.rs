@@ -189,6 +189,7 @@ pub fn spawn_player(
                     min_width: CharacterLength::Absolute(0.1),
                     include_dynamic_bodies: true,
                 }),
+                custom_mass: Some(80.0),
                 ..default()
             },
             Transform::from_translation(player_spawn),
