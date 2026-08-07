@@ -1,9 +1,9 @@
-use std::f32::consts::FRAC_PI_2;
+use std::f32::consts::{FRAC_PI_2, TAU};
 
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
-use crate::build_initial_area::{ROOM_DEPTH, ROOM_RADIUS, SHAFT_RADIUS};
+use crate::build_initial_area::{ROOM_DEPTH, ROOM_HEIGHT, ROOM_RADIUS, SHAFT_RADIUS};
 use crate::constants::PLAYER_CUBOID_SIZE;
 use crate::deformable_terrain::plugin::TerrainHeightSource;
 use crate::player::player::PlayerTag;
@@ -36,13 +36,25 @@ const COLLAR_HEIGHT: f32 = 0.8;
 const COLLAR_THICKNESS: f32 = 0.15;
 /// Inner radius of the collar; narrower than the shaft.
 const COLLAR_INNER_RADIUS: f32 = SHAFT_RADIUS - 0.5;
-/// Vertical thickness of the flat base discs at each end of the shaft liner.
+/// Vertical thickness of the flat base disc resting on the ground around the
+/// collar at the surface.
 const BASE_THICKNESS: f32 = 0.15;
-/// How far beyond the liner wall the flat base discs extend.
+/// How far beyond the liner wall the flat base disc extends.
 const BASE_EXTRA_RADIUS: f32 = 0.4;
-/// Extra drop of the bottom base disc below the liner's end, so its outer rim
-/// clears the dome ceiling (which curves down as it moves away from the shaft).
-const BOTTOM_BASE_DROP: f32 = 0.6;
+/// Vertical thickness of the flat plates lining the cavern's floor and
+/// ceiling. Kept at most the player's autostep height so the floor plate's
+/// edge is walkable.
+const PLATE_THICKNESS: f32 = 0.1;
+/// Outer radius of the floor and roof plates: extends past the room radius so
+/// the plates' rims bury into the cavern's wall, hiding the dirt seams.
+const PLATE_OUTER_RADIUS: f32 = ROOM_RADIUS + 0.5;
+/// Number of support beams holding the roof plate up.
+const BEAM_COUNT: usize = 6;
+/// Radius of each support beam.
+const BEAM_RADIUS: f32 = 0.4;
+/// Distance from the room's axis to each beam's axis, placing the ring of
+/// beams just inside the cavern wall.
+const BEAM_RING_RADIUS: f32 = ROOM_RADIUS - 1.5;
 
 #[derive(Component)]
 pub struct ElevatorPlatform;
@@ -69,6 +81,15 @@ pub fn setup_elevator(
         perceptual_roughness: 0.4,
         ..default()
     });
+    spawn_shaft_tube(
+        &mut commands,
+        &mut meshes,
+        silver.clone(),
+        bottom_y + PLATE_THICKNESS / 2.0,
+        PLATE_THICKNESS,
+        TUBE_INNER_RADIUS,
+        PLATE_OUTER_RADIUS - TUBE_INNER_RADIUS,
+    );
     //short ring at the room floor hiding where platforms pop in
     spawn_shaft_tube(
         &mut commands,
@@ -79,11 +100,8 @@ pub fn setup_elevator(
         TUBE_INNER_RADIUS,
         RING_THICKNESS,
     );
-    //liner reinforcing the upper shaft: starts where the shaft pierces the room's
-    //dome (so the room itself stays open) and runs up to the surface. Extended
-    //down by the base drop so it stays attached to the lowered bottom disc.
-    let dome_pierce_y = bottom_y + (ROOM_RADIUS * ROOM_RADIUS - SHAFT_RADIUS * SHAFT_RADIUS).sqrt();
-    let liner_bottom = dome_pierce_y - BOTTOM_BASE_DROP;
+    let ceiling_y = bottom_y + ROOM_HEIGHT;
+    let liner_bottom = ceiling_y - PLATE_THICKNESS;
     let liner_height = surface_y - liner_bottom;
     spawn_shaft_tube(
         &mut commands,
@@ -104,20 +122,30 @@ pub fn setup_elevator(
         COLLAR_INNER_RADIUS,
         COLLAR_THICKNESS,
     );
-    //flat base discs hiding the seam between the liner and the dirt: one flush
-    //under the liner's bottom at the room's dome, one resting on the ground
-    //around the collar at the surface. Both reach the same outer radius; the top
-    //one starts at the narrower collar wall so there's no gap between them.
-    let base_outer_radius = TUBE_INNER_RADIUS + RING_THICKNESS + BASE_EXTRA_RADIUS;
     spawn_shaft_tube(
         &mut commands,
         &mut meshes,
         silver.clone(),
-        liner_bottom + BASE_THICKNESS / 2.0,
-        BASE_THICKNESS,
+        ceiling_y - PLATE_THICKNESS / 2.0,
+        PLATE_THICKNESS,
         TUBE_INNER_RADIUS,
-        base_outer_radius - TUBE_INNER_RADIUS,
+        PLATE_OUTER_RADIUS - TUBE_INNER_RADIUS,
     );
+    let beam_mesh = meshes.add(Cylinder::new(BEAM_RADIUS, ROOM_HEIGHT));
+    for i in 0..BEAM_COUNT {
+        let angle = i as f32 / BEAM_COUNT as f32 * TAU;
+        commands.spawn((
+            Mesh3d(beam_mesh.clone()),
+            MeshMaterial3d(silver.clone()),
+            Collider::cylinder(ROOM_HEIGHT / 2.0, BEAM_RADIUS),
+            Transform::from_translation(Vec3::new(
+                BEAM_RING_RADIUS * angle.cos(),
+                bottom_y + ROOM_HEIGHT / 2.0,
+                BEAM_RING_RADIUS * angle.sin(),
+            )),
+        ));
+    }
+    let base_outer_radius = TUBE_INNER_RADIUS + RING_THICKNESS + BASE_EXTRA_RADIUS;
     spawn_shaft_tube(
         &mut commands,
         &mut meshes,
