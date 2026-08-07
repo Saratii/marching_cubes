@@ -30,6 +30,7 @@ use marching_cubes::deformable_terrain::driver::{
 #[cfg(feature = "debug")]
 use marching_cubes::deformable_terrain::driver_debug_ui::{spawn_debug_texts, update_debug_texts};
 use marching_cubes::deformable_terrain::file_loader::setup_chunk_loading;
+use marching_cubes::elevator::{setup_elevator, update_elevator};
 use marching_cubes::deformable_terrain::plugin::{
     DeformableTerrainConfig, DeformableTerrainPlugin, HeightSource,
 };
@@ -127,6 +128,7 @@ fn main() {
                 setup_lighting,
                 setup_camera,
                 spawn_free_cam_root,
+                setup_elevator,
                 #[cfg(feature = "debug")]
                 spawn_debug_texts,
             ),
@@ -136,6 +138,7 @@ fn main() {
             Update,
             (
                 build_initial_area,
+                update_elevator,
                 handle_digging_input,
                 toggle_first_person,
                 camera_zoom,

@@ -12,7 +12,7 @@ pub const REDUCED_LOD_5_RADIUS: f32 = REDUCED_LOD_1_RADIUS * 16.0; //purple
 pub const WORLD_SEED: i32 = 111;
 pub const NOISE_FREQUENCY: f32 = 0.0005; // Frequency of the noise
 pub const NOISE_AMPLITUDE: f32 = 300.0; // Amplitude of the noise
-pub const PLAYER_SPAWN: Vec3 = Vec3::new(0., 0., 0.);
+pub const PLAYER_SPAWN: Vec3 = Vec3::new(6.5, 0., 0.);
 pub const PLAYER_CUBOID_SIZE: Vec3 = Vec3::new(0.5, 1.5, 0.5);
 pub const CAMERA_FIRST_PERSON_OFFSET: Vec3 = Vec3::new(0., 0.75 * PLAYER_CUBOID_SIZE.y, 0.);
 

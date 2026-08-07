@@ -7,11 +7,11 @@ use crate::deformable_terrain::{
 };
 
 /// Radius of the hemispherical underground room (flat floor, domed ceiling).
-const ROOM_RADIUS: f32 = 15.0;
+pub const ROOM_RADIUS: f32 = 15.0;
 /// Depth of the room's flat floor below the terrain surface at the origin.
-const ROOM_DEPTH: f32 = 30.0;
+pub const ROOM_DEPTH: f32 = 45.0;
 /// Radius of the vertical shaft connecting the surface to the room.
-const SHAFT_RADIUS: f32 = 3.0;
+pub const SHAFT_RADIUS: f32 = 3.0;
 /// How far above the surface the shaft carve starts, so it cleanly breaks
 /// through the ground instead of leaving a thin skin over the opening.
 const SHAFT_TOP_MARGIN: f32 = 2.0;

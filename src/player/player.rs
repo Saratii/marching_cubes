@@ -12,6 +12,7 @@ use bevy::{
 use bevy_rapier3d::prelude::*;
 
 use crate::{
+    build_initial_area::ROOM_DEPTH,
     constants::{CAMERA_FIRST_PERSON_OFFSET, PLAYER_CUBOID_SIZE, PLAYER_SPAWN},
     conversions::world_pos_to_chunk_coord,
     deformable_terrain::{
@@ -174,7 +175,7 @@ pub fn spawn_player(
         }
         None => Vec3::new(
             PLAYER_SPAWN.x,
-            height_source.0.height_at(PLAYER_SPAWN.x, PLAYER_SPAWN.z) + 20.0,
+            height_source.0.height_at(PLAYER_SPAWN.x, PLAYER_SPAWN.z) - ROOM_DEPTH + 2.0,
             PLAYER_SPAWN.z,
         ),
     };
