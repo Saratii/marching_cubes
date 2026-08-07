@@ -23,7 +23,7 @@ use crate::{
             NonUniformTerrainChunk, TerrainChunk, TerrainMaterialHandle, generate_bevy_mesh,
         },
     },
-    player::player::MainCameraTag,
+    player::player::{CameraController, MainCameraTag},
     ui::{configurable_settings::ConfigurableSettings, menu::MenuRoot},
 };
 
@@ -219,11 +219,13 @@ pub fn handle_digging_input(
     menu_root_query: Query<&MenuRoot>,
     mut deformation_writer: MessageWriter<Deformation>,
     settings: Res<ConfigurableSettings>,
+    camera_controller: Res<CameraController>,
 ) {
     if !menu_root_query.is_empty() {
         return;
     }
-    let should_dig = if mouse_input.pressed(MouseButton::Left) {
+    let should_dig = if camera_controller.is_cursor_grabbed && mouse_input.pressed(MouseButton::Left)
+    {
         *dig_timer += time.delta_secs();
         if *dig_timer >= DIG_TICK_INTERVAL {
             *dig_timer -= DIG_TICK_INTERVAL;
@@ -236,17 +238,17 @@ pub fn handle_digging_input(
         false
     };
     if should_dig {
-        if let Some(cursor_pos) = window.iter().next().unwrap().cursor_position() {
-            let (camera, camera_transform) = camera.iter().next().unwrap();
-            if let Some(world_pos) =
-                screen_to_world_ray(cursor_pos, camera, camera_transform, &terrain_chunk_map)
-            {
-                deformation_writer.write(Deformation::Sphere {
-                    center: world_pos,
-                    radius: settings.dig_radius,
-                    strength: settings.dig_strength * DIG_TICK_INTERVAL,
-                });
-            }
+        //use window center to avoid issues caused by stale mouse events
+        let cursor_pos = window.iter().next().unwrap().size() / 2.0;
+        let (camera, camera_transform) = camera.iter().next().unwrap();
+        if let Some(world_pos) =
+            screen_to_world_ray(cursor_pos, camera, camera_transform, &terrain_chunk_map)
+        {
+            deformation_writer.write(Deformation::Sphere {
+                center: world_pos,
+                radius: settings.dig_radius,
+                strength: settings.dig_strength * DIG_TICK_INTERVAL,
+            });
         }
     }
 }
