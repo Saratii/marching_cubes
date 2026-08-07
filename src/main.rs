@@ -43,6 +43,7 @@ use marching_cubes::player::player::{
     sync_player_rotation, sync_terrain_center, toggle_first_person, toggle_fly_mode,
     toggle_free_cam, validate_player_spawn,
 };
+use marching_cubes::player::player_visual::animate_player_limbs;
 use marching_cubes::settings::settings_driver::{load_settings, save_monitor_on_move};
 use marching_cubes::ui::configurable_settings::{
     FpsLimit, MenuFocus, MenuTab, load_configurable_settings,
@@ -171,6 +172,7 @@ fn main() {
                 toggle_free_cam,
                 free_cam_movement,
                 sync_player_rotation,
+                animate_player_limbs.after(player_movement),
                 #[cfg(feature = "debug")]
                 update_debug_texts,
             ),

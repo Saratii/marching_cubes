@@ -13,7 +13,7 @@ use bevy_rapier3d::prelude::*;
 
 use crate::{
     build_initial_area::ROOM_DEPTH,
-    constants::{CAMERA_FIRST_PERSON_OFFSET, PLAYER_CUBOID_SIZE, PLAYER_SPAWN},
+    constants::{CAMERA_FIRST_PERSON_OFFSET, PLAYER_SPAWN},
     conversions::world_pos_to_chunk_coord,
     deformable_terrain::{
         chunk_entity_map::ChunkEntityMap,
@@ -21,6 +21,7 @@ use crate::{
         file_loader::get_project_root,
         plugin::{ChunkTag, MoveableCenter, TerrainHeightSource},
     },
+    player::player_visual::spawn_player_visual,
     ui::menu::MenuRoot,
 };
 
@@ -179,17 +180,6 @@ pub fn spawn_player(
             PLAYER_SPAWN.z,
         ),
     };
-    let player_mesh = Cuboid::new(
-        PLAYER_CUBOID_SIZE.x,
-        PLAYER_CUBOID_SIZE.y,
-        PLAYER_CUBOID_SIZE.z,
-    );
-    let player_mesh_handle = meshes.add(player_mesh);
-    let material: Handle<StandardMaterial> = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.8, 0.3, 0.3, 1.0),
-        alpha_mode: AlphaMode::Blend,
-        ..default()
-    });
     let player = commands
         .spawn((
             Collider::cuboid(0.25, 0.75, 0.25),
@@ -207,15 +197,7 @@ pub fn spawn_player(
             FlyMode { active: false },
         ))
         .id();
-    let player_mesh_entity = commands
-        .spawn((
-            Mesh3d(player_mesh_handle),
-            MeshMaterial3d(material),
-            Transform::default(),
-            Visibility::Hidden,
-            PlayerMeshTag,
-        ))
-        .id();
+    let player_mesh_entity = spawn_player_visual(&mut commands, &mut meshes, &mut materials);
     commands.entity(player).add_child(player_mesh_entity);
     commands
         .entity(player)
