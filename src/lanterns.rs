@@ -1,3 +1,5 @@
+use std::f32::consts::FRAC_PI_2;
+
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
@@ -37,8 +39,12 @@ pub fn spawn_lanterns(
     let attach_y = floor_y + ROOM_HEIGHT - ATTACH_INSET;
     let chain_span = LANTERN_DROP - HOOK_OFFSET;
     let link_length = chain_span / LINK_COUNT as f32;
-    //slightly overlong so link meshes overlap at the joints instead of gapping
-    let link_mesh = meshes.add(Cylinder::new(LINK_RADIUS * 0.8, link_length * 1.05));
+    let link_mesh = meshes.add(Torus::new(
+        link_length * 0.5 - LINK_RADIUS * 1.4,
+        link_length * 0.5,
+    ));
+    //stretched so each ring interlocks with its neighbors
+    let link_scale = Vec3::new(0.55, 1.0, 1.25);
     let iron = materials.add(StandardMaterial {
         base_color: Color::srgb(0.22, 0.22, 0.25),
         metallic: 0.9,
@@ -47,6 +53,7 @@ pub fn spawn_lanterns(
     });
     let cap_mesh = meshes.add(Cuboid::new(0.56, 0.2, 0.56));
     let base_mesh = meshes.add(Cuboid::new(0.44, 0.12, 0.44));
+    let post_mesh = meshes.add(Cuboid::new(0.06, 0.72, 0.06));
     let glow_mesh = meshes.add(Sphere::new(0.24));
     let glow_material = materials.add(StandardMaterial {
         base_color: Color::srgb(1.0, 0.8, 0.5),
@@ -64,6 +71,7 @@ pub fn spawn_lanterns(
             let joint = SphericalJointBuilder::new()
                 .local_anchor1(parent_anchor)
                 .local_anchor2(Vec3::new(0.0, link_length / 2.0, 0.0));
+            let yaw = if i % 2 == 0 { 0.0 } else { FRAC_PI_2 };
             parent = commands
                 .spawn((
                     RigidBody::Dynamic,
@@ -73,11 +81,20 @@ pub fn spawn_lanterns(
                         linear_damping: 0.4,
                         angular_damping: 0.6,
                     },
-                    Mesh3d(link_mesh.clone()),
-                    MeshMaterial3d(iron.clone()),
                     Transform::from_xyz(x, attach_y - link_length * (i as f32 + 0.5), z),
+                    Visibility::default(),
                     ImpulseJoint::new(parent, joint),
                 ))
+                .with_children(|children| {
+                    children.spawn((
+                        Mesh3d(link_mesh.clone()),
+                        MeshMaterial3d(iron.clone()),
+                        Transform::from_rotation(
+                            Quat::from_rotation_y(yaw) * Quat::from_rotation_x(FRAC_PI_2),
+                        )
+                        .with_scale(link_scale),
+                    ));
+                })
                 .id();
             parent_anchor = Vec3::new(0.0, -link_length / 2.0, 0.0);
         }
@@ -112,6 +129,15 @@ pub fn spawn_lanterns(
                     MeshMaterial3d(iron.clone()),
                     Transform::from_xyz(0.0, -LANTERN_HALF_EXTENTS.y + 0.06, 0.0),
                 ));
+                for sx in [-1.0, 1.0] {
+                    for sz in [-1.0, 1.0] {
+                        children.spawn((
+                            Mesh3d(post_mesh.clone()),
+                            MeshMaterial3d(iron.clone()),
+                            Transform::from_xyz(0.18 * sx, -0.04, 0.18 * sz),
+                        ));
+                    }
+                }
                 children.spawn((
                     Mesh3d(glow_mesh.clone()),
                     MeshMaterial3d(glow_material.clone()),
