@@ -18,14 +18,17 @@ const HIGHLIGHT_COLOR: Color = Color::srgba(0.8, 0.4, 0.8, 1.0); // Brighter pin
 const ACTIVE_TAB_COLOR: Color = Color::srgba(0.4, 0.4, 0.6, 1.0); // Purple for active tab background
 const INACTIVE_TAB_COLOR: Color = Color::srgba(0.25, 0.25, 0.4, 1.0); // Darker for inactive
 const INACTIVE_BORDER_COLOR: Color = Color::srgba(0.5, 0.5, 0.7, 1.0);
-const FONT_SIZE: FontSize = FontSize::Px(24.0);
+const FONT_SIZE: FontSize = FontSize::Px(20.0);
 const SETTINGS_ROW_HEIGHT: f32 = 40.0;
 const SETTINGS_ROW_BORDER_SIZE: f32 = 3.0;
-const GENERAL_SETTINGS: [SettingsType; 11] = [
+const SETTINGS_ROW_GAP: f32 = 5.0;
+const CONTENT_PADDING: f32 = 5.0;
+const GENERAL_SETTINGS: [SettingsType; 12] = [
     SettingsType::FpsChange,
     SettingsType::ShadowsToggle,
     SettingsType::AmbientBrightnessChange,
     SettingsType::SunIlluminanceChange,
+    SettingsType::LanternBrightnessChange,
     SettingsType::RenderRadiusChange,
     SettingsType::DistanceFogToggle,
     SettingsType::FogStartMultiplier,
@@ -202,6 +205,13 @@ pub fn menu_update(
 }
 
 fn spawn_menu(commands: &mut Commands, settings: &ConfigurableSettings) {
+    #[cfg(feature = "debug")]
+    let max_rows = GENERAL_SETTINGS.len().max(DEBUG_SETTINGS.len());
+    #[cfg(not(feature = "debug"))]
+    let max_rows = GENERAL_SETTINGS.len();
+    let content_height = max_rows as f32 * SETTINGS_ROW_HEIGHT
+        + (max_rows - 1) as f32 * SETTINGS_ROW_GAP
+        + 2.0 * CONTENT_PADDING;
     commands
         .spawn((
             Node {
@@ -220,7 +230,6 @@ fn spawn_menu(commands: &mut Commands, settings: &ConfigurableSettings) {
                 .spawn((
                     Node {
                         width: Val::Px(400.0),
-                        height: Val::Px(560.0),
                         flex_direction: FlexDirection::Column,
                         ..default()
                     },
@@ -295,8 +304,8 @@ fn spawn_menu(commands: &mut Commands, settings: &ConfigurableSettings) {
                     parent
                         .spawn(Node {
                             width: Val::Percent(100.0),
-                            height: Val::Px(510.0),
-                            padding: UiRect::all(Val::Px(5.0)),
+                            height: Val::Px(content_height),
+                            padding: UiRect::all(Val::Px(CONTENT_PADDING)),
                             flex_direction: FlexDirection::Column,
                             justify_content: JustifyContent::Start,
                             align_items: AlignItems::Start,
@@ -309,7 +318,7 @@ fn spawn_menu(commands: &mut Commands, settings: &ConfigurableSettings) {
                                         width: Val::Percent(100.0),
                                         flex_direction: FlexDirection::Column,
                                         justify_content: JustifyContent::Start,
-                                        row_gap: Val::Px(5.0),
+                                        row_gap: Val::Px(SETTINGS_ROW_GAP),
                                         align_items: AlignItems::Start,
                                         ..default()
                                     },
@@ -355,7 +364,7 @@ fn spawn_menu(commands: &mut Commands, settings: &ConfigurableSettings) {
                                         justify_content: JustifyContent::Start,
                                         align_items: AlignItems::Start,
                                         display: Display::None,
-                                        row_gap: Val::Px(5.0),
+                                        row_gap: Val::Px(SETTINGS_ROW_GAP),
                                         ..default()
                                     },
                                     TabContent(MenuTab::Debug),

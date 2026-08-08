@@ -41,6 +41,9 @@ const AMBIENT_BRIGHTNESS_RANGE: (f32, f32) = (0.0, 50_000.0);
 const DEFAULT_SUN_ILLUMINANCE: f32 = 80_000.0;
 const SUN_ILLUMINANCE_STEP: f32 = 5_000.0;
 const SUN_ILLUMINANCE_RANGE: (f32, f32) = (0.0, 150_000.0);
+pub const DEFAULT_LANTERN_BRIGHTNESS: f32 = 6_000_000.0;
+const LANTERN_BRIGHTNESS_STEP: f32 = 500_000.0;
+const LANTERN_BRIGHTNESS_RANGE: (f32, f32) = (0.0, 20_000_000.0);
 
 fn default_dig_radius() -> f32 {
     DEFAULT_DIG_RADIUS
@@ -56,6 +59,10 @@ fn default_ambient_brightness() -> f32 {
 
 fn default_sun_illuminance() -> f32 {
     DEFAULT_SUN_ILLUMINANCE
+}
+
+fn default_lantern_brightness() -> f32 {
+    DEFAULT_LANTERN_BRIGHTNESS
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -161,6 +168,7 @@ pub enum SettingsType {
     DigStrengthChange,
     AmbientBrightnessChange,
     SunIlluminanceChange,
+    LanternBrightnessChange,
 }
 
 impl SettingsType {
@@ -199,6 +207,9 @@ impl SettingsType {
             }
             SettingsType::SunIlluminanceChange => {
                 format!("Sunlight: {:.0} lx", s.sun_illuminance)
+            }
+            SettingsType::LanternBrightnessChange => {
+                format!("Lantern Brightness: {:.1}M lm", s.lantern_brightness / 1e6)
             }
         }
     }
@@ -277,6 +288,15 @@ impl SettingsType {
                 settings.sun_illuminance = (settings.sun_illuminance + step)
                     .clamp(SUN_ILLUMINANCE_RANGE.0, SUN_ILLUMINANCE_RANGE.1);
             }
+            SettingsType::LanternBrightnessChange => {
+                let step = if dir_next {
+                    LANTERN_BRIGHTNESS_STEP
+                } else {
+                    -LANTERN_BRIGHTNESS_STEP
+                };
+                settings.lantern_brightness = (settings.lantern_brightness + step)
+                    .clamp(LANTERN_BRIGHTNESS_RANGE.0, LANTERN_BRIGHTNESS_RANGE.1);
+            }
         }
     }
 }
@@ -305,6 +325,8 @@ pub struct ConfigurableSettings {
     pub ambient_brightness: f32,
     #[serde(default = "default_sun_illuminance")]
     pub sun_illuminance: f32,
+    #[serde(default = "default_lantern_brightness")]
+    pub lantern_brightness: f32,
 }
 
 pub fn load_configurable_settings() -> ConfigurableSettings {
@@ -335,6 +357,7 @@ impl Default for ConfigurableSettings {
             dig_strength: DEFAULT_DIG_STRENGTH,
             ambient_brightness: DEFAULT_AMBIENT_BRIGHTNESS,
             sun_illuminance: DEFAULT_SUN_ILLUMINANCE,
+            lantern_brightness: DEFAULT_LANTERN_BRIGHTNESS,
         }
     }
 }

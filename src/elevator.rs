@@ -1,6 +1,9 @@
 use std::f32::consts::{FRAC_PI_2, TAU};
 
+use bevy::asset::RenderAssetUsages;
+use bevy::light::{FogVolume, NotShadowCaster, VolumetricLight};
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy_rapier3d::prelude::*;
 
 use crate::build_initial_area::{ROOM_DEPTH, ROOM_HEIGHT, ROOM_RADIUS, SHAFT_RADIUS};
@@ -55,6 +58,18 @@ const BEAM_RADIUS: f32 = 0.4;
 /// Distance from the room's axis to each beam's axis, placing the ring of
 /// beams just inside the cavern wall.
 const BEAM_RING_RADIUS: f32 = ROOM_RADIUS - 1.5;
+/// Height of the god-ray spotlight above the terrain surface. Higher makes the
+/// beam more parallel (thinner cone) but needs more range and intensity.
+const GOD_RAY_LIGHT_HEIGHT: f32 = 20.0;
+/// Luminous power of the god-ray spotlight, in lumens.
+const GOD_RAY_LUMENS: f32 = 300_000_000.0;
+/// Range of the god-ray spotlight. Must be far beyond the cavern floor:
+/// attenuation ramps down as (1 - (d/range)^4)^2, so a range just past the
+/// floor leaves almost no light there.
+const GOD_RAY_RANGE: f32 = 200.0;
+/// Horizontal extent of the fog volume box wrapping the beam. Kept snug around
+/// the shaft so raymarching cost stays low and no other lights catch the fog.
+const GOD_RAY_FOG_WIDTH: f32 = 12.0;
 
 #[derive(Component)]
 pub struct ElevatorPlatform;
@@ -67,11 +82,43 @@ pub struct Elevator {
     platform_material: Handle<StandardMaterial>,
 }
 
+/// 3D density texture for the god-ray fog: full density around the beam,
+/// smoothly fading to zero before the volume's walls so the box's rectangular
+/// bounds never show as a visible seam against the background.
+fn god_ray_density_image() -> Image {
+    const N: usize = 32;
+    let mut data = vec![0u8; N * N * N];
+    for z in 0..N {
+        for y in 0..N {
+            for x in 0..N {
+                let dx = x as f32 / (N - 1) as f32 * 2.0 - 1.0;
+                let dz = z as f32 / (N - 1) as f32 * 2.0 - 1.0;
+                let r = (dx * dx + dz * dz).sqrt();
+                let t = ((1.0 - r) / 0.3).clamp(0.0, 1.0);
+                let d = t * t * (3.0 - 2.0 * t);
+                data[(z * N + y) * N + x] = (d * 255.0) as u8;
+            }
+        }
+    }
+    Image::new(
+        Extent3d {
+            width: N as u32,
+            height: N as u32,
+            depth_or_array_layers: N as u32,
+        },
+        TextureDimension::D3,
+        data,
+        TextureFormat::R8Unorm,
+        RenderAssetUsages::RENDER_WORLD,
+    )
+}
+
 pub fn setup_elevator(
     mut commands: Commands,
     height_source: Res<TerrainHeightSource>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     let surface_y = height_source.0.height_at(0.0, 0.0);
     let bottom_y = surface_y - ROOM_DEPTH;
@@ -155,6 +202,43 @@ pub fn setup_elevator(
         COLLAR_INNER_RADIUS,
         base_outer_radius - COLLAR_INNER_RADIUS,
     );
+    //god ray: a thin white volumetric beam shining down the shaft. The cone is
+    //sized to enter through the collar mouth; the liner walls' shadows clip it
+    //to the shaft on the way down.
+    let outer_angle = (COLLAR_INNER_RADIUS / GOD_RAY_LIGHT_HEIGHT).atan();
+    commands.spawn((
+        SpotLight {
+            color: Color::WHITE,
+            intensity: GOD_RAY_LUMENS,
+            range: GOD_RAY_RANGE,
+            shadow_maps_enabled: true,
+            inner_angle: outer_angle * 0.7,
+            outer_angle,
+            ..default()
+        },
+        VolumetricLight,
+        Transform::from_xyz(0.0, surface_y + GOD_RAY_LIGHT_HEIGHT, 0.0)
+            .looking_at(Vec3::new(0.0, bottom_y, 0.0), Vec3::Z),
+    ));
+    let fog_top = surface_y + COLLAR_HEIGHT;
+    commands.spawn((
+        //thin fog: extinction is exp(-density*(absorption+scattering)*meters),
+        //so over the ~50m beam the density must stay low or the lower half of
+        //the beam is invisible. light_intensity compensates, fog-only.
+        FogVolume {
+            density_factor: 0.04,
+            absorption: 0.05,
+            scattering: 0.5,
+            light_intensity: 8.0,
+            density_texture: Some(images.add(god_ray_density_image())),
+            ..default()
+        },
+        Transform::from_xyz(0.0, (bottom_y + fog_top) / 2.0, 0.0).with_scale(Vec3::new(
+            GOD_RAY_FOG_WIDTH,
+            fog_top - bottom_y,
+            GOD_RAY_FOG_WIDTH,
+        )),
+    ));
     commands.insert_resource(Elevator {
         bottom_y,
         spawn_timer: Timer::from_seconds(SPAWN_INTERVAL_SECONDS, TimerMode::Repeating),
@@ -235,6 +319,8 @@ pub fn update_elevator(
             Transform::from_translation(Vec3::new(0.0, elevator.bottom_y, 0.0)),
             Collider::cylinder(PLATFORM_THICKNESS / 2.0, PLATFORM_RADIUS),
             RigidBody::KinematicPositionBased,
+            //platforms would otherwise shadow out the god ray while rising
+            NotShadowCaster,
             ElevatorPlatform,
         ));
     }

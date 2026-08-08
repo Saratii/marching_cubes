@@ -3,7 +3,9 @@ use std::f32::consts::FRAC_PI_4;
 use bevy::{
     camera::Exposure,
     core_pipeline::{prepass::DepthPrepass, tonemapping::Tonemapping},
-    light::{Atmosphere, AtmosphereEnvironmentMapLight, atmosphere::ScatteringMedium},
+    light::{
+        Atmosphere, AtmosphereEnvironmentMapLight, VolumetricFog, atmosphere::ScatteringMedium,
+    },
     pbr::{AtmosphereSettings, ScreenSpaceReflections},
     post_process::bloom::Bloom,
     prelude::*,
@@ -11,7 +13,7 @@ use bevy::{
 };
 
 use crate::{
-    constants::CAMERA_FIRST_PERSON_OFFSET, player::player::MainCameraTag,
+    constants::CAMERA_FIRST_PERSON_OFFSET, lanterns::LanternLightTag, player::player::MainCameraTag,
     ui::configurable_settings::ConfigurableSettings,
 };
 
@@ -37,6 +39,7 @@ pub fn apply_settings_changes(
     mut commands: Commands,
     camera_entity_query: Query<Entity, With<MainCameraTag>>,
     mut ambient_query: Query<&mut AmbientLight, With<MainCameraTag>>,
+    mut lantern_query: Query<&mut PointLight, With<LanternLightTag>>,
 ) {
     if !settings.is_changed() {
         return;
@@ -44,6 +47,9 @@ pub fn apply_settings_changes(
     if let Ok(mut light) = light_query.single_mut() {
         light.shadow_maps_enabled = settings.shadows;
         light.illuminance = settings.sun_illuminance;
+    }
+    for mut lantern in lantern_query.iter_mut() {
+        lantern.intensity = settings.lantern_brightness;
     }
     if let Ok(mut ambient) = ambient_query.single_mut() {
         ambient.brightness = settings.ambient_brightness;
@@ -109,6 +115,11 @@ pub fn setup_camera(
         },
         Msaa::Off,
         ScreenSpaceReflections::default(),
+        //ambient 0 so fog volumes only glow where a VolumetricLight hits them
+        VolumetricFog {
+            ambient_intensity: 0.0,
+            ..default()
+        },
         DistanceFog {
             color: Color::srgb(0.8, 0.8, 0.9),
             falloff: FogFalloff::Linear {

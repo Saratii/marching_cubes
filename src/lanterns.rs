@@ -5,6 +5,10 @@ use bevy_rapier3d::prelude::*;
 
 use crate::build_initial_area::{ROOM_DEPTH, ROOM_HEIGHT};
 use crate::deformable_terrain::plugin::TerrainHeightSource;
+use crate::ui::configurable_settings::ConfigurableSettings;
+
+#[derive(Component)]
+pub struct LanternLightTag;
 
 /// Number of rigid links in each hanging chain.
 const LINK_COUNT: usize = 6;
@@ -29,6 +33,7 @@ pub fn spawn_lanterns(
     height_source: Res<TerrainHeightSource>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    settings: Res<ConfigurableSettings>,
     mut spawned: Local<bool>,
 ) {
     if *spawned {
@@ -146,10 +151,11 @@ pub fn spawn_lanterns(
                 children.spawn((
                     PointLight {
                         color: Color::srgb(1.0, 0.72, 0.45),
-                        intensity: 6_000_000.0,
+                        intensity: settings.lantern_brightness,
                         range: 30.0,
                         ..default()
                     },
+                    LanternLightTag,
                     Transform::default(),
                 ));
             });
