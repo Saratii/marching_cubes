@@ -10,6 +10,7 @@ use crate::build_initial_area::{ROOM_DEPTH, ROOM_HEIGHT, ROOM_RADIUS, SHAFT_RADI
 use crate::constants::PLAYER_CUBOID_SIZE;
 use crate::deformable_terrain::plugin::TerrainHeightSource;
 use crate::player::player::PlayerTag;
+use crate::ui::configurable_settings::ConfigurableSettings;
 
 /// Y position at which a platform despawns.
 const ELEVATOR_TOP_Y: f32 = 10.0;
@@ -61,8 +62,6 @@ const BEAM_RING_RADIUS: f32 = ROOM_RADIUS - 1.5;
 /// Height of the god-ray spotlight above the terrain surface. Higher makes the
 /// beam more parallel (thinner cone) but needs more range and intensity.
 const GOD_RAY_LIGHT_HEIGHT: f32 = 20.0;
-/// Luminous power of the god-ray spotlight, in lumens.
-const GOD_RAY_LUMENS: f32 = 300_000_000.0;
 /// Range of the god-ray spotlight. Must be far beyond the cavern floor:
 /// attenuation ramps down as (1 - (d/range)^4)^2, so a range just past the
 /// floor leaves almost no light there.
@@ -73,6 +72,9 @@ const GOD_RAY_FOG_WIDTH: f32 = 12.0;
 
 #[derive(Component)]
 pub struct ElevatorPlatform;
+
+#[derive(Component)]
+pub struct GodRayLightTag;
 
 #[derive(Resource)]
 pub struct Elevator {
@@ -119,6 +121,7 @@ pub fn setup_elevator(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
+    settings: Res<ConfigurableSettings>,
 ) {
     let surface_y = height_source.0.height_at(0.0, 0.0);
     let bottom_y = surface_y - ROOM_DEPTH;
@@ -209,7 +212,7 @@ pub fn setup_elevator(
     commands.spawn((
         SpotLight {
             color: Color::WHITE,
-            intensity: GOD_RAY_LUMENS,
+            intensity: settings.god_ray_brightness,
             range: GOD_RAY_RANGE,
             shadow_maps_enabled: true,
             inner_angle: outer_angle * 0.7,
@@ -217,6 +220,7 @@ pub fn setup_elevator(
             ..default()
         },
         VolumetricLight,
+        GodRayLightTag,
         Transform::from_xyz(0.0, surface_y + GOD_RAY_LIGHT_HEIGHT, 0.0)
             .looking_at(Vec3::new(0.0, bottom_y, 0.0), Vec3::Z),
     ));

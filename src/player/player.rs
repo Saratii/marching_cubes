@@ -22,7 +22,7 @@ use crate::{
         plugin::{ChunkTag, MoveableCenter, TerrainHeightSource},
     },
     player::player_visual::spawn_player_visual,
-    ui::menu::MenuRoot,
+    ui::{configurable_settings::ConfigurableSettings, menu::MenuRoot},
 };
 
 const CAMERA_3RD_PERSON_OFFSET: Vec3 = Vec3 {
@@ -127,6 +127,7 @@ pub struct KeyBindings {
     pub fly_fast: KeyCode,
     pub toggle_first_person: KeyCode,
     pub toggle_free_cam: KeyCode,
+    pub toggle_headlamp: KeyCode,
 }
 
 impl Default for KeyBindings {
@@ -143,6 +144,7 @@ impl Default for KeyBindings {
             fly_fast: KeyCode::ShiftLeft,
             toggle_first_person: KeyCode::KeyC,
             toggle_free_cam: KeyCode::KeyR,
+            toggle_headlamp: KeyCode::KeyL,
         }
     }
 }
@@ -155,6 +157,7 @@ pub fn spawn_player(
     main_camera: Query<Entity, With<MainCameraTag>>,
     mut camera_controller: ResMut<CameraController>,
     mut camera_transform: Query<&mut Transform, With<MainCameraTag>>,
+    settings: Res<ConfigurableSettings>,
 ) {
     let root = get_project_root();
     create_dir_all(root.join("data/latest")).expect("Failed to create data directory");
@@ -198,7 +201,8 @@ pub fn spawn_player(
             FlyMode { active: false },
         ))
         .id();
-    let player_mesh_entity = spawn_player_visual(&mut commands, &mut meshes, &mut materials);
+    let player_mesh_entity =
+        spawn_player_visual(&mut commands, &mut meshes, &mut materials, &settings);
     commands.entity(player).add_child(player_mesh_entity);
     commands
         .entity(player)
@@ -554,6 +558,8 @@ pub fn toggle_free_cam(
         }
         free_cam.is_active = true;
     } else {
+        camera_controller.yaw = camera_controller.player_yaw;
+        camera_controller.pitch = camera_controller.player_pitch;
         commands.entity(player_entity).add_child(camera_entity);
         commands.entity(camera_entity).insert(
             Transform::from_translation(CAMERA_FIRST_PERSON_OFFSET).with_rotation(

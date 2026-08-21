@@ -19,7 +19,6 @@ use iyes_perf_ui::PerfUiPlugin;
 use iyes_perf_ui::prelude::PerfUiDefaultEntries;
 
 use marching_cubes::build_initial_area::{InitialAreaBuilt, build_initial_area};
-use marching_cubes::lanterns::spawn_lanterns;
 #[cfg(feature = "debug")]
 use marching_cubes::deformable_terrain::debug_lines::{
     draw_cluster_debug, draw_collider_debug, draw_lod_debug, draw_voxel_surface_debug,
@@ -31,13 +30,15 @@ use marching_cubes::deformable_terrain::driver::{
 #[cfg(feature = "debug")]
 use marching_cubes::deformable_terrain::driver_debug_ui::{spawn_debug_texts, update_debug_texts};
 use marching_cubes::deformable_terrain::file_loader::setup_chunk_loading;
-use marching_cubes::elevator::{setup_elevator, update_elevator};
 use marching_cubes::deformable_terrain::plugin::{
     DeformableTerrainConfig, DeformableTerrainPlugin, HeightSource,
 };
+use marching_cubes::elevator::{setup_elevator, update_elevator};
+use marching_cubes::lanterns::spawn_lanterns;
 use marching_cubes::lighting::lighting_main::{
     apply_settings_changes, setup_camera, setup_lighting,
 };
+use marching_cubes::player::headlamp::{aim_headlamp, toggle_headlamp};
 use marching_cubes::player::player::{
     CameraController, KeyBindings, camera_look, camera_zoom, free_cam_movement, grab_on_click,
     handle_focus_change, initial_grab_cursor, player_movement, spawn_free_cam_root, spawn_player,
@@ -173,7 +174,9 @@ fn main() {
                 spawn_lanterns.run_if(resource_exists::<InitialAreaBuilt>),
                 toggle_free_cam,
                 free_cam_movement,
-                sync_player_rotation,
+                sync_player_rotation.after(camera_look),
+                aim_headlamp.after(camera_look),
+                toggle_headlamp,
                 animate_player_limbs.after(player_movement),
                 #[cfg(feature = "debug")]
                 update_debug_texts,

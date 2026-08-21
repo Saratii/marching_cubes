@@ -4,7 +4,11 @@ use bevy::prelude::*;
 
 use crate::{
     constants::PLAYER_CUBOID_SIZE,
-    player::player::{PlayerMeshTag, PlayerTag},
+    player::{
+        headlamp::spawn_headlamp,
+        player::{PlayerMeshTag, PlayerTag},
+    },
+    ui::configurable_settings::ConfigurableSettings,
 };
 
 const HALF_HEIGHT: f32 = PLAYER_CUBOID_SIZE.y / 2.0;
@@ -16,6 +20,11 @@ const ARM_LENGTH: f32 = 0.65;
 const ARM_THICKNESS: f32 = 0.16;
 const ARM_OFFSET_X: f32 = PLAYER_CUBOID_SIZE.x / 2.0 + ARM_THICKNESS / 2.0;
 const SHOULDER_HEIGHT: f32 = HALF_HEIGHT - ARM_THICKNESS / 2.0;
+const HEAD_SIZE: f32 = 0.4;
+const HEAD_CENTER_Y: f32 = HALF_HEIGHT + HEAD_SIZE / 2.0;
+const HELMET_WIDTH: f32 = HEAD_SIZE + 0.08;
+const HELMET_HEIGHT: f32 = 0.2;
+const HELMET_BRIM_DEPTH: f32 = 0.14;
 const SWING_SPEED: f32 = 8.0;
 const LEG_SWING_AMPLITUDE: f32 = 0.7;
 const ARM_SWING_AMPLITUDE: f32 = 0.5;
@@ -35,10 +44,10 @@ pub fn spawn_player_visual(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
+    settings: &ConfigurableSettings,
 ) -> Entity {
     let material: Handle<StandardMaterial> = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.8, 0.3, 0.3, 1.0),
-        alpha_mode: AlphaMode::Blend,
+        base_color: Color::srgb(0.8, 0.3, 0.3),
         ..default()
     });
     let torso_mesh = meshes.add(Cuboid::new(
@@ -59,6 +68,7 @@ pub fn spawn_player_visual(
         ))
         .id();
     commands.entity(root).add_child(torso);
+    spawn_head_and_helmet(commands, meshes, materials, root, settings);
     //opposite legs and arms swing in opposite phase
     for (x, phase_offset) in [(-LEG_OFFSET_X, 0.0), (LEG_OFFSET_X, PI)] {
         let hip = commands
@@ -103,6 +113,58 @@ pub fn spawn_player_visual(
         commands.entity(root).add_child(shoulder);
     }
     root
+}
+
+//head cube topped by a mining helmet whose lamp casts a real spotlight;
+//the player faces -Z, which is also the direction a Bevy spotlight shines
+fn spawn_head_and_helmet(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    root: Entity,
+    settings: &ConfigurableSettings,
+) {
+    let skin = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.85, 0.68, 0.55),
+        ..default()
+    });
+    let helmet_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.9, 0.75, 0.1),
+        metallic: 0.3,
+        perceptual_roughness: 0.5,
+        ..default()
+    });
+    let head_mesh = meshes.add(Cuboid::new(HEAD_SIZE, HEAD_SIZE, HEAD_SIZE));
+    let dome_mesh = meshes.add(Cuboid::new(HELMET_WIDTH, HELMET_HEIGHT, HELMET_WIDTH));
+    let brim_mesh = meshes.add(Cuboid::new(HELMET_WIDTH, 0.05, HELMET_BRIM_DEPTH));
+    let head = commands
+        .spawn((
+            Mesh3d(head_mesh),
+            MeshMaterial3d(skin),
+            Transform::from_xyz(0.0, HEAD_CENTER_Y, 0.0),
+        ))
+        .id();
+    commands.entity(root).add_child(head);
+    let helmet_base_y = HEAD_CENTER_Y + HEAD_SIZE / 2.0;
+    let dome = commands
+        .spawn((
+            Mesh3d(dome_mesh),
+            MeshMaterial3d(helmet_material.clone()),
+            Transform::from_xyz(0.0, helmet_base_y + HELMET_HEIGHT / 2.0, 0.0),
+        ))
+        .id();
+    commands.entity(root).add_child(dome);
+    let front_z = -(HEAD_SIZE / 2.0);
+    let brim = commands
+        .spawn((
+            Mesh3d(brim_mesh),
+            MeshMaterial3d(helmet_material),
+            Transform::from_xyz(0.0, helmet_base_y, front_z - HELMET_BRIM_DEPTH / 2.0),
+        ))
+        .id();
+    commands.entity(root).add_child(brim);
+    let lamp_y = helmet_base_y + HELMET_HEIGHT / 2.0;
+    spawn_headlamp(commands, meshes, materials, root, lamp_y, front_z, settings);
 }
 
 pub fn animate_player_limbs(

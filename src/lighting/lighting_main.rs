@@ -6,14 +6,17 @@ use bevy::{
     light::{
         Atmosphere, AtmosphereEnvironmentMapLight, VolumetricFog, atmosphere::ScatteringMedium,
     },
-    pbr::{AtmosphereSettings, ScreenSpaceReflections},
+    pbr::AtmosphereSettings,
     post_process::bloom::Bloom,
     prelude::*,
     render::occlusion_culling::OcclusionCulling,
 };
 
 use crate::{
-    constants::CAMERA_FIRST_PERSON_OFFSET, lanterns::LanternLightTag, player::player::MainCameraTag,
+    constants::CAMERA_FIRST_PERSON_OFFSET,
+    elevator::GodRayLightTag,
+    lanterns::LanternLightTag,
+    player::{headlamp::HeadlampLightTag, player::MainCameraTag},
     ui::configurable_settings::ConfigurableSettings,
 };
 
@@ -40,6 +43,11 @@ pub fn apply_settings_changes(
     camera_entity_query: Query<Entity, With<MainCameraTag>>,
     mut ambient_query: Query<&mut AmbientLight, With<MainCameraTag>>,
     mut lantern_query: Query<&mut PointLight, With<LanternLightTag>>,
+    mut exposure_query: Query<&mut Exposure, With<MainCameraTag>>,
+    mut spot_light_query: Query<
+        (&mut SpotLight, Has<GodRayLightTag>),
+        Or<(With<GodRayLightTag>, With<HeadlampLightTag>)>,
+    >,
 ) {
     if !settings.is_changed() {
         return;
@@ -51,8 +59,18 @@ pub fn apply_settings_changes(
     for mut lantern in lantern_query.iter_mut() {
         lantern.intensity = settings.lantern_brightness;
     }
+    for (mut spot_light, is_god_ray) in spot_light_query.iter_mut() {
+        spot_light.intensity = if is_god_ray {
+            settings.god_ray_brightness
+        } else {
+            settings.headlamp_brightness
+        };
+    }
     if let Ok(mut ambient) = ambient_query.single_mut() {
         ambient.brightness = settings.ambient_brightness;
+    }
+    if let Ok(mut exposure) = exposure_query.single_mut() {
+        exposure.ev100 = settings.exposure_ev100;
     }
     if let Ok(entity) = camera_entity_query.single() {
         if settings.distance_fog {
@@ -105,7 +123,9 @@ pub fn setup_camera(
         MainCameraTag,
         DepthPrepass,
         AtmosphereSettings::default(),
-        Exposure { ev100: 13.0 },
+        Exposure {
+            ev100: settings.exposure_ev100,
+        },
         Tonemapping::AcesFitted,
         Bloom::NATURAL,
         AtmosphereEnvironmentMapLight::default(),
@@ -114,7 +134,6 @@ pub fn setup_camera(
             ..default()
         },
         Msaa::Off,
-        ScreenSpaceReflections::default(),
         //ambient 0 so fog volumes only glow where a VolumetricLight hits them
         VolumetricFog {
             ambient_intensity: 0.0,

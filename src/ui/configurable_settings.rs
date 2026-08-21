@@ -26,24 +26,38 @@ const RENDER_RADIUS_STEPS: &[f32] = &[
 ];
 const _: () = assert!(RENDER_RADIUS_STEPS[0] as u64 >= SIMULATION_RADIUS as u64);
 pub const DEFAULT_RENDER_RADIUS_SQUARED: f32 = 1000.0 * 1000.0;
-const DEFAULT_DIG_RADIUS: f32 = 20.0;
+const DEFAULT_DIG_RADIUS: f32 = 2.0;
 // dig_strength is world units/second the dug surface advances at the brush
 const DEFAULT_DIG_STRENGTH: f32 = 3.0;
 const DIG_RADIUS_STEP: f32 = 1.0;
 const DIG_RADIUS_RANGE: (f32, f32) = (1.0, 40.0);
 const DIG_STRENGTH_STEP: f32 = 0.25;
 const DIG_STRENGTH_RANGE: (f32, f32) = (0.25, 10.0);
-// ambient brightness is in cd/m^2 pre-exposure; at the camera's ev100 of 13 the
-// scene is scaled by ~1/9800, so values need to be in the thousands to be visible
+// ambient brightness is in cd/m^2 pre-exposure; at the default ev100 of 5.0 the
+// scene is scaled by ~1/38, so values in the tens already read as visible
 const DEFAULT_AMBIENT_BRIGHTNESS: f32 = 0.0;
 const AMBIENT_BRIGHTNESS_STEP: f32 = 2_500.0;
 const AMBIENT_BRIGHTNESS_RANGE: (f32, f32) = (0.0, 50_000.0);
-const DEFAULT_SUN_ILLUMINANCE: f32 = 80_000.0;
+const DEFAULT_SUN_ILLUMINANCE: f32 = 0.0;
 const SUN_ILLUMINANCE_STEP: f32 = 5_000.0;
 const SUN_ILLUMINANCE_RANGE: (f32, f32) = (0.0, 150_000.0);
-pub const DEFAULT_LANTERN_BRIGHTNESS: f32 = 6_000_000.0;
-const LANTERN_BRIGHTNESS_STEP: f32 = 500_000.0;
-const LANTERN_BRIGHTNESS_RANGE: (f32, f32) = (0.0, 20_000_000.0);
+pub const DEFAULT_LANTERN_BRIGHTNESS: f32 = 500_000.0;
+const LANTERN_BRIGHTNESS_RANGE: (f32, f32) = (10_000.0, 20_000_000.0);
+// headlamp brightness is the spotlight's luminous power in lumens
+const DEFAULT_HEADLAMP_BRIGHTNESS: f32 = 327_680.0;
+const HEADLAMP_BRIGHTNESS_RANGE: (f32, f32) = (100_000.0, 200_000_000.0);
+// lamp brightness presses scale by this instead of adding, so dim lamps stay
+// adjustable; the range's low end is the dimmest lit value and stepping below
+// it turns the lamp off
+const BRIGHTNESS_STEP_FACTOR: f32 = 1.25;
+// god ray brightness is the spotlight's luminous power in lumens
+const DEFAULT_GOD_RAY_BRIGHTNESS: f32 = 2_000_000.0;
+const GOD_RAY_BRIGHTNESS_STEP: f32 = 1_000_000.0;
+const GOD_RAY_BRIGHTNESS_RANGE: (f32, f32) = (0.0, 200_000_000.0);
+// lower ev100 means a longer exposure, so a brighter image
+const DEFAULT_EXPOSURE_EV100: f32 = 5.0;
+const EXPOSURE_EV100_STEP: f32 = 0.25;
+const EXPOSURE_EV100_RANGE: (f32, f32) = (5.0, 20.0);
 
 fn default_dig_radius() -> f32 {
     DEFAULT_DIG_RADIUS
@@ -61,8 +75,35 @@ fn default_sun_illuminance() -> f32 {
     DEFAULT_SUN_ILLUMINANCE
 }
 
+fn step_brightness(value: f32, dir_next: bool, range: (f32, f32)) -> f32 {
+    let (min, max) = range;
+    if dir_next {
+        if value < min {
+            min
+        } else {
+            (value * BRIGHTNESS_STEP_FACTOR).min(max)
+        }
+    } else if value <= min {
+        0.0
+    } else {
+        (value / BRIGHTNESS_STEP_FACTOR).max(min)
+    }
+}
+
 fn default_lantern_brightness() -> f32 {
     DEFAULT_LANTERN_BRIGHTNESS
+}
+
+fn default_exposure_ev100() -> f32 {
+    DEFAULT_EXPOSURE_EV100
+}
+
+fn default_god_ray_brightness() -> f32 {
+    DEFAULT_GOD_RAY_BRIGHTNESS
+}
+
+fn default_headlamp_brightness() -> f32 {
+    DEFAULT_HEADLAMP_BRIGHTNESS
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -138,8 +179,25 @@ impl Default for FpsLimit {
 #[derive(Serialize, Deserialize, Resource, Debug, Clone, Copy, PartialEq)]
 pub enum MenuTab {
     General,
+    Lighting,
     #[cfg(feature = "debug")]
     Debug,
+}
+
+impl MenuTab {
+    #[cfg(feature = "debug")]
+    pub const ALL: &'static [MenuTab] = &[MenuTab::General, MenuTab::Lighting, MenuTab::Debug];
+    #[cfg(not(feature = "debug"))]
+    pub const ALL: &'static [MenuTab] = &[MenuTab::General, MenuTab::Lighting];
+
+    pub fn to_display_string(&self) -> &str {
+        match self {
+            MenuTab::General => "General",
+            MenuTab::Lighting => "Lighting",
+            #[cfg(feature = "debug")]
+            MenuTab::Debug => "Debug",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -169,6 +227,9 @@ pub enum SettingsType {
     AmbientBrightnessChange,
     SunIlluminanceChange,
     LanternBrightnessChange,
+    GodRayBrightnessChange,
+    HeadlampBrightnessChange,
+    ExposureChange,
 }
 
 impl SettingsType {
@@ -210,6 +271,15 @@ impl SettingsType {
             }
             SettingsType::LanternBrightnessChange => {
                 format!("Lantern Brightness: {:.1}M lm", s.lantern_brightness / 1e6)
+            }
+            SettingsType::GodRayBrightnessChange => {
+                format!("God Ray Brightness: {:.0} lm", s.god_ray_brightness)
+            }
+            SettingsType::HeadlampBrightnessChange => {
+                format!("Headlamp Brightness: {:.0} lm", s.headlamp_brightness)
+            }
+            SettingsType::ExposureChange => {
+                format!("Exposure: EV{:.2}", s.exposure_ev100)
             }
         }
     }
@@ -289,13 +359,37 @@ impl SettingsType {
                     .clamp(SUN_ILLUMINANCE_RANGE.0, SUN_ILLUMINANCE_RANGE.1);
             }
             SettingsType::LanternBrightnessChange => {
+                settings.lantern_brightness = step_brightness(
+                    settings.lantern_brightness,
+                    dir_next,
+                    LANTERN_BRIGHTNESS_RANGE,
+                );
+            }
+            SettingsType::GodRayBrightnessChange => {
                 let step = if dir_next {
-                    LANTERN_BRIGHTNESS_STEP
+                    GOD_RAY_BRIGHTNESS_STEP
                 } else {
-                    -LANTERN_BRIGHTNESS_STEP
+                    -GOD_RAY_BRIGHTNESS_STEP
                 };
-                settings.lantern_brightness = (settings.lantern_brightness + step)
-                    .clamp(LANTERN_BRIGHTNESS_RANGE.0, LANTERN_BRIGHTNESS_RANGE.1);
+                settings.god_ray_brightness = (settings.god_ray_brightness + step)
+                    .clamp(GOD_RAY_BRIGHTNESS_RANGE.0, GOD_RAY_BRIGHTNESS_RANGE.1);
+            }
+            SettingsType::HeadlampBrightnessChange => {
+                settings.headlamp_brightness = step_brightness(
+                    settings.headlamp_brightness,
+                    dir_next,
+                    HEADLAMP_BRIGHTNESS_RANGE,
+                );
+            }
+            // right brightens, so it steps ev100 down
+            SettingsType::ExposureChange => {
+                let step = if dir_next {
+                    -EXPOSURE_EV100_STEP
+                } else {
+                    EXPOSURE_EV100_STEP
+                };
+                settings.exposure_ev100 = (settings.exposure_ev100 + step)
+                    .clamp(EXPOSURE_EV100_RANGE.0, EXPOSURE_EV100_RANGE.1);
             }
         }
     }
@@ -327,6 +421,12 @@ pub struct ConfigurableSettings {
     pub sun_illuminance: f32,
     #[serde(default = "default_lantern_brightness")]
     pub lantern_brightness: f32,
+    #[serde(default = "default_exposure_ev100")]
+    pub exposure_ev100: f32,
+    #[serde(default = "default_god_ray_brightness")]
+    pub god_ray_brightness: f32,
+    #[serde(default = "default_headlamp_brightness")]
+    pub headlamp_brightness: f32,
 }
 
 pub fn load_configurable_settings() -> ConfigurableSettings {
@@ -358,6 +458,9 @@ impl Default for ConfigurableSettings {
             ambient_brightness: DEFAULT_AMBIENT_BRIGHTNESS,
             sun_illuminance: DEFAULT_SUN_ILLUMINANCE,
             lantern_brightness: DEFAULT_LANTERN_BRIGHTNESS,
+            exposure_ev100: DEFAULT_EXPOSURE_EV100,
+            god_ray_brightness: DEFAULT_GOD_RAY_BRIGHTNESS,
+            headlamp_brightness: DEFAULT_HEADLAMP_BRIGHTNESS,
         }
     }
 }

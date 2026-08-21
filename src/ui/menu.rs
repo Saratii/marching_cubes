@@ -23,19 +23,24 @@ const SETTINGS_ROW_HEIGHT: f32 = 40.0;
 const SETTINGS_ROW_BORDER_SIZE: f32 = 3.0;
 const SETTINGS_ROW_GAP: f32 = 5.0;
 const CONTENT_PADDING: f32 = 5.0;
-const GENERAL_SETTINGS: [SettingsType; 12] = [
+const GENERAL_SETTINGS: [SettingsType; 5] = [
     SettingsType::FpsChange,
-    SettingsType::ShadowsToggle,
-    SettingsType::AmbientBrightnessChange,
-    SettingsType::SunIlluminanceChange,
-    SettingsType::LanternBrightnessChange,
     SettingsType::RenderRadiusChange,
-    SettingsType::DistanceFogToggle,
-    SettingsType::FogStartMultiplier,
-    SettingsType::FogEndMultiplier,
     SettingsType::OcclusionCullingToggle,
     SettingsType::DigRadiusChange,
     SettingsType::DigStrengthChange,
+];
+const LIGHTING_SETTINGS: [SettingsType; 10] = [
+    SettingsType::ExposureChange,
+    SettingsType::AmbientBrightnessChange,
+    SettingsType::SunIlluminanceChange,
+    SettingsType::LanternBrightnessChange,
+    SettingsType::GodRayBrightnessChange,
+    SettingsType::HeadlampBrightnessChange,
+    SettingsType::ShadowsToggle,
+    SettingsType::DistanceFogToggle,
+    SettingsType::FogStartMultiplier,
+    SettingsType::FogEndMultiplier,
 ];
 #[cfg(feature = "debug")]
 const DEBUG_SETTINGS: [SettingsType; 7] = [
@@ -47,6 +52,15 @@ const DEBUG_SETTINGS: [SettingsType; 7] = [
     SettingsType::ShowChunksToggle,
     SettingsType::ShowVoxelsToggle,
 ];
+
+fn tab_settings(tab: MenuTab) -> &'static [SettingsType] {
+    match tab {
+        MenuTab::General => &GENERAL_SETTINGS,
+        MenuTab::Lighting => &LIGHTING_SETTINGS,
+        #[cfg(feature = "debug")]
+        MenuTab::Debug => &DEBUG_SETTINGS,
+    }
+}
 
 #[derive(Component)]
 pub struct SettingLabel(pub SettingsType);
@@ -113,12 +127,7 @@ pub fn menu_update(
     if menu_query.is_empty() {
         return;
     }
-    let settings_list: &[SettingsType] = match settings_state.current_tab {
-        MenuTab::General => &GENERAL_SETTINGS,
-        #[cfg(feature = "debug")]
-        MenuTab::Debug => &DEBUG_SETTINGS,
-    };
-    #[allow(unused_mut)] //wont be unused when a second settings tab other than debug is added
+    let settings_list = tab_settings(settings_state.current_tab);
     let mut tab_changed = false;
     let mut focus_changed = false;
     if keyboard.just_pressed(KeyCode::ArrowDown) || keyboard.just_pressed(KeyCode::KeyS) {
@@ -156,14 +165,18 @@ pub fn menu_update(
         let dir_next = right;
         match settings_state.current_focus {
             MenuFocus::Tabs => {
-                #[cfg(feature = "debug")]
-                {
-                    settings_state.current_tab = match settings_state.current_tab {
-                        MenuTab::General => MenuTab::Debug,
-                        MenuTab::Debug => MenuTab::General,
-                    };
-                    tab_changed = true;
-                }
+                let tabs = MenuTab::ALL;
+                let index = tabs
+                    .iter()
+                    .position(|&tab| tab == settings_state.current_tab)
+                    .unwrap_or(0);
+                let index = if dir_next {
+                    (index + 1) % tabs.len()
+                } else {
+                    (index + tabs.len() - 1) % tabs.len()
+                };
+                settings_state.current_tab = tabs[index];
+                tab_changed = true;
             }
             MenuFocus::Setting(index) => {
                 let setting = settings_list[index];
@@ -205,10 +218,11 @@ pub fn menu_update(
 }
 
 fn spawn_menu(commands: &mut Commands, settings: &ConfigurableSettings) {
-    #[cfg(feature = "debug")]
-    let max_rows = GENERAL_SETTINGS.len().max(DEBUG_SETTINGS.len());
-    #[cfg(not(feature = "debug"))]
-    let max_rows = GENERAL_SETTINGS.len();
+    let max_rows = MenuTab::ALL
+        .iter()
+        .map(|&tab| tab_settings(tab).len())
+        .max()
+        .unwrap_or(0);
     let content_height = max_rows as f32 * SETTINGS_ROW_HEIGHT
         + (max_rows - 1) as f32 * SETTINGS_ROW_GAP
         + 2.0 * CONTENT_PADDING;
@@ -249,49 +263,34 @@ fn spawn_menu(commands: &mut Commands, settings: &ConfigurableSettings) {
                             TabContainer,
                         ))
                         .with_children(|parent| {
-                            parent
-                                .spawn((
-                                    Node {
-                                        width: Val::Percent(50.0),
-                                        height: Val::Percent(100.0),
-                                        justify_content: JustifyContent::Center,
-                                        align_items: AlignItems::Center,
-                                        border: UiRect::all(Val::Px(2.0)),
-                                        ..default()
-                                    },
-                                    BackgroundColor(ACTIVE_TAB_COLOR),
-                                    BorderColor::all(HIGHLIGHT_COLOR),
-                                    TabButton(MenuTab::General),
-                                ))
-                                .with_children(|parent| {
-                                    parent.spawn((
-                                        Text::new("General"),
-                                        TextFont {
-                                            font_size: FONT_SIZE,
-                                            ..default()
-                                        },
-                                        TextColor(Color::WHITE),
-                                    ));
-                                });
-                            #[cfg(feature = "debug")]
-                            {
+                            let tab_width = 100.0 / MenuTab::ALL.len() as f32;
+                            for &tab in MenuTab::ALL {
+                                let is_active = tab == MenuTab::General;
                                 parent
                                     .spawn((
                                         Node {
-                                            width: Val::Percent(50.0),
+                                            width: Val::Percent(tab_width),
                                             height: Val::Percent(100.0),
                                             justify_content: JustifyContent::Center,
                                             align_items: AlignItems::Center,
                                             border: UiRect::all(Val::Px(2.0)),
                                             ..default()
                                         },
-                                        BackgroundColor(INACTIVE_TAB_COLOR),
-                                        BorderColor::all(INACTIVE_BORDER_COLOR),
-                                        TabButton(MenuTab::Debug),
+                                        BackgroundColor(if is_active {
+                                            ACTIVE_TAB_COLOR
+                                        } else {
+                                            INACTIVE_TAB_COLOR
+                                        }),
+                                        BorderColor::all(if is_active {
+                                            HIGHLIGHT_COLOR
+                                        } else {
+                                            INACTIVE_BORDER_COLOR
+                                        }),
+                                        TabButton(tab),
                                     ))
                                     .with_children(|parent| {
                                         parent.spawn((
-                                            Text::new("Debug"),
+                                            Text::new(tab.to_display_string()),
                                             TextFont {
                                                 font_size: FONT_SIZE,
                                                 ..default()
@@ -312,94 +311,56 @@ fn spawn_menu(commands: &mut Commands, settings: &ConfigurableSettings) {
                             ..default()
                         })
                         .with_children(|parent| {
-                            parent
-                                .spawn((
-                                    Node {
-                                        width: Val::Percent(100.0),
-                                        flex_direction: FlexDirection::Column,
-                                        justify_content: JustifyContent::Start,
-                                        row_gap: Val::Px(SETTINGS_ROW_GAP),
-                                        align_items: AlignItems::Start,
-                                        ..default()
-                                    },
-                                    TabContent(MenuTab::General),
-                                ))
-                                .with_children(|parent| {
-                                    for &setting_type in GENERAL_SETTINGS.iter() {
-                                        let settings_text = setting_type.text(settings);
-                                        parent
-                                            .spawn((
-                                                Node {
-                                                    width: Val::Percent(100.0),
-                                                    height: Val::Px(SETTINGS_ROW_HEIGHT),
-                                                    justify_content: JustifyContent::Center,
-                                                    align_items: AlignItems::Center,
-                                                    border: UiRect::all(Val::Px(
-                                                        SETTINGS_ROW_BORDER_SIZE,
-                                                    )),
-                                                    ..default()
-                                                },
-                                                BorderColor::all(INACTIVE_BORDER_COLOR),
-                                                SettingRow(setting_type),
-                                            ))
-                                            .with_children(|parent| {
-                                                parent.spawn((
-                                                    SettingLabel(setting_type),
-                                                    Text(settings_text),
-                                                    TextFont {
-                                                        font_size: FONT_SIZE,
+                            for &tab in MenuTab::ALL {
+                                parent
+                                    .spawn((
+                                        Node {
+                                            width: Val::Percent(100.0),
+                                            flex_direction: FlexDirection::Column,
+                                            justify_content: JustifyContent::Start,
+                                            row_gap: Val::Px(SETTINGS_ROW_GAP),
+                                            align_items: AlignItems::Start,
+                                            display: if tab == MenuTab::General {
+                                                Display::Flex
+                                            } else {
+                                                Display::None
+                                            },
+                                            ..default()
+                                        },
+                                        TabContent(tab),
+                                    ))
+                                    .with_children(|parent| {
+                                        for &setting_type in tab_settings(tab) {
+                                            let settings_text = setting_type.text(settings);
+                                            parent
+                                                .spawn((
+                                                    Node {
+                                                        width: Val::Percent(100.0),
+                                                        height: Val::Px(SETTINGS_ROW_HEIGHT),
+                                                        justify_content: JustifyContent::Center,
+                                                        align_items: AlignItems::Center,
+                                                        border: UiRect::all(Val::Px(
+                                                            SETTINGS_ROW_BORDER_SIZE,
+                                                        )),
                                                         ..default()
                                                     },
-                                                    TextColor(Color::WHITE),
-                                                ));
-                                            });
-                                    }
-                                });
-                            #[cfg(feature = "debug")]
-                            parent
-                                .spawn((
-                                    Node {
-                                        width: Val::Percent(100.0),
-                                        flex_direction: FlexDirection::Column,
-                                        justify_content: JustifyContent::Start,
-                                        align_items: AlignItems::Start,
-                                        display: Display::None,
-                                        row_gap: Val::Px(SETTINGS_ROW_GAP),
-                                        ..default()
-                                    },
-                                    TabContent(MenuTab::Debug),
-                                ))
-                                .with_children(|parent| {
-                                    for &setting_type in DEBUG_SETTINGS.iter() {
-                                        let settings_text = setting_type.text(settings);
-                                        parent
-                                            .spawn((
-                                                Node {
-                                                    width: Val::Percent(100.0),
-                                                    height: Val::Px(SETTINGS_ROW_HEIGHT),
-                                                    justify_content: JustifyContent::Center,
-                                                    align_items: AlignItems::Center,
-                                                    border: UiRect::all(Val::Px(
-                                                        SETTINGS_ROW_BORDER_SIZE,
-                                                    )),
-                                                    ..default()
-                                                },
-                                                BorderColor::all(INACTIVE_BORDER_COLOR),
-                                                SettingRow(setting_type),
-                                            ))
-                                            .with_children(|parent| {
-                                                parent.spawn((
-                                                    SettingLabel(setting_type),
-                                                    Text(settings_text),
-                                                    TextFont {
-                                                        font_size: FONT_SIZE,
-                                                        ..default()
-                                                    },
-                                                    TextColor(Color::WHITE),
-                                                ));
-                                            });
-                                    }
-                                });
+                                                    BorderColor::all(INACTIVE_BORDER_COLOR),
+                                                    SettingRow(setting_type),
+                                                ))
+                                                .with_children(|parent| {
+                                                    parent.spawn((
+                                                        SettingLabel(setting_type),
+                                                        Text(settings_text),
+                                                        TextFont {
+                                                            font_size: FONT_SIZE,
+                                                            ..default()
+                                                        },
+                                                        TextColor(Color::WHITE),
+                                                    ));
+                                                });
+                                        }
+                                    });
+                            }
                         });
                 });
         });
@@ -449,11 +410,7 @@ fn update_focus_visuals(
             BorderColor::all(INACTIVE_BORDER_COLOR)
         };
     }
-    let settings_list: &[SettingsType] = match settings_state.current_tab {
-        MenuTab::General => &GENERAL_SETTINGS,
-        #[cfg(feature = "debug")]
-        MenuTab::Debug => &DEBUG_SETTINGS,
-    };
+    let settings_list = tab_settings(settings_state.current_tab);
     for (setting_row, mut border_color) in setting_row_query.iter_mut() {
         let is_focused = if let MenuFocus::Setting(index) = settings_state.current_focus {
             settings_list[index] == setting_row.0
