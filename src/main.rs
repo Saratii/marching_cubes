@@ -51,6 +51,7 @@ use marching_cubes::ui::configurable_settings::{
     FpsLimit, MenuFocus, MenuTab, load_configurable_settings,
 };
 use marching_cubes::ui::crosshair::spawn_crosshair;
+use marching_cubes::ui::dig_mode_text::{spawn_dig_mode_text, update_dig_mode_text};
 use marching_cubes::ui::menu::{SettingsState, menu_toggle, menu_update};
 
 fn main() {
@@ -125,6 +126,7 @@ fn main() {
             (
                 setup,
                 spawn_crosshair,
+                spawn_dig_mode_text,
                 spawn_player.after(setup_chunk_loading).after(setup_camera),
                 // spawn_minimap.after(spawn_player),
                 initial_grab_cursor,
@@ -177,6 +179,7 @@ fn main() {
                 sync_player_rotation.after(camera_look),
                 aim_headlamp.after(camera_look),
                 toggle_headlamp,
+                update_dig_mode_text,
                 animate_player_limbs.after(player_movement),
                 #[cfg(feature = "debug")]
                 update_debug_texts,

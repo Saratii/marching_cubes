@@ -8,7 +8,7 @@ use crate::{
     constants::{NOISE_AMPLITUDE, NOISE_FREQUENCY, WORLD_SEED},
     deformable_terrain::{
         chunk_generator::get_fbm,
-        digging::deformation_message_reader,
+        digging::{DigMode, deformation_message_reader},
         driver::{
             Lods, RENDER_RADIUS_SQUARED, chunk_spawn_reciever, info_print, setup_chunk_driver,
         },
@@ -91,6 +91,22 @@ pub enum Deformation {
         radius: f32,
         rotation: Quat,
     },
+    /// A sphere clipped by a few facets, biting along `rotation * +Y`.
+    /// `seed` picks the facets, `strength` scales how deep they cut.
+    ChipCarve {
+        center: Vec3,
+        radius: f32,
+        rotation: Quat,
+        seed: u32,
+        strength: f32,
+    },
+    /// Relax the field toward its local average inside a sphere. `rate` is the
+    /// fraction of the way moved per application at the centre.
+    Smooth {
+        center: Vec3,
+        radius: f32,
+        rate: f32,
+    },
 }
 
 #[repr(u8)]
@@ -153,6 +169,7 @@ impl Plugin for DeformableTerrainPlugin {
         .insert_resource(Lods(self.lods))
         .insert_resource(TerrainHeightSource(self.height_source.clone()))
         .add_message::<Deformation>()
+        .init_resource::<DigMode>()
         .add_plugins(MaterialPlugin::<
             ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>,
         >::default())

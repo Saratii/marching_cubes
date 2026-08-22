@@ -128,6 +128,7 @@ pub struct KeyBindings {
     pub toggle_first_person: KeyCode,
     pub toggle_free_cam: KeyCode,
     pub toggle_headlamp: KeyCode,
+    pub toggle_dig_mode: KeyCode,
 }
 
 impl Default for KeyBindings {
@@ -145,6 +146,7 @@ impl Default for KeyBindings {
             toggle_first_person: KeyCode::KeyC,
             toggle_free_cam: KeyCode::KeyR,
             toggle_headlamp: KeyCode::KeyL,
+            toggle_dig_mode: KeyCode::KeyV,
         }
     }
 }

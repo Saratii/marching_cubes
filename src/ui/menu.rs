@@ -23,12 +23,16 @@ const SETTINGS_ROW_HEIGHT: f32 = 40.0;
 const SETTINGS_ROW_BORDER_SIZE: f32 = 3.0;
 const SETTINGS_ROW_GAP: f32 = 5.0;
 const CONTENT_PADDING: f32 = 5.0;
-const GENERAL_SETTINGS: [SettingsType; 5] = [
+const GENERAL_SETTINGS: [SettingsType; 9] = [
     SettingsType::FpsChange,
     SettingsType::RenderRadiusChange,
     SettingsType::OcclusionCullingToggle,
     SettingsType::DigRadiusChange,
     SettingsType::DigStrengthChange,
+    SettingsType::ChipRadiusChange,
+    SettingsType::ChipStrengthChange,
+    SettingsType::SmoothRadiusChange,
+    SettingsType::SmoothStrengthChange,
 ];
 const LIGHTING_SETTINGS: [SettingsType; 10] = [
     SettingsType::ExposureChange,

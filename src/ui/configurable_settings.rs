@@ -33,6 +33,20 @@ const DIG_RADIUS_STEP: f32 = 1.0;
 const DIG_RADIUS_RANGE: (f32, f32) = (1.0, 40.0);
 const DIG_STRENGTH_STEP: f32 = 0.25;
 const DIG_STRENGTH_RANGE: (f32, f32) = (0.25, 10.0);
+// chip radius is the size of one chip, strength scales how deep its facets bite
+const DEFAULT_CHIP_RADIUS: f32 = 1.0;
+const DEFAULT_CHIP_STRENGTH: f32 = 0.5;
+const CHIP_RADIUS_STEP: f32 = 0.25;
+const CHIP_RADIUS_RANGE: (f32, f32) = (0.25, 40.0);
+const CHIP_STRENGTH_STEP: f32 = 0.25;
+const CHIP_STRENGTH_RANGE: (f32, f32) = (0.5, 3.0);
+// smooth strength is how much relaxation happens per second at the brush center
+const DEFAULT_SMOOTH_RADIUS: f32 = 2.0;
+const DEFAULT_SMOOTH_STRENGTH: f32 = 0.75;
+const SMOOTH_RADIUS_STEP: f32 = 0.25;
+const SMOOTH_RADIUS_RANGE: (f32, f32) = (0.25, 40.0);
+const SMOOTH_STRENGTH_STEP: f32 = 0.25;
+const SMOOTH_STRENGTH_RANGE: (f32, f32) = (0.25, 10.0);
 // ambient brightness is in cd/m^2 pre-exposure; at the default ev100 of 5.0 the
 // scene is scaled by ~1/38, so values in the tens already read as visible
 const DEFAULT_AMBIENT_BRIGHTNESS: f32 = 0.0;
@@ -65,6 +79,22 @@ fn default_dig_radius() -> f32 {
 
 fn default_dig_strength() -> f32 {
     DEFAULT_DIG_STRENGTH
+}
+
+fn default_chip_radius() -> f32 {
+    DEFAULT_CHIP_RADIUS
+}
+
+fn default_chip_strength() -> f32 {
+    DEFAULT_CHIP_STRENGTH
+}
+
+fn default_smooth_radius() -> f32 {
+    DEFAULT_SMOOTH_RADIUS
+}
+
+fn default_smooth_strength() -> f32 {
+    DEFAULT_SMOOTH_STRENGTH
 }
 
 fn default_ambient_brightness() -> f32 {
@@ -224,6 +254,10 @@ pub enum SettingsType {
     OcclusionCullingToggle,
     DigRadiusChange,
     DigStrengthChange,
+    ChipRadiusChange,
+    ChipStrengthChange,
+    SmoothRadiusChange,
+    SmoothStrengthChange,
     AmbientBrightnessChange,
     SunIlluminanceChange,
     LanternBrightnessChange,
@@ -263,6 +297,16 @@ impl SettingsType {
             }
             SettingsType::DigRadiusChange => format!("Dig Radius: {:.0}", s.dig_radius),
             SettingsType::DigStrengthChange => format!("Dig Strength: {:.1} u/s", s.dig_strength),
+            SettingsType::ChipRadiusChange => format!("Chip Radius: {:.2}", s.chip_radius),
+            SettingsType::ChipStrengthChange => {
+                format!("Chip Strength: {:.2}", s.chip_strength)
+            }
+            SettingsType::SmoothRadiusChange => {
+                format!("Smooth Radius: {:.2}", s.smooth_radius)
+            }
+            SettingsType::SmoothStrengthChange => {
+                format!("Smooth Strength: {:.2} /s", s.smooth_strength)
+            }
             SettingsType::AmbientBrightnessChange => {
                 format!("Ambient Light: {:.0}", s.ambient_brightness)
             }
@@ -340,6 +384,42 @@ impl SettingsType {
                 settings.dig_strength = (settings.dig_strength + step)
                     .clamp(DIG_STRENGTH_RANGE.0, DIG_STRENGTH_RANGE.1);
             }
+            SettingsType::ChipRadiusChange => {
+                let step = if dir_next {
+                    CHIP_RADIUS_STEP
+                } else {
+                    -CHIP_RADIUS_STEP
+                };
+                settings.chip_radius =
+                    (settings.chip_radius + step).clamp(CHIP_RADIUS_RANGE.0, CHIP_RADIUS_RANGE.1);
+            }
+            SettingsType::ChipStrengthChange => {
+                let step = if dir_next {
+                    CHIP_STRENGTH_STEP
+                } else {
+                    -CHIP_STRENGTH_STEP
+                };
+                settings.chip_strength = (settings.chip_strength + step)
+                    .clamp(CHIP_STRENGTH_RANGE.0, CHIP_STRENGTH_RANGE.1);
+            }
+            SettingsType::SmoothRadiusChange => {
+                let step = if dir_next {
+                    SMOOTH_RADIUS_STEP
+                } else {
+                    -SMOOTH_RADIUS_STEP
+                };
+                settings.smooth_radius = (settings.smooth_radius + step)
+                    .clamp(SMOOTH_RADIUS_RANGE.0, SMOOTH_RADIUS_RANGE.1);
+            }
+            SettingsType::SmoothStrengthChange => {
+                let step = if dir_next {
+                    SMOOTH_STRENGTH_STEP
+                } else {
+                    -SMOOTH_STRENGTH_STEP
+                };
+                settings.smooth_strength = (settings.smooth_strength + step)
+                    .clamp(SMOOTH_STRENGTH_RANGE.0, SMOOTH_STRENGTH_RANGE.1);
+            }
             SettingsType::AmbientBrightnessChange => {
                 let step = if dir_next {
                     AMBIENT_BRIGHTNESS_STEP
@@ -415,6 +495,14 @@ pub struct ConfigurableSettings {
     pub dig_radius: f32,
     #[serde(default = "default_dig_strength")]
     pub dig_strength: f32,
+    #[serde(default = "default_chip_radius")]
+    pub chip_radius: f32,
+    #[serde(default = "default_chip_strength")]
+    pub chip_strength: f32,
+    #[serde(default = "default_smooth_radius")]
+    pub smooth_radius: f32,
+    #[serde(default = "default_smooth_strength")]
+    pub smooth_strength: f32,
     #[serde(default = "default_ambient_brightness")]
     pub ambient_brightness: f32,
     #[serde(default = "default_sun_illuminance")]
@@ -455,6 +543,10 @@ impl Default for ConfigurableSettings {
             occlusion_culling: true,
             dig_radius: DEFAULT_DIG_RADIUS,
             dig_strength: DEFAULT_DIG_STRENGTH,
+            chip_radius: DEFAULT_CHIP_RADIUS,
+            chip_strength: DEFAULT_CHIP_STRENGTH,
+            smooth_radius: DEFAULT_SMOOTH_RADIUS,
+            smooth_strength: DEFAULT_SMOOTH_STRENGTH,
             ambient_brightness: DEFAULT_AMBIENT_BRIGHTNESS,
             sun_illuminance: DEFAULT_SUN_ILLUMINANCE,
             lantern_brightness: DEFAULT_LANTERN_BRIGHTNESS,

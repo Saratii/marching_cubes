@@ -23,7 +23,7 @@ use crate::{
             NonUniformTerrainChunk, TerrainChunk, TerrainMaterialHandle, generate_bevy_mesh,
         },
     },
-    player::player::{CameraController, MainCameraTag},
+    player::player::{CameraController, KeyBindings, MainCameraTag},
     ui::{configurable_settings::ConfigurableSettings, menu::MenuRoot},
 };
 
@@ -33,6 +33,56 @@ use crate::{
 /// The brush reapplies at a fixed real-time cadence (`DIG_TICK_INTERVAL`)
 /// rather than once per rendered frame.
 const DIG_TICK_INTERVAL: f32 = 1.0 / 30.0; // seconds
+
+/// One pickaxe swing, not a sampling rate: each tick is a full chip.
+const CHIP_SWING_INTERVAL: f32 = 0.4; // seconds
+
+/// Flat fracture faces clipping a chip.
+const CHIP_FACETS: usize = 4;
+
+/// Facet normal angle from the strike axis, radians (~40 to ~75 degrees).
+const CHIP_FACET_CONE: (f32, f32) = (0.70, 1.31);
+
+/// Facet distance from the strike point as a fraction of the chip radius, at
+/// strength 1.0. Both bounds stay positive at any strength, which keeps the
+/// strike point inside the chip so no swing is a no-op.
+const CHIP_FACET_OFFSET: (f32, f32) = (0.30, 0.62);
+
+const SMOOTH_STENCIL: [(i32, i32, i32); 6] = [
+    (1, 0, 0),
+    (-1, 0, 0),
+    (0, 1, 0),
+    (0, -1, 0),
+    (0, 0, 1),
+    (0, 0, -1),
+];
+
+/// What left click does, cycled by the `toggle_dig_mode` key.
+#[derive(Resource, Default, Clone, Copy, PartialEq)]
+pub enum DigMode {
+    #[default]
+    Deform,
+    Chip,
+    Smooth,
+}
+
+impl DigMode {
+    fn next(self) -> Self {
+        match self {
+            DigMode::Deform => DigMode::Chip,
+            DigMode::Chip => DigMode::Smooth,
+            DigMode::Smooth => DigMode::Deform,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            DigMode::Deform => "Deform",
+            DigMode::Chip => "Chip",
+            DigMode::Smooth => "Smooth",
+        }
+    }
+}
 
 /// How far past a brush's nominal radius its edits may reach, in world units.
 /// Samples farther than `radius + BRUSH_INFLUENCE_MARGIN` from the dig center
@@ -159,6 +209,51 @@ fn half_sphere_sdf(local: Vec3, radius: f32) -> f32 {
     }
 }
 
+/// Exact SDF of a sphere clipped by `facets`, in the brush's local frame with
+/// the strike direction along +Y, positive outside. Intersection is max(), so
+/// this is never smaller than the plain sphere SDF and the sphere chunk gather
+/// still bounds it.
+fn chip_sdf(local: Vec3, radius: f32, facets: &[(Vec3, f32); CHIP_FACETS]) -> f32 {
+    let mut sdf = local.length() - radius;
+    for (normal, offset) in facets {
+        sdf = sdf.max(local.dot(*normal) - offset);
+    }
+    sdf
+}
+
+/// Unit float from a seed and an index. Facets are derived rather than stored,
+/// so `Deformation::ChipCarve` stays a small Copy message.
+fn hash_unit(seed: u32, index: u32) -> f32 {
+    let mut hash = seed.wrapping_mul(0x9E37_79B9) ^ index.wrapping_mul(0x85EB_CA6B);
+    hash ^= hash >> 15;
+    hash = hash.wrapping_mul(0x2545_F491);
+    hash ^= hash >> 13;
+    (hash >> 8) as f32 / (1u32 << 24) as f32
+}
+
+/// Fracture faces for one strike: normals spread around the strike axis with
+/// per-facet jitter in azimuth, tilt and depth.
+fn chip_facets(seed: u32, radius: f32, strength: f32) -> [(Vec3, f32); CHIP_FACETS] {
+    std::array::from_fn(|facet| {
+        let facet = facet as u32;
+        let azimuth = (facet as f32 + hash_unit(seed, facet * 3)) / CHIP_FACETS as f32
+            * std::f32::consts::TAU;
+        let polar = CHIP_FACET_CONE.0
+            + hash_unit(seed, facet * 3 + 1) * (CHIP_FACET_CONE.1 - CHIP_FACET_CONE.0);
+        let (sin_polar, cos_polar) = polar.sin_cos();
+        let normal = Vec3::new(
+            sin_polar * azimuth.cos(),
+            cos_polar,
+            sin_polar * azimuth.sin(),
+        );
+        let offset = radius
+            * strength
+            * (CHIP_FACET_OFFSET.0
+                + hash_unit(seed, facet * 3 + 2) * (CHIP_FACET_OFFSET.1 - CHIP_FACET_OFFSET.0));
+        (normal, offset)
+    })
+}
+
 fn read_chunk_for_deform(
     terrain_chunk: &TerrainChunk,
     chunk_coord: (i16, i16, i16),
@@ -201,6 +296,36 @@ fn padded_axis_world_coord(chunk_coord: i16, padded_idx: usize) -> f32 {
     half_steps as f32 * HALF_VOXEL
 }
 
+/// Global index of a padded sample along one axis. Every chunk sharing the
+/// sample computes the same integer, so a smoothing stencil can cross chunk
+/// borders and still write identical values into every copy.
+#[inline(always)]
+fn global_sample_index(chunk_coord: i16, padded_idx: usize) -> i32 {
+    chunk_coord as i32 * (SAMPLES_PER_CHUNK_DIM as i32 - 1) + padded_idx as i32
+}
+
+/// Value of a global sample, read from whichever gathered chunk canonically
+/// owns it, so every chunk sharing it smooths against the same neighbourhood.
+fn sample_at_global(
+    snapshot: &FxHashMap<(i16, i16, i16), Arc<[i16]>>,
+    global: (i32, i32, i32),
+) -> Option<f32> {
+    let span = SAMPLES_PER_CHUNK_DIM as i32 - 1;
+    let chunk_coord = (
+        global.0.div_euclid(span) as i16,
+        global.1.div_euclid(span) as i16,
+        global.2.div_euclid(span) as i16,
+    );
+    let densities = snapshot.get(&chunk_coord)?;
+    let flat_index = flatten_index(
+        global.0.rem_euclid(span) as u32,
+        global.1.rem_euclid(span) as u32,
+        global.2.rem_euclid(span) as u32,
+        SAMPLES_PER_CHUNK_DIM_PADDED,
+    );
+    Some(dequantize_i16_to_f32(densities[flat_index as usize]))
+}
+
 fn axis_pairs(offset: i16, dim: usize) -> Vec<(usize, usize)> {
     match offset {
         1 => vec![(dim - 1, 2), (dim - 2, 1)],
@@ -211,9 +336,14 @@ fn axis_pairs(offset: i16, dim: usize) -> Vec<(usize, usize)> {
 
 pub fn handle_digging_input(
     mouse_input: Res<ButtonInput<MouseButton>>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    key_bindings: Res<KeyBindings>,
+    mut dig_mode: ResMut<DigMode>,
     camera: Query<(&Camera, &GlobalTransform), With<MainCameraTag>>,
     window: Query<&Window>,
     mut dig_timer: Local<f32>,
+    mut strike_count: Local<u32>,
+    mut was_grabbed: Local<bool>,
     time: Res<Time>,
     terrain_chunk_map: Res<TerrainChunkMap>,
     menu_root_query: Query<&MenuRoot>,
@@ -224,30 +354,73 @@ pub fn handle_digging_input(
     if !menu_root_query.is_empty() {
         return;
     }
+    if keyboard.just_pressed(key_bindings.toggle_dig_mode) {
+        *dig_mode = dig_mode.next();
+    }
+    // the click that grabs the cursor must not also swing
+    let was_already_grabbed = *was_grabbed;
+    *was_grabbed = camera_controller.is_cursor_grabbed;
+    let interval = match *dig_mode {
+        DigMode::Chip => CHIP_SWING_INTERVAL,
+        DigMode::Deform | DigMode::Smooth => DIG_TICK_INTERVAL,
+    };
     let should_dig = if camera_controller.is_cursor_grabbed && mouse_input.pressed(MouseButton::Left)
     {
-        *dig_timer += time.delta_secs();
-        if *dig_timer >= DIG_TICK_INTERVAL {
-            *dig_timer -= DIG_TICK_INTERVAL;
+        // strike on contact so a single click lands exactly one chip
+        if mouse_input.just_pressed(MouseButton::Left) && was_already_grabbed {
+            *dig_timer = 0.0;
             true
         } else {
-            false
+            *dig_timer += time.delta_secs();
+            if *dig_timer >= interval {
+                *dig_timer -= interval;
+                true
+            } else {
+                false
+            }
         }
     } else {
         *dig_timer = 0.0;
         false
     };
-    if should_dig {
-        //use window center to avoid issues caused by stale mouse events
-        let cursor_pos = window.iter().next().unwrap().size() / 2.0;
-        let (camera, camera_transform) = camera.iter().next().unwrap();
-        if let Some(world_pos) =
-            screen_to_world_ray(cursor_pos, camera, camera_transform, &terrain_chunk_map)
-        {
+    if !should_dig {
+        return;
+    }
+    //use window center to avoid issues caused by stale mouse events
+    let cursor_pos = window.iter().next().unwrap().size() / 2.0;
+    let (camera, camera_transform) = camera.iter().next().unwrap();
+    let Some(world_pos) =
+        screen_to_world_ray(cursor_pos, camera, camera_transform, &terrain_chunk_map)
+    else {
+        return;
+    };
+    match *dig_mode {
+        DigMode::Deform => {
             deformation_writer.write(Deformation::Sphere {
                 center: world_pos,
                 radius: settings.dig_radius,
                 strength: settings.dig_strength * DIG_TICK_INTERVAL,
+            });
+        }
+        DigMode::Chip => {
+            *strike_count = strike_count.wrapping_add(1);
+            deformation_writer.write(Deformation::ChipCarve {
+                center: world_pos,
+                radius: settings.chip_radius,
+                // the chip bites along the swing
+                rotation: Quat::from_rotation_arc(Vec3::Y, camera_transform.forward().as_vec3()),
+                // position keeps neighbouring strikes from repeating facets
+                seed: strike_count.wrapping_mul(0x9E37_79B9)
+                    ^ world_pos.x.to_bits()
+                    ^ world_pos.z.to_bits().rotate_left(11),
+                strength: settings.chip_strength,
+            });
+        }
+        DigMode::Smooth => {
+            deformation_writer.write(Deformation::Smooth {
+                center: world_pos,
+                radius: settings.smooth_radius,
+                rate: settings.smooth_strength * DIG_TICK_INTERVAL,
             });
         }
     }
@@ -290,6 +463,25 @@ pub(crate) fn deformation_message_reader(
                 radius,
                 rotation,
             } => carve_half_sphere(center, radius, rotation, &terrain_io.terrain_chunk_map),
+            Deformation::ChipCarve {
+                center,
+                radius,
+                rotation,
+                seed,
+                strength,
+            } => carve_chip(
+                center,
+                radius,
+                rotation,
+                seed,
+                strength,
+                &terrain_io.terrain_chunk_map,
+            ),
+            Deformation::Smooth {
+                center,
+                radius,
+                rate,
+            } => smooth_sphere(center, radius, rate, &terrain_io.terrain_chunk_map),
         };
         apply_modified_chunks(
             modified_chunks,
@@ -485,6 +677,128 @@ fn carve_half_sphere(
     carve_shape(
         chunk_coords_in_sphere(center, radius),
         |pos| half_sphere_sdf(inverse_rotation * (pos - center), radius),
+        terrain_chunk_map,
+    )
+}
+
+/// Relax the stored field toward its local average inside a sphere, moving
+/// `rate * (1 - d^2/r^2)` of the way per application. The only deformation that
+/// can add material as well as remove it. Reads come from a pre-write snapshot
+/// resolved through each sample's canonical owner, so border samples stay in
+/// agreement. Skipped if a chunk in range is not loaded, as with `dig_sphere`.
+fn smooth_sphere(
+    center: Vec3,
+    radius: f32,
+    rate: f32,
+    terrain_chunk_map: &TerrainChunkMap,
+) -> Vec<((i16, i16, i16), Arc<[i16]>, Arc<[MaterialCode]>, Uniformity)> {
+    let map_lock = terrain_chunk_map.0.lock().unwrap();
+    let mut chunks = Vec::new();
+    for chunk_coord in chunk_coords_in_sphere(center, radius) {
+        let Some(terrain_chunk) = map_lock.get(&chunk_coord) else {
+            warn!("skipping smooth at {center}: chunk {chunk_coord:?} is not loaded");
+            return Vec::new();
+        };
+        let (densities, materials, uniformity) =
+            read_chunk_for_deform(terrain_chunk, chunk_coord, &map_lock);
+        chunks.push((chunk_coord, densities, materials, uniformity));
+    }
+    drop(map_lock);
+    let snapshot: FxHashMap<(i16, i16, i16), Arc<[i16]>> = chunks
+        .iter()
+        .map(|(chunk_coord, densities, ..)| (*chunk_coord, Arc::clone(densities)))
+        .collect();
+    chunks.retain_mut(|(chunk_coord, densities, ..)| {
+        apply_smooth_to_chunk(
+            Arc::make_mut(densities),
+            chunk_coord,
+            &snapshot,
+            center,
+            radius,
+            rate,
+        )
+    });
+    chunks
+}
+
+fn apply_smooth_to_chunk(
+    densities: &mut [i16],
+    chunk_coord: &(i16, i16, i16),
+    snapshot: &FxHashMap<(i16, i16, i16), Arc<[i16]>>,
+    center: Vec3,
+    radius: f32,
+    rate: f32,
+) -> bool {
+    let radius_squared = radius * radius;
+    let mut chunk_modified = false;
+    for z in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
+        let world_z = padded_axis_world_coord(chunk_coord.2, z);
+        for y in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
+            let world_y = padded_axis_world_coord(chunk_coord.1, y);
+            for x in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
+                let world_x = padded_axis_world_coord(chunk_coord.0, x);
+                let distance_squared =
+                    Vec3::new(world_x, world_y, world_z).distance_squared(center);
+                let falloff = 1.0 - distance_squared / radius_squared;
+                if falloff <= 0.0 {
+                    continue;
+                }
+                let global = (
+                    global_sample_index(chunk_coord.0, x),
+                    global_sample_index(chunk_coord.1, y),
+                    global_sample_index(chunk_coord.2, z),
+                );
+                let mut neighbour_sum = 0.0;
+                let mut stencil_resolved = true;
+                for (dx, dy, dz) in SMOOTH_STENCIL {
+                    let neighbour = (global.0 + dx, global.1 + dy, global.2 + dz);
+                    match sample_at_global(snapshot, neighbour) {
+                        Some(value) => neighbour_sum += value,
+                        None => {
+                            stencil_resolved = false;
+                            break;
+                        }
+                    }
+                }
+                // global-coord decision, so every chunk sharing it skips too
+                if !stencil_resolved {
+                    continue;
+                }
+                let flat_index =
+                    flatten_index(x as u32, y as u32, z as u32, SAMPLES_PER_CHUNK_DIM_PADDED);
+                let current_density = &mut densities[flat_index as usize];
+                let old = dequantize_i16_to_f32(*current_density);
+                let target = neighbour_sum / SMOOTH_STENCIL.len() as f32;
+                // clamped so a high rate cannot overshoot and oscillate
+                let blend = (rate * falloff).clamp(0.0, 1.0);
+                let new_sdf = (old + (target - old) * blend).clamp(-10.0, 10.0);
+                let new_quantized = quantize_f32_to_i16(new_sdf);
+                if new_quantized != *current_density {
+                    *current_density = new_quantized;
+                    chunk_modified = true;
+                }
+            }
+        }
+    }
+    chunk_modified
+}
+
+/// Exact one-shot carve of one pickaxe chip (biting toward `rotation * +Y`),
+/// via `carve_shape`. The chip is a subset of the sphere of the same radius in
+/// any orientation, so the sphere chunk gather bounds it.
+fn carve_chip(
+    center: Vec3,
+    radius: f32,
+    rotation: Quat,
+    seed: u32,
+    strength: f32,
+    terrain_chunk_map: &TerrainChunkMap,
+) -> Vec<((i16, i16, i16), Arc<[i16]>, Arc<[MaterialCode]>, Uniformity)> {
+    let inverse_rotation = rotation.inverse();
+    let facets = chip_facets(seed, radius, strength);
+    carve_shape(
+        chunk_coords_in_sphere(center, radius),
+        |pos| chip_sdf(inverse_rotation * (pos - center), radius, &facets),
         terrain_chunk_map,
     )
 }
@@ -1052,6 +1366,178 @@ mod tests {
             columns_checked > 0,
             "no columns inside the room were checked"
         );
+    }
+
+    /// A chip must be a strictly clipped sphere: always removes something,
+    /// never reaches past its radius at any strength, removes less than the
+    /// full sphere, bites deeper as strength rises, and keeps borders agreeing.
+    #[test]
+    fn chip_carve_clips_the_sphere_without_reaching_past_its_radius() {
+        let center = chunk_coord_to_world_pos(&(0, 0, 0));
+        let radius = 0.25 * CHUNK_WORLD_SIZE;
+        let dim = SAMPLES_PER_CHUNK_DIM_PADDED;
+
+        let emptied = |chunks: &[((i16, i16, i16), Arc<[i16]>, Arc<[MaterialCode]>, Uniformity)]| {
+            let mut count = 0;
+            for (coord, densities, ..) in chunks {
+                for x in 0..dim {
+                    for y in 0..dim {
+                        for z in 0..dim {
+                            let idx = flatten_index(x as u32, y as u32, z as u32, dim) as usize;
+                            if dequantize_i16_to_f32(densities[idx]) < 0.0 {
+                                continue;
+                            }
+                            let world = Vec3::new(
+                                padded_axis_world_coord(coord.0, x),
+                                padded_axis_world_coord(coord.1, y),
+                                padded_axis_world_coord(coord.2, z),
+                            );
+                            assert!(
+                                world.distance(center) <= radius + VOXEL_WORLD_SIZE,
+                                "sample at {world:?} was emptied {} from the center, past the chip radius {radius}",
+                                world.distance(center)
+                            );
+                            count += 1;
+                        }
+                    }
+                }
+            }
+            count
+        };
+
+        let mut previous_emptied = 0;
+        for strength in [0.5, 1.0, 3.0] {
+            let map = build_map(cube_range(1));
+            let chipped = carve_chip(center, radius, Quat::IDENTITY, 12345, strength, &map);
+            let chip_emptied = emptied(&chipped);
+            assert!(
+                chip_emptied > previous_emptied,
+                "a chip at strength {strength} emptied {chip_emptied} samples, expected more than the {previous_emptied} of the weaker chip"
+            );
+            previous_emptied = chip_emptied;
+            commit_modified(&chipped, &map);
+            assert_padding_walls_consistent(&stored_nonuniform_chunks(&map));
+        }
+
+        let sphere_map = build_map(cube_range(1));
+        let sphered = dig_sphere(center, radius, f32::INFINITY, &sphere_map);
+        let sphere_emptied = emptied(&sphered);
+        let default_map = build_map(cube_range(1));
+        let default_chip = carve_chip(center, radius, Quat::IDENTITY, 12345, 1.0, &default_map);
+        let default_emptied = emptied(&default_chip);
+        assert!(
+            default_emptied < sphere_emptied,
+            "the facets should clip the sphere, but the chip emptied {default_emptied} samples against the sphere's {sphere_emptied}"
+        );
+    }
+
+    /// Smoothing must lower the field's roughness, keep every copy of a shared
+    /// border sample in agreement, and touch nothing outside its radius.
+    #[test]
+    fn smoothing_relaxes_a_chipped_surface_and_keeps_borders_consistent() {
+        let chunk_coord = (0, 0, 0);
+        let center = chunk_coord_to_world_pos(&chunk_coord);
+        let radius = 4.0;
+        let dim = SAMPLES_PER_CHUNK_DIM_PADDED;
+        let map = build_map(cube_range(1));
+
+        // overlapping chips leave a ridged cavity, not one clean facet set
+        for seed in [7u32, 91, 4242] {
+            let chipped = carve_chip(center, radius, Quat::IDENTITY, seed, 0.5, &map);
+            commit_modified(&chipped, &map);
+        }
+
+        let densities_of = |coord: (i16, i16, i16)| {
+            let lock = map.0.lock().unwrap();
+            match lock.get(&coord) {
+                Some(TerrainChunk::NonUniformTerrainChunk(chunk)) => Arc::clone(&chunk.densities),
+                _ => panic!("expected {coord:?} to be non-uniform"),
+            }
+        };
+
+        // mean distance of a sample from its neighbours' average
+        let roughness = || {
+            let snapshot: FxHashMap<(i16, i16, i16), Arc<[i16]>> =
+                stored_nonuniform_chunks(&map)
+                    .into_iter()
+                    .map(|(coord, densities, ..)| (coord, densities))
+                    .collect();
+            let densities = densities_of(chunk_coord);
+            let mut total = 0.0;
+            let mut counted = 0;
+            for x in 0..dim {
+                for y in 0..dim {
+                    for z in 0..dim {
+                        let world = Vec3::new(
+                            padded_axis_world_coord(chunk_coord.0, x),
+                            padded_axis_world_coord(chunk_coord.1, y),
+                            padded_axis_world_coord(chunk_coord.2, z),
+                        );
+                        if world.distance(center) >= radius {
+                            continue;
+                        }
+                        let global = (
+                            global_sample_index(chunk_coord.0, x),
+                            global_sample_index(chunk_coord.1, y),
+                            global_sample_index(chunk_coord.2, z),
+                        );
+                        let mut neighbour_sum = 0.0;
+                        for (dx, dy, dz) in SMOOTH_STENCIL {
+                            let neighbour = (global.0 + dx, global.1 + dy, global.2 + dz);
+                            neighbour_sum += sample_at_global(&snapshot, neighbour)
+                                .expect("the gathered chunks should cover the stencil");
+                        }
+                        let flat_index =
+                            flatten_index(x as u32, y as u32, z as u32, dim) as usize;
+                        let value = dequantize_i16_to_f32(densities[flat_index]);
+                        total += (value - neighbour_sum / SMOOTH_STENCIL.len() as f32).abs();
+                        counted += 1;
+                    }
+                }
+            }
+            assert!(counted > 0, "no samples inside the smoothing radius");
+            total / counted as f32
+        };
+
+        let chipped_roughness = roughness();
+        assert!(
+            chipped_roughness > 0.0,
+            "a chipped surface should not already be smooth"
+        );
+        let before = densities_of(chunk_coord);
+
+        for _ in 0..10 {
+            let smoothed = smooth_sphere(center, radius, 0.3, &map);
+            commit_modified(&smoothed, &map);
+            assert_padding_walls_consistent(&stored_nonuniform_chunks(&map));
+        }
+
+        let smoothed_roughness = roughness();
+        assert!(
+            smoothed_roughness < chipped_roughness,
+            "smoothing should relax the surface, but roughness went from {chipped_roughness} to {smoothed_roughness}"
+        );
+
+        let after = densities_of(chunk_coord);
+        for x in 0..dim {
+            for y in 0..dim {
+                for z in 0..dim {
+                    let world = Vec3::new(
+                        padded_axis_world_coord(chunk_coord.0, x),
+                        padded_axis_world_coord(chunk_coord.1, y),
+                        padded_axis_world_coord(chunk_coord.2, z),
+                    );
+                    if world.distance(center) < radius {
+                        continue;
+                    }
+                    let flat_index = flatten_index(x as u32, y as u32, z as u32, dim) as usize;
+                    assert_eq!(
+                        before[flat_index], after[flat_index],
+                        "sample at {world:?} is outside the smoothing radius but changed"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
