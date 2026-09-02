@@ -128,7 +128,9 @@ pub struct KeyBindings {
     pub toggle_first_person: KeyCode,
     pub toggle_free_cam: KeyCode,
     pub toggle_headlamp: KeyCode,
-    pub toggle_dig_mode: KeyCode,
+    pub cycle_tool: KeyCode,
+    /// One key per tool, in `TOOLS` order.
+    pub tool_slots: [KeyCode; 4],
 }
 
 impl Default for KeyBindings {
@@ -146,7 +148,13 @@ impl Default for KeyBindings {
             toggle_first_person: KeyCode::KeyC,
             toggle_free_cam: KeyCode::KeyR,
             toggle_headlamp: KeyCode::KeyL,
-            toggle_dig_mode: KeyCode::KeyV,
+            cycle_tool: KeyCode::KeyV,
+            tool_slots: [
+                KeyCode::Digit1,
+                KeyCode::Digit2,
+                KeyCode::Digit3,
+                KeyCode::Digit4,
+            ],
         }
     }
 }

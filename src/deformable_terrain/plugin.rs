@@ -8,7 +8,7 @@ use crate::{
     constants::{NOISE_AMPLITUDE, NOISE_FREQUENCY, WORLD_SEED},
     deformable_terrain::{
         chunk_generator::get_fbm,
-        digging::{DigMode, deformation_message_reader},
+        digging::deformation_message_reader,
         driver::{
             Lods, RENDER_RADIUS_SQUARED, chunk_spawn_reciever, info_print, setup_chunk_driver,
         },
@@ -20,6 +20,7 @@ use crate::{
         terrain::setup_map,
         terrain_material::TerrainMaterialExtension,
     },
+    player::tools::Tool,
 };
 
 #[derive(Clone)]
@@ -182,7 +183,7 @@ impl Plugin for DeformableTerrainPlugin {
         .insert_resource(Lods(self.lods))
         .insert_resource(TerrainHeightSource(self.height_source.clone()))
         .add_message::<Deformation>()
-        .init_resource::<DigMode>()
+        .init_resource::<Tool>()
         .init_resource::<OreDebrisBank>()
         .add_plugins(MaterialPlugin::<
             ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>,

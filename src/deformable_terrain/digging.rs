@@ -25,7 +25,10 @@ use crate::{
             NonUniformTerrainChunk, TerrainChunk, TerrainMaterialHandle, generate_bevy_mesh,
         },
     },
-    player::player::{CameraController, KeyBindings, MainCameraTag},
+    player::{
+        player::{CameraController, MainCameraTag},
+        tools::Tool,
+    },
     ui::{configurable_settings::ConfigurableSettings, menu::MenuRoot},
 };
 
@@ -58,33 +61,6 @@ const SMOOTH_STENCIL: [(i32, i32, i32); 6] = [
     (0, 0, 1),
     (0, 0, -1),
 ];
-
-/// What left click does, cycled by the `toggle_dig_mode` key.
-#[derive(Resource, Default, Clone, Copy, PartialEq)]
-pub enum DigMode {
-    #[default]
-    Deform,
-    Chip,
-    Smooth,
-}
-
-impl DigMode {
-    fn next(self) -> Self {
-        match self {
-            DigMode::Deform => DigMode::Chip,
-            DigMode::Chip => DigMode::Smooth,
-            DigMode::Smooth => DigMode::Deform,
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            DigMode::Deform => "Deform",
-            DigMode::Chip => "Chip",
-            DigMode::Smooth => "Smooth",
-        }
-    }
-}
 
 /// How far past a brush's nominal radius its edits may reach, in world units.
 /// Samples farther than `radius + BRUSH_INFLUENCE_MARGIN` from the dig center
@@ -670,9 +646,7 @@ fn axis_pairs(offset: i16, dim: usize) -> Vec<(usize, usize)> {
 
 pub fn handle_digging_input(
     mouse_input: Res<ButtonInput<MouseButton>>,
-    keyboard: Res<ButtonInput<KeyCode>>,
-    key_bindings: Res<KeyBindings>,
-    mut dig_mode: ResMut<DigMode>,
+    tool: Res<Tool>,
     camera: Query<(&Camera, &GlobalTransform), With<MainCameraTag>>,
     window: Query<&Window>,
     mut dig_timer: Local<f32>,
@@ -688,15 +662,16 @@ pub fn handle_digging_input(
     if !menu_root_query.is_empty() {
         return;
     }
-    if keyboard.just_pressed(key_bindings.toggle_dig_mode) {
-        *dig_mode = dig_mode.next();
-    }
     // the click that grabs the cursor must not also swing
     let was_already_grabbed = *was_grabbed;
     *was_grabbed = camera_controller.is_cursor_grabbed;
-    let interval = match *dig_mode {
-        DigMode::Chip => CHIP_SWING_INTERVAL,
-        DigMode::Deform | DigMode::Smooth => DIG_TICK_INTERVAL,
+    if !tool.digs() {
+        *dig_timer = 0.0;
+        return;
+    }
+    let interval = match *tool {
+        Tool::Chip => CHIP_SWING_INTERVAL,
+        _ => DIG_TICK_INTERVAL,
     };
     let should_dig = if camera_controller.is_cursor_grabbed && mouse_input.pressed(MouseButton::Left)
     {
@@ -728,15 +703,15 @@ pub fn handle_digging_input(
     else {
         return;
     };
-    match *dig_mode {
-        DigMode::Deform => {
+    match *tool {
+        Tool::Deform => {
             deformation_writer.write(Deformation::Sphere {
                 center: world_pos,
                 radius: settings.dig_radius,
                 strength: settings.dig_strength * DIG_TICK_INTERVAL,
             });
         }
-        DigMode::Chip => {
+        Tool::Chip => {
             *strike_count = strike_count.wrapping_add(1);
             deformation_writer.write(Deformation::ChipCarve {
                 center: world_pos,
@@ -750,13 +725,14 @@ pub fn handle_digging_input(
                 strength: settings.chip_strength,
             });
         }
-        DigMode::Smooth => {
+        Tool::Smooth => {
             deformation_writer.write(Deformation::Smooth {
                 center: world_pos,
                 radius: settings.smooth_radius,
                 rate: settings.smooth_strength * DIG_TICK_INTERVAL,
             });
         }
+        Tool::Hand => {}
     }
 }
 
@@ -1351,7 +1327,7 @@ fn apply_brush_to_chunk(
     chunk_modified
 }
 
-fn screen_to_world_ray(
+pub fn screen_to_world_ray(
     cursor_pos: Vec2,
     camera: &Camera,
     camera_transform: &GlobalTransform,

@@ -80,8 +80,8 @@ impl OreDebrisBank {
 /// it in the next session; its transform comes from the entity.
 #[derive(Component)]
 pub struct OreDebris {
-    volume: f32,
-    shape: usize,
+    pub volume: f32,
+    pub shape: usize,
 }
 
 /// One rock as it sits on disk. Plain arrays because the bevy math types are
@@ -130,14 +130,29 @@ fn rock_mesh(seed: u32) -> Mesh {
     mesh
 }
 
-fn debris_radius(volume: f32) -> f32 {
+pub fn debris_radius(volume: f32) -> f32 {
     (volume * 3.0 / (4.0 * std::f32::consts::PI)).cbrt()
 }
 
-/// Spawn one rock. Rocks always start fixed: `thaw_simulated_ore_debris`
-/// releases them once the terrain under them is simulated, which is what keeps
-/// a rock loaded from disk from falling through a world that has not streamed
-/// in yet.
+/// What makes a rock a rock to the physics world. Split out because a rock
+/// picked up by hand sheds these and gets them back when it is dropped.
+///
+/// Rocks always start fixed: `thaw_simulated_ore_debris` releases them once the
+/// terrain under them is simulated, which is what keeps a rock loaded from disk
+/// from falling through a world that has not streamed in yet.
+pub fn debris_physics_bundle(volume: f32, velocity: Velocity) -> impl Bundle {
+    (
+        RigidBody::Fixed,
+        Collider::ball(debris_radius(volume) * 0.85),
+        ColliderMassProperties::Mass(volume * DEBRIS_DENSITY),
+        Damping {
+            linear_damping: 0.2,
+            angular_damping: 0.5,
+        },
+        velocity,
+    )
+}
+
 fn spawn_rock(
     commands: &mut Commands,
     assets: &OreDebrisAssets,
@@ -149,14 +164,7 @@ fn spawn_rock(
     let radius = debris_radius(volume);
     commands
         .spawn((
-            RigidBody::Fixed,
-            Collider::ball(radius * 0.85),
-            ColliderMassProperties::Mass(volume * DEBRIS_DENSITY),
-            Damping {
-                linear_damping: 0.2,
-                angular_damping: 0.5,
-            },
-            velocity,
+            debris_physics_bundle(volume, velocity),
             transform,
             Visibility::default(),
             OreDebris { volume, shape },
@@ -324,7 +332,7 @@ pub fn thaw_simulated_ore_debris(
 pub fn save_ore_debris(
     time: Res<Time>,
     mut state: ResMut<OreDebrisSaveState>,
-    debris: Query<(&Transform, &OreDebris)>,
+    debris: Query<(&GlobalTransform, &OreDebris)>,
 ) {
     state.seconds_since_save += time.delta_secs();
     if state.seconds_since_save < DEBRIS_SAVE_INTERVAL {
@@ -333,11 +341,14 @@ pub fn save_ore_debris(
     state.seconds_since_save = 0.0;
     let current: Vec<SavedOreDebris> = debris
         .iter()
-        .map(|(transform, rock)| SavedOreDebris {
-            position: transform.translation.to_array(),
-            rotation: transform.rotation.to_array(),
-            volume: rock.volume,
-            shape: rock.shape,
+        .map(|(transform, rock)| {
+            let placement = transform.compute_transform();
+            SavedOreDebris {
+                position: placement.translation.to_array(),
+                rotation: placement.rotation.to_array(),
+                volume: rock.volume,
+                shape: rock.shape,
+            }
         })
         .collect();
     if current == state.written {

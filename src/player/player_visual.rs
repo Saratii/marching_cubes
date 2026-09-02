@@ -32,6 +32,11 @@ const ARM_SWING_AMPLITUDE: f32 = 0.5;
 const MOVE_SPEED_THRESHOLD: f32 = 0.5;
 const SWING_BLEND_SPEED: f32 = 6.0;
 
+/// Where a held rock rides: just past the right fist, a touch in front of it
+/// (the player mesh faces -Z).
+#[derive(Component)]
+pub struct PlayerHandTag;
+
 #[derive(Component)]
 pub struct SwingingLimb {
     pub phase_offset: f32,
@@ -109,6 +114,16 @@ pub fn spawn_player_visual(
                 Transform::from_xyz(0.0, -ARM_LENGTH / 2.0, 0.0),
             ))
             .id();
+        if x > 0.0 {
+            let hand = commands
+                .spawn((
+                    Transform::from_xyz(0.0, -ARM_LENGTH / 2.0, -ARM_THICKNESS),
+                    Visibility::default(),
+                    PlayerHandTag,
+                ))
+                .id();
+            commands.entity(arm).add_child(hand);
+        }
         commands.entity(shoulder).add_child(arm);
         commands.entity(root).add_child(shoulder);
     }
