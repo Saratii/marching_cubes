@@ -5,8 +5,6 @@ use crate::ui::configurable_settings::ConfigurableSettings;
 
 const LAMP_SIZE: f32 = 0.12; //edge length of the lamp lens cube
 const LAMP_RANGE: f32 = 250.0; //hard distance cutoff of the spotlight
-const LAMP_OUTER_ANGLE: f32 = 0.35; //half-angle of the cone edge, radians
-const LAMP_INNER_ANGLE: f32 = 0.24; //half-angle of the bright hotspot, radians
 const LAMP_EMISSIVE: LinearRgba = LinearRgba::rgb(60_000.0, 57_000.0, 42_000.0);
 
 #[derive(Component)]
@@ -30,6 +28,7 @@ pub fn spawn_headlamp(
         ..default()
     });
     let lamp_mesh = meshes.add(Cuboid::new(LAMP_SIZE, LAMP_SIZE, LAMP_SIZE));
+    let (outer_angle, inner_angle) = settings.headlamp_angles();
     let lamp_z = front_z - LAMP_SIZE / 2.0;
     let lamp = commands
         .spawn((
@@ -45,8 +44,8 @@ pub fn spawn_headlamp(
                     color: Color::srgb(1.0, 0.95, 0.8),
                     intensity: settings.headlamp_brightness,
                     range: LAMP_RANGE,
-                    outer_angle: LAMP_OUTER_ANGLE,
-                    inner_angle: LAMP_INNER_ANGLE,
+                    outer_angle,
+                    inner_angle,
                     shadow_maps_enabled: true,
                     ..default()
                 },

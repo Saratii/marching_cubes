@@ -12,6 +12,8 @@ pub mod file_loader;
 pub mod marching_cubes;
 #[cfg(not(feature = "bench-internals"))]
 mod marching_cubes;
+pub mod ore;
+pub mod ore_debris;
 pub mod plugin;
 mod sparse_voxel_octree;
 mod terrain;

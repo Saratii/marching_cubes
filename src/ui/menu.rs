@@ -34,13 +34,15 @@ const GENERAL_SETTINGS: [SettingsType; 9] = [
     SettingsType::SmoothRadiusChange,
     SettingsType::SmoothStrengthChange,
 ];
-const LIGHTING_SETTINGS: [SettingsType; 10] = [
+const LIGHTING_SETTINGS: [SettingsType; 12] = [
     SettingsType::ExposureChange,
     SettingsType::AmbientBrightnessChange,
     SettingsType::SunIlluminanceChange,
     SettingsType::LanternBrightnessChange,
     SettingsType::GodRayBrightnessChange,
     SettingsType::HeadlampBrightnessChange,
+    SettingsType::HeadlampOuterAngleChange,
+    SettingsType::HeadlampInnerAngleChange,
     SettingsType::ShadowsToggle,
     SettingsType::DistanceFogToggle,
     SettingsType::FogStartMultiplier,

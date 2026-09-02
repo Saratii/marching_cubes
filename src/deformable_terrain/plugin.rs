@@ -13,6 +13,10 @@ use crate::{
             Lods, RENDER_RADIUS_SQUARED, chunk_spawn_reciever, info_print, setup_chunk_driver,
         },
         file_loader::setup_chunk_loading,
+        ore_debris::{
+            OreDebrisBank, save_ore_debris, setup_ore_debris, spawn_banked_ore_debris,
+            thaw_simulated_ore_debris,
+        },
         terrain::setup_map,
         terrain_material::TerrainMaterialExtension,
     },
@@ -109,6 +113,15 @@ pub enum Deformation {
     },
 }
 
+impl Deformation {
+    /// Whether ore this deformation frees becomes a rock lying in the world.
+    /// The starter room and shaft are world construction rather than digging,
+    /// so the ore their carve passes through is simply gone.
+    pub fn drops_ore_debris(&self) -> bool {
+        !matches!(self, Deformation::CylinderCarve { .. })
+    }
+}
+
 #[repr(u8)]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy)]
 pub enum Uniformity {
@@ -170,6 +183,7 @@ impl Plugin for DeformableTerrainPlugin {
         .insert_resource(TerrainHeightSource(self.height_source.clone()))
         .add_message::<Deformation>()
         .init_resource::<DigMode>()
+        .init_resource::<OreDebrisBank>()
         .add_plugins(MaterialPlugin::<
             ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>,
         >::default())
@@ -180,11 +194,21 @@ impl Plugin for DeformableTerrainPlugin {
                 setup_chunk_loading,
                 setup_chunk_driver,
                 setup_map,
+                setup_ore_debris,
             ),
         )
         .add_systems(
             Update,
-            (chunk_spawn_reciever, deformation_message_reader).chain(),
+            (
+                (
+                    chunk_spawn_reciever,
+                    deformation_message_reader,
+                    spawn_banked_ore_debris,
+                )
+                    .chain(),
+                thaw_simulated_ore_debris,
+                save_ore_debris,
+            ),
         );
     }
 }

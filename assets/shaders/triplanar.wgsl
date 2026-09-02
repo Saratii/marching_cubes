@@ -60,6 +60,8 @@ fn fragment(
         layer = 1;
     } else if (id == 3) {
         layer = 2;
+    } else if (id == 4) {
+        layer = 3;
     }
     let scale_vec = vec2(scale);
     let uv_x_raw = world_pos.yz * scale_vec;
@@ -79,6 +81,13 @@ fn fragment(
     let color_z = textureSampleGrad(base_texture, base_sampler, uv_z, layer, duvdx_z, duvdy_z).rgb;
     let final_color = color_x * blend.x + color_y * blend.y + color_z * blend.z;
     pbr_input.material.base_color = vec4<f32>(final_color, 1.0);
+    if (id == 4) {
+        // the mineral in the tile is the bright half of it, so lean the sheen
+        // on brightness rather than sampling a second map
+        let mineral = smoothstep(0.20, 0.36, dot(final_color, vec3(0.299, 0.587, 0.114)));
+        pbr_input.material.metallic = mineral * 0.85;
+        pbr_input.material.perceptual_roughness = mix(0.85, 0.35, mineral);
+    }
     pbr_input.material.base_color = alpha_discard(pbr_input.material, pbr_input.material.base_color);
     var out: FragmentOutput;
     out.color = apply_pbr_lighting(pbr_input);

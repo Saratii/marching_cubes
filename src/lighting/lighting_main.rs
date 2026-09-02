@@ -60,11 +60,14 @@ pub fn apply_settings_changes(
         lantern.intensity = settings.lantern_brightness;
     }
     for (mut spot_light, is_god_ray) in spot_light_query.iter_mut() {
-        spot_light.intensity = if is_god_ray {
-            settings.god_ray_brightness
+        if is_god_ray {
+            spot_light.intensity = settings.god_ray_brightness;
         } else {
-            settings.headlamp_brightness
-        };
+            let (outer, inner) = settings.headlamp_angles();
+            spot_light.intensity = settings.headlamp_brightness;
+            spot_light.outer_angle = outer;
+            spot_light.inner_angle = inner;
+        }
     }
     if let Ok(mut ambient) = ambient_query.single_mut() {
         ambient.brightness = settings.ambient_brightness;

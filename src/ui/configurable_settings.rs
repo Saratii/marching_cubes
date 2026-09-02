@@ -48,10 +48,13 @@ const SMOOTH_RADIUS_RANGE: (f32, f32) = (0.25, 40.0);
 const SMOOTH_STRENGTH_STEP: f32 = 0.25;
 const SMOOTH_STRENGTH_RANGE: (f32, f32) = (0.25, 10.0);
 // ambient brightness is in cd/m^2 pre-exposure; at the default ev100 of 5.0 the
-// scene is scaled by ~1/38, so values in the tens already read as visible
+// scene is scaled by ~1/38, so values in the tens already read as visible. It
+// scales by BRIGHTNESS_STEP_FACTOR per press like the lamps do, because a fixed
+// step fine enough near the bottom of that range would need hundreds of presses
+// to cross the top of it. The range's low end is the dimmest lit value and
+// stepping below it turns ambient off.
 const DEFAULT_AMBIENT_BRIGHTNESS: f32 = 0.0;
-const AMBIENT_BRIGHTNESS_STEP: f32 = 2_500.0;
-const AMBIENT_BRIGHTNESS_RANGE: (f32, f32) = (0.0, 50_000.0);
+const AMBIENT_BRIGHTNESS_RANGE: (f32, f32) = (10.0, 50_000.0);
 const DEFAULT_SUN_ILLUMINANCE: f32 = 0.0;
 const SUN_ILLUMINANCE_STEP: f32 = 5_000.0;
 const SUN_ILLUMINANCE_RANGE: (f32, f32) = (0.0, 150_000.0);
@@ -60,6 +63,13 @@ const LANTERN_BRIGHTNESS_RANGE: (f32, f32) = (10_000.0, 20_000_000.0);
 // headlamp brightness is the spotlight's luminous power in lumens
 const DEFAULT_HEADLAMP_BRIGHTNESS: f32 = 327_680.0;
 const HEADLAMP_BRIGHTNESS_RANGE: (f32, f32) = (100_000.0, 200_000_000.0);
+// headlamp cone half-angles in radians: outer is the edge of the cone, inner
+// the edge of the bright hotspot. Shown in degrees, stepped a degree at a time.
+// Bevy needs inner <= outer, so the two settings clamp against each other.
+const HEADLAMP_ANGLE_STEP: f32 = std::f32::consts::PI / 180.0;
+const DEFAULT_HEADLAMP_OUTER_ANGLE: f32 = 36.0 * HEADLAMP_ANGLE_STEP;
+const DEFAULT_HEADLAMP_INNER_ANGLE: f32 = 9.0 * HEADLAMP_ANGLE_STEP;
+const HEADLAMP_OUTER_ANGLE_RANGE: (f32, f32) = (HEADLAMP_ANGLE_STEP, 1.4);
 // lamp brightness presses scale by this instead of adding, so dim lamps stay
 // adjustable; the range's low end is the dimmest lit value and stepping below
 // it turns the lamp off
@@ -69,9 +79,11 @@ const DEFAULT_GOD_RAY_BRIGHTNESS: f32 = 2_000_000.0;
 const GOD_RAY_BRIGHTNESS_STEP: f32 = 1_000_000.0;
 const GOD_RAY_BRIGHTNESS_RANGE: (f32, f32) = (0.0, 200_000_000.0);
 // lower ev100 means a longer exposure, so a brighter image
-const DEFAULT_EXPOSURE_EV100: f32 = 5.0;
+const DEFAULT_EXPOSURE_EV100: f32 = 4.5;
 const EXPOSURE_EV100_STEP: f32 = 0.25;
-const EXPOSURE_EV100_RANGE: (f32, f32) = (5.0, 20.0);
+// the low end is the brightest setting, and each stop below it doubles the
+// light the scene is scaled by, so 0.0 leaves 32x of headroom over the default
+const EXPOSURE_EV100_RANGE: (f32, f32) = (0.0, 20.0);
 
 fn default_dig_radius() -> f32 {
     DEFAULT_DIG_RADIUS
@@ -134,6 +146,14 @@ fn default_god_ray_brightness() -> f32 {
 
 fn default_headlamp_brightness() -> f32 {
     DEFAULT_HEADLAMP_BRIGHTNESS
+}
+
+fn default_headlamp_outer_angle() -> f32 {
+    DEFAULT_HEADLAMP_OUTER_ANGLE
+}
+
+fn default_headlamp_inner_angle() -> f32 {
+    DEFAULT_HEADLAMP_INNER_ANGLE
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -263,6 +283,8 @@ pub enum SettingsType {
     LanternBrightnessChange,
     GodRayBrightnessChange,
     HeadlampBrightnessChange,
+    HeadlampOuterAngleChange,
+    HeadlampInnerAngleChange,
     ExposureChange,
 }
 
@@ -308,7 +330,7 @@ impl SettingsType {
                 format!("Smooth Strength: {:.2} /s", s.smooth_strength)
             }
             SettingsType::AmbientBrightnessChange => {
-                format!("Ambient Light: {:.0}", s.ambient_brightness)
+                format!("Ambient Light: {:.1}", s.ambient_brightness)
             }
             SettingsType::SunIlluminanceChange => {
                 format!("Sunlight: {:.0} lx", s.sun_illuminance)
@@ -321,6 +343,18 @@ impl SettingsType {
             }
             SettingsType::HeadlampBrightnessChange => {
                 format!("Headlamp Brightness: {:.0} lm", s.headlamp_brightness)
+            }
+            SettingsType::HeadlampOuterAngleChange => {
+                format!(
+                    "Headlamp Cone: {:.1} deg",
+                    s.headlamp_outer_angle.to_degrees()
+                )
+            }
+            SettingsType::HeadlampInnerAngleChange => {
+                format!(
+                    "Headlamp Hotspot: {:.1} deg",
+                    s.headlamp_inner_angle.to_degrees()
+                )
             }
             SettingsType::ExposureChange => {
                 format!("Exposure: EV{:.2}", s.exposure_ev100)
@@ -421,13 +455,11 @@ impl SettingsType {
                     .clamp(SMOOTH_STRENGTH_RANGE.0, SMOOTH_STRENGTH_RANGE.1);
             }
             SettingsType::AmbientBrightnessChange => {
-                let step = if dir_next {
-                    AMBIENT_BRIGHTNESS_STEP
-                } else {
-                    -AMBIENT_BRIGHTNESS_STEP
-                };
-                settings.ambient_brightness = (settings.ambient_brightness + step)
-                    .clamp(AMBIENT_BRIGHTNESS_RANGE.0, AMBIENT_BRIGHTNESS_RANGE.1);
+                settings.ambient_brightness = step_brightness(
+                    settings.ambient_brightness,
+                    dir_next,
+                    AMBIENT_BRIGHTNESS_RANGE,
+                );
             }
             SettingsType::SunIlluminanceChange => {
                 let step = if dir_next {
@@ -460,6 +492,28 @@ impl SettingsType {
                     dir_next,
                     HEADLAMP_BRIGHTNESS_RANGE,
                 );
+            }
+            // narrowing the cone drags the hotspot in with it
+            SettingsType::HeadlampOuterAngleChange => {
+                let step = if dir_next {
+                    HEADLAMP_ANGLE_STEP
+                } else {
+                    -HEADLAMP_ANGLE_STEP
+                };
+                settings.headlamp_outer_angle = (settings.headlamp_outer_angle + step)
+                    .clamp(HEADLAMP_OUTER_ANGLE_RANGE.0, HEADLAMP_OUTER_ANGLE_RANGE.1);
+                settings.headlamp_inner_angle = settings
+                    .headlamp_inner_angle
+                    .min(settings.headlamp_outer_angle);
+            }
+            SettingsType::HeadlampInnerAngleChange => {
+                let step = if dir_next {
+                    HEADLAMP_ANGLE_STEP
+                } else {
+                    -HEADLAMP_ANGLE_STEP
+                };
+                settings.headlamp_inner_angle = (settings.headlamp_inner_angle + step)
+                    .clamp(0.0, settings.headlamp_outer_angle);
             }
             // right brightens, so it steps ev100 down
             SettingsType::ExposureChange => {
@@ -515,6 +569,21 @@ pub struct ConfigurableSettings {
     pub god_ray_brightness: f32,
     #[serde(default = "default_headlamp_brightness")]
     pub headlamp_brightness: f32,
+    #[serde(default = "default_headlamp_outer_angle")]
+    pub headlamp_outer_angle: f32,
+    #[serde(default = "default_headlamp_inner_angle")]
+    pub headlamp_inner_angle: f32,
+}
+
+impl ConfigurableSettings {
+    /// Headlamp cone half-angles as (outer, inner). Bevy needs inner <= outer;
+    /// the menu keeps them in that order, but a hand-edited config need not.
+    pub fn headlamp_angles(&self) -> (f32, f32) {
+        (
+            self.headlamp_outer_angle,
+            self.headlamp_inner_angle.min(self.headlamp_outer_angle),
+        )
+    }
 }
 
 pub fn load_configurable_settings() -> ConfigurableSettings {
@@ -553,6 +622,8 @@ impl Default for ConfigurableSettings {
             exposure_ev100: DEFAULT_EXPOSURE_EV100,
             god_ray_brightness: DEFAULT_GOD_RAY_BRIGHTNESS,
             headlamp_brightness: DEFAULT_HEADLAMP_BRIGHTNESS,
+            headlamp_outer_angle: DEFAULT_HEADLAMP_OUTER_ANGLE,
+            headlamp_inner_angle: DEFAULT_HEADLAMP_INNER_ANGLE,
         }
     }
 }

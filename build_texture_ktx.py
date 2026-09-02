@@ -6,6 +6,7 @@ TILES = [
     "assets/source_tiles/dirt.png",
     "assets/source_tiles/grass4.png",
     "assets/source_tiles/sand.png",
+    "assets/source_tiles/ore.png",
 ]
 
 TOKTX = r"C:\Program Files\KTX-Software\bin\toktx.exe"

@@ -10,8 +10,10 @@ use crate::{
         CHUNK_WORLD_SIZE, HALF_CHUNK, SAMPLES_PER_CHUNK_2D, SAMPLES_PER_CHUNK_2D_PADDED,
         SAMPLES_PER_CHUNK_DIM, SAMPLES_PER_CHUNK_DIM_PADDED, VOXEL_WORLD_SIZE,
     },
+    conversions::world_pos_to_chunk_coord,
     deformable_terrain::{
         driver::ChunkBuffers,
+        ore::apply_ore,
         plugin::{HeightSource, NoiseHeightConfig, Uniformity},
     },
 };
@@ -26,6 +28,7 @@ pub enum MaterialCode {
     Dirt = 1,
     Grass = 2,
     Sand = 3,
+    Ore = 4,
 }
 
 pub fn get_fbm() -> GeneratorWrapper<SafeNode> {
@@ -288,6 +291,10 @@ pub fn fill_voxel_densities(chunk_buffers: &mut ChunkBuffers, chunk_start: &Vec3
             }
         }
     }
+    apply_ore(
+        &mut chunk_buffers.material,
+        world_pos_to_chunk_coord(&(*chunk_start + Vec3::splat(HALF_CHUNK))),
+    );
 }
 
 //stripped version of fill_voxel_densities designed to quickly return uniformity without touching buffers

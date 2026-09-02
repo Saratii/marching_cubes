@@ -339,7 +339,9 @@ fn get_or_create_edge_vertex(
                 + d2.z as usize * mat_stride
                 + d2.y as usize * samples_per_chunk_dim
                 + d2.x as usize];
-            let material = if material1 == MaterialCode::Grass || material2 == MaterialCode::Grass {
+            let material = if material1 == MaterialCode::Ore || material2 == MaterialCode::Ore {
+                MaterialCode::Ore
+            } else if material1 == MaterialCode::Grass || material2 == MaterialCode::Grass {
                 MaterialCode::Grass
             } else if material1 == MaterialCode::Sand || material2 == MaterialCode::Sand {
                 MaterialCode::Sand

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use bevy::{camera::primitives::MeshAabb, ecs::system::SystemParam, prelude::*};
 use bevy_rapier3d::prelude::{Collider, ComputedColliderShape, TriMeshFlags};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     constants::{
@@ -17,6 +17,8 @@ use crate::{
         chunk_generator::{MaterialCode, dequantize_i16_to_f32, quantize_f32_to_i16},
         driver::{DigEntityUpdateSender, TerrainChunkMap, WriteCmd, WriteCmdSender},
         marching_cubes::mc::mc_mesh_generation,
+        ore::apply_ore,
+        ore_debris::OreDebrisBank,
         plugin::{ChunkTag, Deformation, Uniformity},
         sparse_voxel_octree::sphere_intersects_aabb,
         terrain::{
@@ -119,6 +121,322 @@ fn brush_sdf(shape_sdf: f32) -> f32 {
         -shape_sdf
     } else {
         -BRUSH_SKIRT_START - (shape_sdf - BRUSH_SKIRT_START) * BRUSH_SKIRT_SLOPE
+    }
+}
+
+/// A chunk a deformation rewrote: its coordinate, the new field, the new
+/// materials, and what it was before the write.
+type ModifiedChunk = ((i16, i16, i16), Arc<[i16]>, Arc<[MaterialCode]>, Uniformity);
+
+const VOXEL_VOLUME: f32 = VOXEL_WORLD_SIZE * VOXEL_WORLD_SIZE * VOXEL_WORLD_SIZE;
+
+/// Ore one deformation turned to air: how much of it, and where its middle was.
+#[derive(Default, Clone, Copy)]
+struct OreRemoval {
+    voxels: u32,
+    center_sum: Vec3,
+}
+
+impl OreRemoval {
+    fn is_empty(&self) -> bool {
+        self.voxels == 0
+    }
+
+    fn volume(&self) -> f32 {
+        self.voxels as f32 * VOXEL_VOLUME
+    }
+
+    fn center(&self) -> Vec3 {
+        self.center_sum / self.voxels as f32
+    }
+}
+
+/// Whether a brush is allowed to break ore loose. Ore is hard: the deform and
+/// smooth brushes work around it and leave the lump standing, so only a
+/// pickaxe chip can free it.
+#[derive(Clone, Copy, PartialEq)]
+enum OreRule {
+    Protect,
+    Break,
+}
+
+type MaterialSnapshot = FxHashMap<(i16, i16, i16), Arc<[MaterialCode]>>;
+
+/// Material of a padded sample, read from whichever gathered chunk canonically
+/// owns it. Padded border samples belong to a neighbour and have no entry in
+/// this chunk's own array, so resolving through the owner is what keeps two
+/// chunks from disagreeing about whether a shared sample is protected — a
+/// disagreement would crack the mesh along the border.
+/// Index of a padded sample along one axis in the world-wide sample grid. Two
+/// chunks sharing a sample derive the same integer, which is what lets ore be
+/// resolved to one owner no matter which chunk is asking.
+#[inline(always)]
+fn ore_sample_index(chunk_coord: i16, padded: usize) -> i32 {
+    chunk_coord as i32 * (SAMPLES_PER_CHUNK_DIM as i32 - 1) + padded as i32 - 1
+}
+
+#[inline(always)]
+fn ore_sample_world_coord(index: i32) -> f32 {
+    index as f32 * VOXEL_WORLD_SIZE - HALF_CHUNK
+}
+
+/// The chunk that owns a world-wide sample, and the sample's index in that
+/// chunk's unpadded material array.
+#[inline(always)]
+fn ore_sample_owner(index: (i32, i32, i32)) -> ((i16, i16, i16), (usize, usize, usize)) {
+    let span = SAMPLES_PER_CHUNK_DIM as i32 - 1;
+    (
+        (
+            index.0.div_euclid(span) as i16,
+            index.1.div_euclid(span) as i16,
+            index.2.div_euclid(span) as i16,
+        ),
+        (
+            index.0.rem_euclid(span) as usize,
+            index.1.rem_euclid(span) as usize,
+            index.2.rem_euclid(span) as usize,
+        ),
+    )
+}
+
+fn material_at_padded(
+    snapshot: &MaterialSnapshot,
+    chunk_coord: &(i16, i16, i16),
+    x: usize,
+    y: usize,
+    z: usize,
+) -> Option<MaterialCode> {
+    let (owner, sample) = ore_sample_owner((
+        ore_sample_index(chunk_coord.0, x),
+        ore_sample_index(chunk_coord.1, y),
+        ore_sample_index(chunk_coord.2, z),
+    ));
+    let materials = snapshot.get(&owner)?;
+    let index = flatten_index(
+        sample.0 as u32,
+        sample.1 as u32,
+        sample.2 as u32,
+        SAMPLES_PER_CHUNK_DIM,
+    );
+    Some(materials[index as usize])
+}
+
+#[inline(always)]
+fn sample_is_protected_ore(
+    ore_rule: OreRule,
+    snapshot: &MaterialSnapshot,
+    chunk_coord: &(i16, i16, i16),
+    x: usize,
+    y: usize,
+    z: usize,
+) -> bool {
+    ore_rule == OreRule::Protect
+        && material_at_padded(snapshot, chunk_coord, x, y, z) == Some(MaterialCode::Ore)
+}
+
+/// Largest lump the fill will follow before giving up and calling it attached.
+/// A lump is a few hundred samples, so this only trips on ore shapes that were
+/// never meant to come loose in one piece.
+const MAX_FLOATING_ORE_SAMPLES: usize = 4096;
+
+const ORE_NEIGHBOURS: [(i32, i32, i32); 6] = [
+    (1, 0, 0),
+    (-1, 0, 0),
+    (0, 1, 0),
+    (0, -1, 0),
+    (0, 0, 1),
+    (0, 0, -1),
+];
+
+/// Density and material of a world-wide sample, or None when no gathered chunk
+/// owns it.
+fn ore_sample_at(
+    densities: &FxHashMap<(i16, i16, i16), Arc<[i16]>>,
+    materials: &MaterialSnapshot,
+    index: (i32, i32, i32),
+) -> Option<(i16, MaterialCode)> {
+    let (owner, sample) = ore_sample_owner(index);
+    let density = densities.get(&owner)?[flatten_index(
+        sample.0 as u32 + 1,
+        sample.1 as u32 + 1,
+        sample.2 as u32 + 1,
+        SAMPLES_PER_CHUNK_DIM_PADDED,
+    ) as usize];
+    let material = materials.get(&owner)?[flatten_index(
+        sample.0 as u32,
+        sample.1 as u32,
+        sample.2 as u32,
+        SAMPLES_PER_CHUNK_DIM,
+    ) as usize];
+    Some((density, material))
+}
+
+/// Follow one lump of solid ore outward from `seed`. Returns its samples only
+/// if nothing holds it up: a single solid neighbour that is not ore anchors the
+/// whole lump, and a sample no gathered chunk owns counts as an anchor too,
+/// because a lump reaching out of what this dig can see must not be dropped on
+/// a guess.
+fn floating_ore_component(
+    densities: &FxHashMap<(i16, i16, i16), Arc<[i16]>>,
+    materials: &MaterialSnapshot,
+    seed: (i32, i32, i32),
+    visited: &mut FxHashSet<(i32, i32, i32)>,
+) -> Option<Vec<(i32, i32, i32)>> {
+    if !visited.insert(seed) {
+        return None;
+    }
+    match ore_sample_at(densities, materials, seed) {
+        Some((density, MaterialCode::Ore)) if density < 0 => {}
+        _ => return None,
+    }
+    let mut queue = vec![seed];
+    let mut component = Vec::new();
+    let mut anchored = false;
+    while let Some(sample) = queue.pop() {
+        component.push(sample);
+        if component.len() > MAX_FLOATING_ORE_SAMPLES {
+            return None;
+        }
+        for (dx, dy, dz) in ORE_NEIGHBOURS {
+            let neighbour = (sample.0 + dx, sample.1 + dy, sample.2 + dz);
+            match ore_sample_at(densities, materials, neighbour) {
+                None => anchored = true,
+                Some((density, _)) if density >= 0 => {}
+                Some((_, MaterialCode::Ore)) => {
+                    if visited.insert(neighbour) {
+                        queue.push(neighbour);
+                    }
+                }
+                Some(_) => anchored = true,
+            }
+        }
+    }
+    (!anchored).then_some(component)
+}
+
+/// Ore the brush has undercut on every side is no longer part of the terrain,
+/// so it stops being solid and is banked as a rock instead. Every chunk holding
+/// a copy of a freed sample clears its own copy, or the two would disagree
+/// across the border. `touched` gains any chunk this writes to, so a chunk the
+/// brush itself left alone still gets remeshed.
+fn drop_floating_ore(
+    chunks: &mut [ModifiedChunk],
+    touched: &mut [bool],
+    candidates: &[(i32, i32, i32)],
+    removal: &mut OreRemoval,
+) {
+    if candidates.is_empty() {
+        return;
+    }
+    let densities: FxHashMap<(i16, i16, i16), Arc<[i16]>> = chunks
+        .iter()
+        .map(|(chunk_coord, densities, ..)| (*chunk_coord, Arc::clone(densities)))
+        .collect();
+    let materials = material_snapshot(chunks);
+    let mut visited = FxHashSet::default();
+    let mut floating = Vec::new();
+    for &seed in candidates {
+        if let Some(component) = floating_ore_component(&densities, &materials, seed, &mut visited)
+        {
+            floating.extend(component);
+        }
+    }
+    if floating.is_empty() {
+        return;
+    }
+    for &sample in &floating {
+        removal.voxels += 1;
+        removal.center_sum += Vec3::new(
+            ore_sample_world_coord(sample.0),
+            ore_sample_world_coord(sample.1),
+            ore_sample_world_coord(sample.2),
+        );
+    }
+    let air = quantize_f32_to_i16(10.0);
+    let span = SAMPLES_PER_CHUNK_DIM as i32 - 1;
+    for (index, (chunk_coord, densities, materials, _)) in chunks.iter_mut().enumerate() {
+        let padded = |coord: i16, sample: i32| {
+            let padded = sample - coord as i32 * span + 1;
+            (0..SAMPLES_PER_CHUNK_DIM_PADDED as i32)
+                .contains(&padded)
+                .then_some(padded as usize)
+        };
+        let mut copies = Vec::new();
+        for &sample in &floating {
+            let (Some(x), Some(y), Some(z)) = (
+                padded(chunk_coord.0, sample.0),
+                padded(chunk_coord.1, sample.1),
+                padded(chunk_coord.2, sample.2),
+            ) else {
+                continue;
+            };
+            copies.push((x, y, z));
+        }
+        if copies.is_empty() {
+            continue;
+        }
+        touched[index] = true;
+        let densities = Arc::make_mut(densities);
+        for &(x, y, z) in &copies {
+            densities[flatten_index(x as u32, y as u32, z as u32, SAMPLES_PER_CHUNK_DIM_PADDED)
+                as usize] = air;
+        }
+        let interior = 1..=SAMPLES_PER_CHUNK_DIM;
+        if copies
+            .iter()
+            .any(|(x, y, z)| interior.contains(x) && interior.contains(y) && interior.contains(z))
+        {
+            let materials = Arc::make_mut(materials);
+            for &(x, y, z) in &copies {
+                if interior.contains(&x) && interior.contains(&y) && interior.contains(&z) {
+                    materials[flatten_index(
+                        x as u32 - 1,
+                        y as u32 - 1,
+                        z as u32 - 1,
+                        SAMPLES_PER_CHUNK_DIM,
+                    ) as usize] = MaterialCode::Dirt;
+                }
+            }
+        }
+    }
+}
+
+/// Book a sample that just went from solid to air. Ore there stops being
+/// terrain: its material reverts to dirt, so the fresh crater wall is not
+/// painted with ore that is no longer in the ground, and the lost volume is
+/// banked toward a rock. Every chunk holding a copy of the sample reverts its
+/// own copy, but only the chunk that canonically owns the sample banks it, so
+/// a sample on a chunk border is not counted twice.
+#[inline]
+fn release_removed_sample(
+    materials: &mut Arc<[MaterialCode]>,
+    chunk_coord: &(i16, i16, i16),
+    x: usize,
+    y: usize,
+    z: usize,
+    removal: &mut OreRemoval,
+) {
+    let interior = 1..=SAMPLES_PER_CHUNK_DIM;
+    if !(interior.contains(&x) && interior.contains(&y) && interior.contains(&z)) {
+        return;
+    }
+    let index = flatten_index(
+        (x - 1) as u32,
+        (y - 1) as u32,
+        (z - 1) as u32,
+        SAMPLES_PER_CHUNK_DIM,
+    ) as usize;
+    if materials[index] != MaterialCode::Ore {
+        return;
+    }
+    Arc::make_mut(materials)[index] = MaterialCode::Dirt;
+    if x < SAMPLES_PER_CHUNK_DIM && y < SAMPLES_PER_CHUNK_DIM && z < SAMPLES_PER_CHUNK_DIM {
+        removal.voxels += 1;
+        removal.center_sum += Vec3::new(
+            padded_axis_world_coord(chunk_coord.0, x),
+            padded_axis_world_coord(chunk_coord.1, y),
+            padded_axis_world_coord(chunk_coord.2, z),
+        );
     }
 }
 
@@ -254,6 +572,22 @@ fn chip_facets(seed: u32, radius: f32, strength: f32) -> [(Vec3, f32); CHIP_FACE
     })
 }
 
+/// Materials for a chunk stored as uniform dirt. Ore is a pure function of
+/// position, so the lumps buried in one only have to exist from the moment a
+/// dig turns the chunk into real samples.
+fn uniform_dirt_materials(chunk_coord: (i16, i16, i16)) -> Arc<[MaterialCode]> {
+    let mut materials = vec![MaterialCode::Dirt; SAMPLES_PER_CHUNK];
+    apply_ore(&mut materials, chunk_coord);
+    Arc::from(materials)
+}
+
+fn material_snapshot(chunks: &[ModifiedChunk]) -> MaterialSnapshot {
+    chunks
+        .iter()
+        .map(|(chunk_coord, _, materials, _)| (*chunk_coord, Arc::clone(materials)))
+        .collect()
+}
+
 fn read_chunk_for_deform(
     terrain_chunk: &TerrainChunk,
     chunk_coord: (i16, i16, i16),
@@ -271,7 +605,7 @@ fn read_chunk_for_deform(
         ),
         TerrainChunk::UniformDirt => (
             build_uniform_padded_with_real_borders(quantize_f32_to_i16(-10.0), chunk_coord, map),
-            Arc::new([MaterialCode::Dirt; SAMPLES_PER_CHUNK]),
+            uniform_dirt_materials(chunk_coord),
             Uniformity::Dirt,
         ),
         TerrainChunk::NonUniformTerrainChunk(chunk) => (
@@ -435,17 +769,28 @@ pub(crate) fn deformation_message_reader(
     mut terrain_io: TerrainIo,
     write_cmd_sender: Res<WriteCmdSender>,
     dig_entity_update_sender: Res<DigEntityUpdateSender>,
+    mut ore_debris_bank: ResMut<OreDebrisBank>,
 ) {
     for deformation in deformation_reader.read() {
-        let modified_chunks = match *deformation {
+        let (modified_chunks, ore_removed) = match *deformation {
             Deformation::Sphere {
                 center,
                 radius,
                 strength,
-            } => dig_sphere(center, radius, strength, &terrain_io.terrain_chunk_map),
-            Deformation::SphereCarve { center, radius } => {
-                dig_sphere(center, radius, f32::INFINITY, &terrain_io.terrain_chunk_map)
-            }
+            } => dig_sphere(
+                center,
+                radius,
+                strength,
+                OreRule::Protect,
+                &terrain_io.terrain_chunk_map,
+            ),
+            Deformation::SphereCarve { center, radius } => dig_sphere(
+                center,
+                radius,
+                f32::INFINITY,
+                OreRule::Break,
+                &terrain_io.terrain_chunk_map,
+            ),
             Deformation::CylinderCarve {
                 center,
                 radius,
@@ -483,6 +828,9 @@ pub(crate) fn deformation_message_reader(
                 rate,
             } => smooth_sphere(center, radius, rate, &terrain_io.terrain_chunk_map),
         };
+        if !ore_removed.is_empty() && deformation.drops_ore_debris() {
+            ore_debris_bank.deposit(ore_removed.volume(), ore_removed.center());
+        }
         apply_modified_chunks(
             modified_chunks,
             &mut commands,
@@ -497,7 +845,7 @@ pub(crate) fn deformation_message_reader(
 }
 
 fn apply_modified_chunks(
-    modified_chunks: Vec<((i16, i16, i16), Arc<[i16]>, Arc<[MaterialCode]>, Uniformity)>,
+    modified_chunks: Vec<ModifiedChunk>,
     commands: &mut Commands,
     material_handle: &TerrainMaterialHandle,
     solid_chunk_query: &mut Query<(&mut Collider, &mut Mesh3d), With<ChunkTag>>,
@@ -616,30 +964,50 @@ fn dig_sphere(
     center: Vec3,
     radius: f32,
     max_step: f32,
+    ore_rule: OreRule,
     terrain_chunk_map: &TerrainChunkMap,
-) -> Vec<((i16, i16, i16), Arc<[i16]>, Arc<[MaterialCode]>, Uniformity)> {
+) -> (Vec<ModifiedChunk>, OreRemoval) {
     let map_lock = terrain_chunk_map.0.lock().unwrap();
     let mut chunks = Vec::new();
     for chunk_coord in chunk_coords_in_sphere(center, radius) {
         let Some(terrain_chunk) = map_lock.get(&chunk_coord) else {
             warn!("skipping dig at {center}: chunk {chunk_coord:?} is not loaded");
-            return Vec::new();
+            return (Vec::new(), OreRemoval::default());
         };
         let (densities, materials, uniformity) =
             read_chunk_for_deform(terrain_chunk, chunk_coord, &map_lock);
         chunks.push((chunk_coord, densities, materials, uniformity));
     }
     drop(map_lock);
-    chunks.retain_mut(|(chunk_coord, densities, ..)| {
-        apply_brush_to_chunk(
-            Arc::make_mut(densities),
-            chunk_coord,
-            center,
-            radius,
-            max_step,
-        )
-    });
-    chunks
+    let ore_snapshot = material_snapshot(&chunks);
+    let mut removal = OreRemoval::default();
+    let mut ore_seen = Vec::new();
+    let mut touched: Vec<bool> = chunks
+        .iter_mut()
+        .map(|(chunk_coord, densities, materials, _)| {
+            apply_brush_to_chunk(
+                Arc::make_mut(densities),
+                materials,
+                &ore_snapshot,
+                chunk_coord,
+                center,
+                radius,
+                max_step,
+                ore_rule,
+                &mut ore_seen,
+                &mut removal,
+            )
+        })
+        .collect();
+    drop_floating_ore(&mut chunks, &mut touched, &ore_seen, &mut removal);
+    retain_touched(&mut chunks, touched);
+    (chunks, removal)
+}
+
+/// Keep only the chunks a deformation actually wrote to.
+fn retain_touched(chunks: &mut Vec<ModifiedChunk>, touched: Vec<bool>) {
+    let mut keep = touched.into_iter();
+    chunks.retain(|_| keep.next().unwrap_or(false));
 }
 
 /// Exact one-shot carve of a capped cylinder (axis toward `rotation * ±Y`),
@@ -652,7 +1020,7 @@ fn carve_cylinder(
     half_height: f32,
     rotation: Quat,
     terrain_chunk_map: &TerrainChunkMap,
-) -> Vec<((i16, i16, i16), Arc<[i16]>, Arc<[MaterialCode]>, Uniformity)> {
+) -> (Vec<ModifiedChunk>, OreRemoval) {
     let inverse_rotation = rotation.inverse();
     carve_shape(
         chunk_coords_in_cylinder(center, radius, half_height, rotation),
@@ -672,7 +1040,7 @@ fn carve_half_sphere(
     radius: f32,
     rotation: Quat,
     terrain_chunk_map: &TerrainChunkMap,
-) -> Vec<((i16, i16, i16), Arc<[i16]>, Arc<[MaterialCode]>, Uniformity)> {
+) -> (Vec<ModifiedChunk>, OreRemoval) {
     let inverse_rotation = rotation.inverse();
     carve_shape(
         chunk_coords_in_sphere(center, radius),
@@ -691,13 +1059,13 @@ fn smooth_sphere(
     radius: f32,
     rate: f32,
     terrain_chunk_map: &TerrainChunkMap,
-) -> Vec<((i16, i16, i16), Arc<[i16]>, Arc<[MaterialCode]>, Uniformity)> {
+) -> (Vec<ModifiedChunk>, OreRemoval) {
     let map_lock = terrain_chunk_map.0.lock().unwrap();
     let mut chunks = Vec::new();
     for chunk_coord in chunk_coords_in_sphere(center, radius) {
         let Some(terrain_chunk) = map_lock.get(&chunk_coord) else {
             warn!("skipping smooth at {center}: chunk {chunk_coord:?} is not loaded");
-            return Vec::new();
+            return (Vec::new(), OreRemoval::default());
         };
         let (densities, materials, uniformity) =
             read_chunk_for_deform(terrain_chunk, chunk_coord, &map_lock);
@@ -708,26 +1076,42 @@ fn smooth_sphere(
         .iter()
         .map(|(chunk_coord, densities, ..)| (*chunk_coord, Arc::clone(densities)))
         .collect();
-    chunks.retain_mut(|(chunk_coord, densities, ..)| {
-        apply_smooth_to_chunk(
-            Arc::make_mut(densities),
-            chunk_coord,
-            &snapshot,
-            center,
-            radius,
-            rate,
-        )
-    });
-    chunks
+    let ore_snapshot = material_snapshot(&chunks);
+    let mut removal = OreRemoval::default();
+    let mut ore_seen = Vec::new();
+    let mut touched: Vec<bool> = chunks
+        .iter_mut()
+        .map(|(chunk_coord, densities, materials, _)| {
+            apply_smooth_to_chunk(
+                Arc::make_mut(densities),
+                materials,
+                chunk_coord,
+                &snapshot,
+                &ore_snapshot,
+                center,
+                radius,
+                rate,
+                &mut ore_seen,
+                &mut removal,
+            )
+        })
+        .collect();
+    drop_floating_ore(&mut chunks, &mut touched, &ore_seen, &mut removal);
+    retain_touched(&mut chunks, touched);
+    (chunks, removal)
 }
 
 fn apply_smooth_to_chunk(
     densities: &mut [i16],
+    materials: &mut Arc<[MaterialCode]>,
     chunk_coord: &(i16, i16, i16),
     snapshot: &FxHashMap<(i16, i16, i16), Arc<[i16]>>,
+    ore_snapshot: &MaterialSnapshot,
     center: Vec3,
     radius: f32,
     rate: f32,
+    ore_seen: &mut Vec<(i32, i32, i32)>,
+    removal: &mut OreRemoval,
 ) -> bool {
     let radius_squared = radius * radius;
     let mut chunk_modified = false;
@@ -741,6 +1125,14 @@ fn apply_smooth_to_chunk(
                     Vec3::new(world_x, world_y, world_z).distance_squared(center);
                 let falloff = 1.0 - distance_squared / radius_squared;
                 if falloff <= 0.0 {
+                    continue;
+                }
+                if sample_is_protected_ore(OreRule::Protect, ore_snapshot, chunk_coord, x, y, z) {
+                    ore_seen.push((
+                        ore_sample_index(chunk_coord.0, x),
+                        ore_sample_index(chunk_coord.1, y),
+                        ore_sample_index(chunk_coord.2, z),
+                    ));
                     continue;
                 }
                 let global = (
@@ -774,8 +1166,12 @@ fn apply_smooth_to_chunk(
                 let new_sdf = (old + (target - old) * blend).clamp(-10.0, 10.0);
                 let new_quantized = quantize_f32_to_i16(new_sdf);
                 if new_quantized != *current_density {
+                    let was_solid = *current_density < 0;
                     *current_density = new_quantized;
                     chunk_modified = true;
+                    if was_solid && new_quantized >= 0 {
+                        release_removed_sample(materials, chunk_coord, x, y, z, removal);
+                    }
                 }
             }
         }
@@ -793,7 +1189,7 @@ fn carve_chip(
     seed: u32,
     strength: f32,
     terrain_chunk_map: &TerrainChunkMap,
-) -> Vec<((i16, i16, i16), Arc<[i16]>, Arc<[MaterialCode]>, Uniformity)> {
+) -> (Vec<ModifiedChunk>, OreRemoval) {
     let inverse_rotation = rotation.inverse();
     let facets = chip_facets(seed, radius, strength);
     carve_shape(
@@ -813,29 +1209,38 @@ fn carve_shape(
     chunk_coords: impl Iterator<Item = (i16, i16, i16)>,
     shape_sdf: impl Fn(Vec3) -> f32,
     terrain_chunk_map: &TerrainChunkMap,
-) -> Vec<((i16, i16, i16), Arc<[i16]>, Arc<[MaterialCode]>, Uniformity)> {
+) -> (Vec<ModifiedChunk>, OreRemoval) {
     let map_lock = terrain_chunk_map.0.lock().unwrap();
     let mut chunks = Vec::new();
     for chunk_coord in chunk_coords {
         let Some(terrain_chunk) = map_lock.get(&chunk_coord) else {
             warn!("skipping carve: chunk {chunk_coord:?} is not loaded");
-            return Vec::new();
+            return (Vec::new(), OreRemoval::default());
         };
         let (densities, materials, uniformity) =
             read_chunk_for_deform(terrain_chunk, chunk_coord, &map_lock);
         chunks.push((chunk_coord, densities, materials, uniformity));
     }
     drop(map_lock);
-    chunks.retain_mut(|(chunk_coord, densities, ..)| {
-        apply_carve_to_chunk(Arc::make_mut(densities), chunk_coord, &shape_sdf)
+    let mut removal = OreRemoval::default();
+    chunks.retain_mut(|(chunk_coord, densities, materials, _)| {
+        apply_carve_to_chunk(
+            Arc::make_mut(densities),
+            materials,
+            chunk_coord,
+            &shape_sdf,
+            &mut removal,
+        )
     });
-    chunks
+    (chunks, removal)
 }
 
 fn apply_carve_to_chunk(
     densities: &mut [i16],
+    materials: &mut Arc<[MaterialCode]>,
     chunk_coord: &(i16, i16, i16),
     shape_sdf: impl Fn(Vec3) -> f32,
+    removal: &mut OreRemoval,
 ) -> bool {
     let mut chunk_modified = false;
     for z in 0..SAMPLES_PER_CHUNK_DIM_PADDED {
@@ -856,8 +1261,12 @@ fn apply_carve_to_chunk(
                 let new_sdf = old.max(brush).clamp(-10.0, 10.0);
                 let new_quantized = quantize_f32_to_i16(new_sdf);
                 if new_quantized != *current_density {
+                    let was_solid = *current_density < 0;
                     *current_density = new_quantized;
                     chunk_modified = true;
+                    if was_solid && new_quantized >= 0 {
+                        release_removed_sample(materials, chunk_coord, x, y, z, removal);
+                    }
                 }
             }
         }
@@ -877,10 +1286,15 @@ fn apply_carve_to_chunk(
 /// applications.
 fn apply_brush_to_chunk(
     densities: &mut [i16],
+    materials: &mut Arc<[MaterialCode]>,
+    ore_snapshot: &MaterialSnapshot,
     chunk_coord: &(i16, i16, i16),
     dig_center: Vec3,
     radius: f32,
     max_step: f32,
+    ore_rule: OreRule,
+    ore_seen: &mut Vec<(i32, i32, i32)>,
+    removal: &mut OreRemoval,
 ) -> bool {
     let influence_cutoff = radius + BRUSH_INFLUENCE_MARGIN;
     let influence_cutoff_squared = influence_cutoff * influence_cutoff;
@@ -895,6 +1309,14 @@ fn apply_brush_to_chunk(
                 let voxel_world_pos = Vec3::new(world_x, world_y, world_z);
                 let distance_squared = voxel_world_pos.distance_squared(dig_center);
                 if distance_squared > influence_cutoff_squared {
+                    continue;
+                }
+                if sample_is_protected_ore(ore_rule, ore_snapshot, chunk_coord, x, y, z) {
+                    ore_seen.push((
+                        ore_sample_index(chunk_coord.0, x),
+                        ore_sample_index(chunk_coord.1, y),
+                        ore_sample_index(chunk_coord.2, z),
+                    ));
                     continue;
                 }
                 let step = if max_step.is_finite() {
@@ -916,8 +1338,12 @@ fn apply_brush_to_chunk(
                 let new_sdf = old.max(brush.min(old + step)).clamp(-10.0, 10.0);
                 let new_quantized = quantize_f32_to_i16(new_sdf);
                 if new_quantized != *current_density {
+                    let was_solid = *current_density < 0;
                     *current_density = new_quantized;
                     chunk_modified = true;
+                    if was_solid && new_quantized >= 0 {
+                        release_removed_sample(materials, chunk_coord, x, y, z, removal);
+                    }
                 }
             }
         }
@@ -1012,10 +1438,7 @@ mod tests {
         })
     }
 
-    fn commit_modified(
-        modified: &[((i16, i16, i16), Arc<[i16]>, Arc<[MaterialCode]>, Uniformity)],
-        map: &TerrainChunkMap,
-    ) {
+    fn commit_modified(modified: &[ModifiedChunk], map: &TerrainChunkMap) {
         let mut lock = map.0.lock().unwrap();
         for (coord, densities, materials, _) in modified {
             lock.insert(
@@ -1030,9 +1453,7 @@ mod tests {
 
     /// All non-uniform chunks currently stored in the map, in the shape the
     /// consistency checker expects.
-    fn stored_nonuniform_chunks(
-        map: &TerrainChunkMap,
-    ) -> Vec<((i16, i16, i16), Arc<[i16]>, Arc<[MaterialCode]>, Uniformity)> {
+    fn stored_nonuniform_chunks(map: &TerrainChunkMap) -> Vec<ModifiedChunk> {
         map.0
             .lock()
             .unwrap()
@@ -1051,9 +1472,7 @@ mod tests {
 
     /// Every sample plane shared by two chunks must hold identical values in
     /// both copies — the invariant that keeps meshes crack-free at borders.
-    fn assert_padding_walls_consistent(
-        chunks: &[((i16, i16, i16), Arc<[i16]>, Arc<[MaterialCode]>, Uniformity)],
-    ) {
+    fn assert_padding_walls_consistent(chunks: &[ModifiedChunk]) {
         let dim = SAMPLES_PER_CHUNK_DIM_PADDED;
         let by_coord: FxHashMap<(i16, i16, i16), &Arc<[i16]>> =
             chunks.iter().map(|(c, d, ..)| (*c, d)).collect();
@@ -1171,7 +1590,7 @@ mod tests {
         let radius = 0.25 * CHUNK_WORLD_SIZE;
         let map = build_map([chunk_coord]);
 
-        let modified = dig_sphere(center, radius, f32::INFINITY, &map);
+        let (modified, _) = dig_sphere(center, radius, f32::INFINITY, OreRule::Break, &map);
 
         assert_eq!(modified.len(), 1);
         let (coord, densities, materials, uniformity) = &modified[0];
@@ -1192,7 +1611,7 @@ mod tests {
         let half_height = CHUNK_WORLD_SIZE;
         let map = build_map(cube_range(1));
 
-        let modified = carve_cylinder(center, radius, half_height, Quat::IDENTITY, &map);
+        let (modified, _) = carve_cylinder(center, radius, half_height, Quat::IDENTITY, &map);
         let modified_coords: Vec<_> = modified.iter().map(|(c, ..)| *c).collect();
         for expected in [(0, -1, 0), (0, 0, 0), (0, 1, 0)] {
             assert!(
@@ -1247,7 +1666,7 @@ mod tests {
         let half_height = CHUNK_WORLD_SIZE;
         let map = build_map(cube_range(1));
         let rotation = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
-        let modified = carve_cylinder(center, radius, half_height, rotation, &map);
+        let (modified, _) = carve_cylinder(center, radius, half_height, rotation, &map);
         let modified_coords: Vec<_> = modified.iter().map(|(c, ..)| *c).collect();
         for expected in [(-1, 0, 0), (0, 0, 0), (1, 0, 0)] {
             assert!(
@@ -1281,7 +1700,7 @@ mod tests {
         let radius = 0.25 * CHUNK_WORLD_SIZE;
         let map = build_map([chunk_coord]);
 
-        let modified = carve_half_sphere(center, radius, Quat::IDENTITY, &map);
+        let (modified, _) = carve_half_sphere(center, radius, Quat::IDENTITY, &map);
         commit_modified(&modified, &map);
         assert_padding_walls_consistent(&stored_nonuniform_chunks(&map));
         let (_, densities, ..) = modified.iter().find(|(c, ..)| *c == chunk_coord).unwrap();
@@ -1331,7 +1750,7 @@ mod tests {
         let map = build_map([chunk_coord]);
 
         let rotation = Quat::from_rotation_x(std::f32::consts::PI);
-        let modified = carve_half_sphere(center, radius, rotation, &map);
+        let (modified, _) = carve_half_sphere(center, radius, rotation, &map);
         let (_, densities, ..) = modified.iter().find(|(c, ..)| *c == chunk_coord).unwrap();
 
         let dim = SAMPLES_PER_CHUNK_DIM_PADDED;
@@ -1377,7 +1796,7 @@ mod tests {
         let radius = 0.25 * CHUNK_WORLD_SIZE;
         let dim = SAMPLES_PER_CHUNK_DIM_PADDED;
 
-        let emptied = |chunks: &[((i16, i16, i16), Arc<[i16]>, Arc<[MaterialCode]>, Uniformity)]| {
+        let emptied = |chunks: &[ModifiedChunk]| {
             let mut count = 0;
             for (coord, densities, ..) in chunks {
                 for x in 0..dim {
@@ -1408,7 +1827,7 @@ mod tests {
         let mut previous_emptied = 0;
         for strength in [0.5, 1.0, 3.0] {
             let map = build_map(cube_range(1));
-            let chipped = carve_chip(center, radius, Quat::IDENTITY, 12345, strength, &map);
+            let (chipped, _) = carve_chip(center, radius, Quat::IDENTITY, 12345, strength, &map);
             let chip_emptied = emptied(&chipped);
             assert!(
                 chip_emptied > previous_emptied,
@@ -1420,10 +1839,11 @@ mod tests {
         }
 
         let sphere_map = build_map(cube_range(1));
-        let sphered = dig_sphere(center, radius, f32::INFINITY, &sphere_map);
+        let (sphered, _) = dig_sphere(center, radius, f32::INFINITY, OreRule::Break, &sphere_map);
         let sphere_emptied = emptied(&sphered);
         let default_map = build_map(cube_range(1));
-        let default_chip = carve_chip(center, radius, Quat::IDENTITY, 12345, 1.0, &default_map);
+        let (default_chip, _) =
+            carve_chip(center, radius, Quat::IDENTITY, 12345, 1.0, &default_map);
         let default_emptied = emptied(&default_chip);
         assert!(
             default_emptied < sphere_emptied,
@@ -1443,7 +1863,7 @@ mod tests {
 
         // overlapping chips leave a ridged cavity, not one clean facet set
         for seed in [7u32, 91, 4242] {
-            let chipped = carve_chip(center, radius, Quat::IDENTITY, seed, 0.5, &map);
+            let (chipped, _) = carve_chip(center, radius, Quat::IDENTITY, seed, 0.5, &map);
             commit_modified(&chipped, &map);
         }
 
@@ -1457,11 +1877,10 @@ mod tests {
 
         // mean distance of a sample from its neighbours' average
         let roughness = || {
-            let snapshot: FxHashMap<(i16, i16, i16), Arc<[i16]>> =
-                stored_nonuniform_chunks(&map)
-                    .into_iter()
-                    .map(|(coord, densities, ..)| (coord, densities))
-                    .collect();
+            let snapshot: FxHashMap<(i16, i16, i16), Arc<[i16]>> = stored_nonuniform_chunks(&map)
+                .into_iter()
+                .map(|(coord, densities, ..)| (coord, densities))
+                .collect();
             let densities = densities_of(chunk_coord);
             let mut total = 0.0;
             let mut counted = 0;
@@ -1487,8 +1906,7 @@ mod tests {
                             neighbour_sum += sample_at_global(&snapshot, neighbour)
                                 .expect("the gathered chunks should cover the stencil");
                         }
-                        let flat_index =
-                            flatten_index(x as u32, y as u32, z as u32, dim) as usize;
+                        let flat_index = flatten_index(x as u32, y as u32, z as u32, dim) as usize;
                         let value = dequantize_i16_to_f32(densities[flat_index]);
                         total += (value - neighbour_sum / SMOOTH_STENCIL.len() as f32).abs();
                         counted += 1;
@@ -1507,7 +1925,7 @@ mod tests {
         let before = densities_of(chunk_coord);
 
         for _ in 0..10 {
-            let smoothed = smooth_sphere(center, radius, 0.3, &map);
+            let (smoothed, _) = smooth_sphere(center, radius, 0.3, &map);
             commit_modified(&smoothed, &map);
             assert_padding_walls_consistent(&stored_nonuniform_chunks(&map));
         }
@@ -1553,12 +1971,12 @@ mod tests {
 
         let dug_map = build_map([chunk_coord]);
         for _ in 0..applications {
-            let modified = dig_sphere(center, radius, strength, &dug_map);
+            let (modified, _) = dig_sphere(center, radius, strength, OreRule::Break, &dug_map);
             commit_modified(&modified, &dug_map);
         }
 
         let carved_map = build_map([chunk_coord]);
-        let carved = dig_sphere(center, radius, f32::INFINITY, &carved_map);
+        let (carved, _) = dig_sphere(center, radius, f32::INFINITY, OreRule::Break, &carved_map);
         assert_eq!(carved.len(), 1);
 
         let dug = stored_nonuniform_chunks(&dug_map);
@@ -1666,7 +2084,7 @@ mod tests {
         let center = Vec3::new(chunk_center.x, 0.0, chunk_center.z);
 
         for _ in 0..applications {
-            let modified = dig_sphere(center, radius, strength, &map);
+            let (modified, _) = dig_sphere(center, radius, strength, OreRule::Break, &map);
             commit_modified(&modified, &map);
         }
 
@@ -1725,7 +2143,7 @@ mod tests {
         let map = build_map(cube_range(1));
 
         for _ in 0..3 {
-            let modified = dig_sphere(center, radius, 0.4, &map);
+            let (modified, _) = dig_sphere(center, radius, 0.4, OreRule::Break, &map);
             assert!(
                 modified.len() >= 8,
                 "a corner dig should modify all 8 chunks sharing the corner, got {}",
@@ -1746,15 +2164,164 @@ mod tests {
         let border = chunk_coord_to_world_pos(&(0, 0, 0)) + Vec3::new(HALF_CHUNK, 0.0, 0.0);
         let radius = 2.0;
 
-        let first = dig_sphere(border + Vec3::X * radius, radius, 0.4, &map);
+        let (first, _) = dig_sphere(border + Vec3::X * radius, radius, 0.4, OreRule::Break, &map);
         assert!(first.iter().any(|(c, ..)| *c == (1, 0, 0)));
         commit_modified(&first, &map);
 
-        let second = dig_sphere(border, radius, 0.4, &map);
+        let (second, _) = dig_sphere(border, radius, 0.4, OreRule::Break, &map);
         assert!(second.iter().any(|(c, ..)| *c == (0, 0, 0)));
         commit_modified(&second, &map);
 
         assert_padding_walls_consistent(&stored_nonuniform_chunks(&map));
+    }
+
+    /// A chunk in the test map that holds ore, and the index of one of its ore
+    /// samples.
+    fn find_ore_sample() -> ((i16, i16, i16), usize) {
+        cube_range(1)
+            .find_map(|coord| {
+                uniform_dirt_materials(coord)
+                    .iter()
+                    .position(|m| *m == MaterialCode::Ore)
+                    .map(|index| (coord, index))
+            })
+            .expect("no ore anywhere in the test map")
+    }
+
+    /// Unpadded sample index to the padded triple the density array uses.
+    fn padded_sample(index: usize) -> (usize, usize, usize) {
+        let plane = SAMPLES_PER_CHUNK_DIM * SAMPLES_PER_CHUNK_DIM;
+        (
+            index % SAMPLES_PER_CHUNK_DIM + 1,
+            index / SAMPLES_PER_CHUNK_DIM % SAMPLES_PER_CHUNK_DIM + 1,
+            index / plane + 1,
+        )
+    }
+
+    fn sample_world_pos(chunk_coord: (i16, i16, i16), index: usize) -> Vec3 {
+        let (x, y, z) = padded_sample(index);
+        Vec3::new(
+            padded_axis_world_coord(chunk_coord.0, x),
+            padded_axis_world_coord(chunk_coord.1, y),
+            padded_axis_world_coord(chunk_coord.2, z),
+        )
+    }
+
+    /// Ore is hard: the deform brush has to work around it however long it is
+    /// held, and only a chip breaks it loose.
+    #[test]
+    fn deform_cannot_dislodge_ore_but_a_chip_can() {
+        let map = build_map(cube_range(2));
+        let (chunk_coord, index) = find_ore_sample();
+        let center = sample_world_pos(chunk_coord, index);
+        // the stored field starts at -10, so the brush needs a while to break air
+        for _ in 0..60 {
+            let (modified, removal) = dig_sphere(center, 2.0, 0.5, OreRule::Protect, &map);
+            assert!(removal.is_empty(), "the deform brush dislodged ore");
+            commit_modified(&modified, &map);
+        }
+        assert_padding_walls_consistent(&stored_nonuniform_chunks(&map));
+        let (padded_x, padded_y, padded_z) = padded_sample(index);
+        {
+            let lock = map.0.lock().unwrap();
+            let TerrainChunk::NonUniformTerrainChunk(chunk) = lock.get(&chunk_coord).unwrap()
+            else {
+                panic!("the dug chunk is still uniform");
+            };
+            assert_eq!(
+                chunk.materials[index],
+                MaterialCode::Ore,
+                "ore stopped being ore without a chip"
+            );
+            assert!(
+                chunk.get_density(padded_x as u32, padded_y as u32, padded_z as u32) < 0,
+                "the deform brush ate through the ore"
+            );
+        }
+        // the whole point: the lump the brush worked around is on show
+        let lock = map.0.lock().unwrap();
+        let TerrainChunk::NonUniformTerrainChunk(chunk) = lock.get(&chunk_coord).unwrap() else {
+            unreachable!()
+        };
+        let (_, _, material_ids, _) = mc_mesh_generation(
+            &chunk.densities,
+            &chunk.materials,
+            SAMPLES_PER_CHUNK_DIM,
+            true,
+            &chunk.densities,
+        );
+        drop(lock);
+        assert!(
+            material_ids
+                .iter()
+                .any(|id| *id == MaterialCode::Ore as u32),
+            "the dug wall shows no ore"
+        );
+        let (chipped, removal) = carve_chip(center, 1.0, Quat::IDENTITY, 7, 1.0, &map);
+        assert!(!removal.is_empty(), "a chip could not break the ore loose");
+        assert_padding_walls_consistent(&chipped);
+    }
+
+    /// A brush wide enough to clear the dirt from every side of a lump leaves
+    /// it floating, and floating ore is not terrain: it drops out of the field
+    /// and is banked as a rock.
+    #[test]
+    fn fully_undercut_ore_comes_loose_on_its_own() {
+        let map = build_map(cube_range(3));
+        let (chunk_coord, index) = find_ore_sample();
+        let center = sample_world_pos(chunk_coord, index);
+        let mut released = OreRemoval::default();
+        for _ in 0..60 {
+            let (modified, removal) = dig_sphere(center, 6.0, 0.5, OreRule::Protect, &map);
+            released.voxels += removal.voxels;
+            released.center_sum += removal.center_sum;
+            commit_modified(&modified, &map);
+        }
+        assert!(
+            !released.is_empty(),
+            "the lump was undercut on every side and never came loose"
+        );
+        assert!(
+            center.distance(released.center()) < 6.0,
+            "the rock was banked from somewhere outside the dig"
+        );
+        let (padded_x, padded_y, padded_z) = padded_sample(index);
+        let lock = map.0.lock().unwrap();
+        let TerrainChunk::NonUniformTerrainChunk(chunk) = lock.get(&chunk_coord).unwrap() else {
+            panic!("the dug chunk is still uniform");
+        };
+        assert!(
+            chunk.get_density(padded_x as u32, padded_y as u32, padded_z as u32) >= 0,
+            "the freed lump is still solid terrain"
+        );
+        drop(lock);
+        assert_padding_walls_consistent(&stored_nonuniform_chunks(&map));
+    }
+
+    /// Ore dug out of the ground is booked as loose material and stops being
+    /// terrain, so the fresh crater is not painted with ore that is no longer
+    /// in it.
+    #[test]
+    fn digging_ore_releases_it_and_leaves_dirt_behind() {
+        let map = build_map(cube_range(2));
+        let (chunk_coord, index) = find_ore_sample();
+        let center = sample_world_pos(chunk_coord, index);
+        let (modified, removal) = dig_sphere(center, 1.0, f32::INFINITY, OreRule::Break, &map);
+        assert!(!removal.is_empty(), "digging out ore released nothing");
+        assert!(
+            center.distance(removal.center()) < 1.0,
+            "released ore came from somewhere other than the dig"
+        );
+        let (_, _, materials, _) = modified
+            .iter()
+            .find(|(coord, ..)| *coord == chunk_coord)
+            .expect("the dug chunk was not returned");
+        assert_ne!(
+            materials[index],
+            MaterialCode::Ore,
+            "ore carved into air is still painted on the crater"
+        );
+        assert_padding_walls_consistent(&modified);
     }
 
     #[test]
@@ -1762,7 +2329,7 @@ mod tests {
         let map = build_map([(0, 0, 0)]);
         let near_border = chunk_coord_to_world_pos(&(0, 0, 0)) + Vec3::new(HALF_CHUNK, 0.0, 0.0);
 
-        let modified = dig_sphere(near_border, 2.0, 0.4, &map);
+        let (modified, _) = dig_sphere(near_border, 2.0, 0.4, OreRule::Break, &map);
 
         assert!(
             modified.is_empty(),
@@ -1906,7 +2473,7 @@ mod tests {
             for application in 0..4 {
                 let hit = raycast_down(&map, hole_x, 0.0)
                     .expect("the aiming ray should always find the surface");
-                let modified = dig_sphere(hit, radius, strength, &map);
+                let (modified, _) = dig_sphere(hit, radius, strength, OreRule::Break, &map);
                 assert!(
                     !modified.is_empty(),
                     "dig at x={hole_x} application {application} should modify chunks"
@@ -2004,7 +2571,7 @@ mod tests {
 
         for center in [first_center, second_center] {
             for _ in 0..3 {
-                let modified = dig_sphere(center, radius, 0.4, &map);
+                let (modified, _) = dig_sphere(center, radius, 0.4, OreRule::Break, &map);
                 commit_modified(&modified, &map);
             }
         }
