@@ -159,6 +159,16 @@ impl Default for KeyBindings {
     }
 }
 
+/// Where a new player starts, and where the sun spits a dead one back out:
+/// standing on the cavern floor beside the shaft.
+pub fn cave_spawn_position(height_source: &TerrainHeightSource) -> Vec3 {
+    Vec3::new(
+        PLAYER_SPAWN.x,
+        height_source.0.height_at(PLAYER_SPAWN.x, PLAYER_SPAWN.z) - ROOM_DEPTH + 2.0,
+        PLAYER_SPAWN.z,
+    )
+}
+
 pub fn spawn_player(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -187,11 +197,7 @@ pub fn spawn_player(
             camera_controller.player_pitch = data.pitch;
             data.position
         }
-        None => Vec3::new(
-            PLAYER_SPAWN.x,
-            height_source.0.height_at(PLAYER_SPAWN.x, PLAYER_SPAWN.z) - ROOM_DEPTH + 2.0,
-            PLAYER_SPAWN.z,
-        ),
+        None => cave_spawn_position(&height_source),
     };
     let player = commands
         .spawn((

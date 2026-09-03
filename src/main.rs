@@ -38,6 +38,9 @@ use marching_cubes::lanterns::spawn_lanterns;
 use marching_cubes::lighting::lighting_main::{
     apply_settings_changes, setup_camera, setup_lighting,
 };
+use marching_cubes::ore_bank::{
+    deliver_ore_at_shaft_top, load_delivered_copper, save_delivered_copper, sell_held_ore_on_death,
+};
 use marching_cubes::player::headlamp::{aim_headlamp, toggle_headlamp};
 use marching_cubes::player::player::{
     CameraController, KeyBindings, camera_look, camera_zoom, free_cam_movement, grab_on_click,
@@ -46,11 +49,15 @@ use marching_cubes::player::player::{
     toggle_free_cam, validate_player_spawn,
 };
 use marching_cubes::player::player_visual::animate_player_limbs;
+use marching_cubes::player::sun_death::{
+    SunDeath, spawn_sun_flash, trigger_sun_death, update_sun_death,
+};
 use marching_cubes::player::tools::{handle_hand_input, select_tool};
 use marching_cubes::settings::settings_driver::{load_settings, save_monitor_on_move};
 use marching_cubes::ui::configurable_settings::{
     FpsLimit, MenuFocus, MenuTab, load_configurable_settings,
 };
+use marching_cubes::ui::copper_counter::{spawn_copper_counter, update_copper_counter};
 use marching_cubes::ui::crosshair::spawn_crosshair;
 use marching_cubes::ui::tool_bar::{spawn_tool_bar, update_tool_bar};
 use marching_cubes::ui::menu::{SettingsState, menu_toggle, menu_update};
@@ -76,6 +83,7 @@ fn main() {
         .insert_resource(FrameStart(Instant::now()))
         .insert_resource(configurable_settings)
         .insert_resource(KeyBindings::default())
+        .insert_resource(load_delivered_copper())
         .insert_resource(CameraController::default())
         .insert_resource(WinitSettings {
             focused_mode: update_mode,
@@ -128,6 +136,8 @@ fn main() {
                 setup,
                 spawn_crosshair,
                 spawn_tool_bar,
+                spawn_copper_counter,
+                spawn_sun_flash,
                 spawn_player.after(setup_chunk_loading).after(setup_camera),
                 // spawn_minimap.after(spawn_player),
                 initial_grab_cursor,
@@ -145,11 +155,13 @@ fn main() {
             (
                 build_initial_area,
                 update_elevator,
-                (select_tool, handle_digging_input, handle_hand_input).chain(),
+                (select_tool, handle_digging_input, handle_hand_input)
+                    .chain()
+                    .run_if(not(resource_exists::<SunDeath>)),
                 toggle_first_person,
                 camera_zoom,
                 camera_look,
-                player_movement,
+                player_movement.run_if(not(resource_exists::<SunDeath>)),
                 sync_terrain_center.after(player_movement),
                 validate_player_spawn
                     .after(PhysicsSet::SyncBackend)
@@ -181,6 +193,14 @@ fn main() {
                 aim_headlamp.after(camera_look),
                 toggle_headlamp,
                 update_tool_bar,
+                deliver_ore_at_shaft_top.after(update_elevator),
+                sell_held_ore_on_death
+                    .run_if(resource_added::<SunDeath>)
+                    .after(deliver_ore_at_shaft_top),
+                save_delivered_copper.after(sell_held_ore_on_death),
+                update_copper_counter.after(sell_held_ore_on_death),
+                trigger_sun_death.after(update_elevator),
+                update_sun_death.after(trigger_sun_death),
                 animate_player_limbs.after(player_movement),
                 #[cfg(feature = "debug")]
                 update_debug_texts,

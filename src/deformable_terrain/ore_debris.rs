@@ -19,6 +19,7 @@ use crate::{
         plugin::ChunkTag,
         terrain::TerrainChunk,
     },
+    player::{player_visual::PlayerHandTag, tools::HeldOre},
 };
 
 /// Ore removed by digging is banked until it is worth a rock, so a held dig
@@ -92,7 +93,17 @@ struct SavedOreDebris {
     rotation: [f32; 4],
     volume: f32,
     shape: usize,
+    /// Whether the player was carrying this rock. Defaulted so debris files
+    /// written before rocks could be carried still load.
+    #[serde(default)]
+    held: bool,
 }
+
+/// Rocks the player was carrying when the last session ended. They wait here
+/// until the hand exists to put them back into, which is a frame or two after
+/// the debris file is read.
+#[derive(Resource)]
+pub struct PendingHeldOre(Vec<SavedOreDebris>);
 
 /// The last thing written to disk, so a world full of settled rocks is not
 /// rewritten every interval.
@@ -134,6 +145,12 @@ pub fn debris_radius(volume: f32) -> f32 {
     (volume * 3.0 / (4.0 * std::f32::consts::PI)).cbrt()
 }
 
+/// Kilograms of rock, which is both what rapier throws around and what the
+/// elevator banks when it hauls the rock out.
+pub fn debris_mass(volume: f32) -> f32 {
+    volume * DEBRIS_DENSITY
+}
+
 /// What makes a rock a rock to the physics world. Split out because a rock
 /// picked up by hand sheds these and gets them back when it is dropped.
 ///
@@ -144,12 +161,20 @@ pub fn debris_physics_bundle(volume: f32, velocity: Velocity) -> impl Bundle {
     (
         RigidBody::Fixed,
         Collider::ball(debris_radius(volume) * 0.85),
-        ColliderMassProperties::Mass(volume * DEBRIS_DENSITY),
+        ColliderMassProperties::Mass(debris_mass(volume)),
         Damping {
             linear_damping: 0.2,
             angular_damping: 0.5,
         },
         velocity,
+    )
+}
+
+fn rock_visual(assets: &OreDebrisAssets, volume: f32, shape: usize) -> impl Bundle {
+    (
+        Mesh3d(assets.shapes[shape % DEBRIS_SHAPES].clone()),
+        MeshMaterial3d(assets.material.clone()),
+        Transform::from_scale(Vec3::splat(debris_radius(volume))),
     )
 }
 
@@ -161,7 +186,6 @@ fn spawn_rock(
     volume: f32,
     shape: usize,
 ) {
-    let radius = debris_radius(volume);
     commands
         .spawn((
             debris_physics_bundle(volume, velocity),
@@ -170,11 +194,30 @@ fn spawn_rock(
             OreDebris { volume, shape },
         ))
         .with_children(|children| {
-            children.spawn((
-                Mesh3d(assets.shapes[shape % DEBRIS_SHAPES].clone()),
-                MeshMaterial3d(assets.material.clone()),
-                Transform::from_scale(Vec3::splat(radius)),
-            ));
+            children.spawn(rock_visual(assets, volume, shape));
+        });
+}
+
+/// Puts a rock back where `handle_hand_input` would hold it: riding the hand's
+/// transform with no physics of its own.
+fn spawn_held_rock(
+    commands: &mut Commands,
+    assets: &OreDebrisAssets,
+    hand: Entity,
+    volume: f32,
+    shape: usize,
+) {
+    commands
+        .spawn((
+            OreDebris { volume, shape },
+            HeldOre,
+            ChildOf(hand),
+            Transform::default(),
+            //the player mesh is hidden in first person; the rock is not
+            Visibility::Visible,
+        ))
+        .with_children(|children| {
+            children.spawn(rock_visual(assets, volume, shape));
         });
 }
 
@@ -225,7 +268,8 @@ pub fn setup_ore_debris(
         .collect();
     let assets = OreDebrisAssets { shapes, material };
     let saved = read_saved_debris();
-    for rock in &saved {
+    let (held, loose): (Vec<_>, Vec<_>) = saved.iter().partition(|rock| rock.held);
+    for rock in loose {
         spawn_rock(
             &mut commands,
             &assets,
@@ -239,6 +283,7 @@ pub fn setup_ore_debris(
             rock.shape,
         );
     }
+    commands.insert_resource(PendingHeldOre(held.into_iter().cloned().collect()));
     commands.insert_resource(OreDebrisSaveState {
         written: saved,
         seconds_since_save: 0.0,
@@ -279,6 +324,26 @@ pub fn spawn_banked_ore_debris(
         volume,
         seed as usize,
     );
+}
+
+/// A carried rock stays carried across a session: it goes back into the hand
+/// as soon as the player exists, rather than dropping to the floor.
+pub fn restore_held_ore(
+    mut commands: Commands,
+    pending: Option<Res<PendingHeldOre>>,
+    assets: Res<OreDebrisAssets>,
+    hand: Query<Entity, With<PlayerHandTag>>,
+) {
+    let Some(pending) = pending else {
+        return;
+    };
+    let Ok(hand) = hand.single() else {
+        return;
+    };
+    for rock in &pending.0 {
+        spawn_held_rock(&mut commands, &assets, hand, rock.volume, rock.shape);
+    }
+    commands.remove_resource::<PendingHeldOre>();
 }
 
 /// Whether the terrain sample at `world_pos` is solid, read from the chunk map
@@ -332,7 +397,7 @@ pub fn thaw_simulated_ore_debris(
 pub fn save_ore_debris(
     time: Res<Time>,
     mut state: ResMut<OreDebrisSaveState>,
-    debris: Query<(&GlobalTransform, &OreDebris)>,
+    debris: Query<(&GlobalTransform, &OreDebris, Has<HeldOre>)>,
 ) {
     state.seconds_since_save += time.delta_secs();
     if state.seconds_since_save < DEBRIS_SAVE_INTERVAL {
@@ -341,13 +406,14 @@ pub fn save_ore_debris(
     state.seconds_since_save = 0.0;
     let current: Vec<SavedOreDebris> = debris
         .iter()
-        .map(|(transform, rock)| {
+        .map(|(transform, rock, held)| {
             let placement = transform.compute_transform();
             SavedOreDebris {
                 position: placement.translation.to_array(),
                 rotation: placement.rotation.to_array(),
                 volume: rock.volume,
                 shape: rock.shape,
+                held,
             }
         })
         .collect();

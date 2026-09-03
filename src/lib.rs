@@ -11,3 +11,4 @@ pub mod ui;
 pub mod build_initial_area;
 pub mod elevator;
 pub mod lanterns;
+pub mod ore_bank;

@@ -1,3 +1,5 @@
+use std::fs::{create_dir_all, read_to_string, write};
+
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::{Collider, ColliderMassProperties, Damping, RigidBody, Velocity};
 
@@ -5,6 +7,7 @@ use crate::{
     deformable_terrain::{
         digging::screen_to_world_ray,
         driver::TerrainChunkMap,
+        file_loader::get_project_root,
         ore_debris::{OreDebris, debris_physics_bundle, debris_radius},
     },
     player::{
@@ -26,6 +29,8 @@ const DROP_OFFSET: f32 = 0.6;
 
 /// Speed a dropped rock is tossed forward at, in world units per second.
 const DROP_SPEED: f32 = 2.5;
+
+const TOOL_SAVE_PATH: &str = "data/selected_tool.txt";
 
 /// What left click does, picked with the tool slot keys or cycled with
 /// `cycle_tool`.
@@ -73,6 +78,27 @@ impl Tool {
 /// transform instead of the simulation.
 #[derive(Component)]
 pub struct HeldOre;
+
+/// The tool the last session ended holding, by slot. An unreadable or stale
+/// file just falls back to the default tool.
+pub fn load_tool() -> Tool {
+    read_to_string(get_project_root().join(TOOL_SAVE_PATH))
+        .ok()
+        .and_then(|text| text.trim().parse::<usize>().ok())
+        .and_then(|slot| TOOLS.get(slot).copied())
+        .unwrap_or_default()
+}
+
+pub fn save_tool(tool: Res<Tool>) {
+    if tool.is_added() || !tool.is_changed() {
+        return;
+    }
+    let path = get_project_root().join(TOOL_SAVE_PATH);
+    if let Some(parent) = path.parent() {
+        let _ = create_dir_all(parent);
+    }
+    let _ = write(path, tool.slot().to_string());
+}
 
 pub fn select_tool(
     keyboard: Res<ButtonInput<KeyCode>>,

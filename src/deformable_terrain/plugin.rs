@@ -14,13 +14,14 @@ use crate::{
         },
         file_loader::setup_chunk_loading,
         ore_debris::{
-            OreDebrisBank, save_ore_debris, setup_ore_debris, spawn_banked_ore_debris,
+            OreDebrisBank, restore_held_ore, save_ore_debris, setup_ore_debris,
+            spawn_banked_ore_debris,
             thaw_simulated_ore_debris,
         },
         terrain::setup_map,
         terrain_material::TerrainMaterialExtension,
     },
-    player::tools::Tool,
+    player::tools::{load_tool, save_tool},
 };
 
 #[derive(Clone)]
@@ -183,7 +184,7 @@ impl Plugin for DeformableTerrainPlugin {
         .insert_resource(Lods(self.lods))
         .insert_resource(TerrainHeightSource(self.height_source.clone()))
         .add_message::<Deformation>()
-        .init_resource::<Tool>()
+        .insert_resource(load_tool())
         .init_resource::<OreDebrisBank>()
         .add_plugins(MaterialPlugin::<
             ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>,
@@ -208,7 +209,9 @@ impl Plugin for DeformableTerrainPlugin {
                 )
                     .chain(),
                 thaw_simulated_ore_debris,
-                save_ore_debris,
+                restore_held_ore,
+                save_ore_debris.after(restore_held_ore),
+                save_tool,
             ),
         );
     }

@@ -12,8 +12,9 @@ use crate::deformable_terrain::plugin::TerrainHeightSource;
 use crate::player::player::PlayerTag;
 use crate::ui::configurable_settings::ConfigurableSettings;
 
-/// Y position at which a platform despawns.
-const ELEVATOR_TOP_Y: f32 = 10.0;
+/// Y position at which a platform despawns, and at which the ore it carries
+/// counts as hauled out of the mine.
+pub const ELEVATOR_TOP_Y: f32 = 10.0;
 /// Seconds for one platform to travel from the bottom of the hole to the top.
 const TRAVEL_SECONDS: f32 = 20.0;
 /// Seconds between platform spawns, escalator style.
@@ -33,8 +34,9 @@ const PLATFORM_RADIUS: f32 = SHAFT_RADIUS;
 /// Vertical distance between the player's feet and a platform top within which
 /// the player counts as standing on it and gets carried along.
 const RIDE_MARGIN: f32 = 0.4;
-/// How far the collar sticks up above the terrain surface.
-const COLLAR_HEIGHT: f32 = 0.8;
+/// How far the collar sticks up above the terrain surface. Clearing it is the
+/// moment a rider is out of the mine and into open sky.
+pub const COLLAR_HEIGHT: f32 = 0.8;
 /// Wall thickness of the above-ground collar; thinner than the liner so it
 /// extends less far out around the shaft mouth.
 const COLLAR_THICKNESS: f32 = 0.15;
@@ -69,6 +71,11 @@ const GOD_RAY_RANGE: f32 = 200.0;
 /// Horizontal extent of the fog volume box wrapping the beam. Kept snug around
 /// the shaft so raymarching cost stays low and no other lights catch the fog.
 const GOD_RAY_FOG_WIDTH: f32 = 12.0;
+
+/// How fast a platform climbs, in world units per second.
+pub fn platform_climb_speed(bottom_y: f32) -> f32 {
+    (ELEVATOR_TOP_Y - bottom_y) / TRAVEL_SECONDS
+}
 
 #[derive(Component)]
 pub struct ElevatorPlatform;
@@ -293,7 +300,7 @@ pub fn update_elevator(
     mut platforms: Query<(Entity, &mut Transform), With<ElevatorPlatform>>,
     mut player_query: Query<&mut Transform, (With<PlayerTag>, Without<ElevatorPlatform>)>,
 ) {
-    let delta_y = (ELEVATOR_TOP_Y - elevator.bottom_y) / TRAVEL_SECONDS * time.delta_secs();
+    let delta_y = platform_climb_speed(elevator.bottom_y) * time.delta_secs();
     //the character controller only resolves collisions when the player moves, so a platform
     //rising into the player interpenetrates and then gets ignored, dropping the player through.
     //Lift the rider by the platform's delta before moving the platform so they never overlap.
