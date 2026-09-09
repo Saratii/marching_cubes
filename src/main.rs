@@ -1,4 +1,3 @@
-use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use bevy::asset::UnapprovedPathMode;
@@ -13,7 +12,7 @@ use bevy::prelude::*;
 use bevy::render::diagnostic::MeshAllocatorDiagnosticPlugin;
 use bevy::window::{PresentMode, WindowMode};
 use bevy::winit::{UpdateMode, WinitSettings};
-use bevy_rapier3d::plugin::{NoUserData, PhysicsSet, RapierPhysicsPlugin};
+use bevy_rapier3d::plugin::{NoUserData, RapierPhysicsPlugin};
 // use bevy_rapier3d::render::RapierDebugRenderPlugin;
 use iyes_perf_ui::PerfUiPlugin;
 use iyes_perf_ui::prelude::PerfUiDefaultEntries;
@@ -24,12 +23,9 @@ use marching_cubes::deformable_terrain::debug_lines::{
     draw_cluster_debug, draw_collider_debug, draw_lod_debug, draw_voxel_surface_debug,
 };
 use marching_cubes::deformable_terrain::digging::handle_digging_input;
-use marching_cubes::deformable_terrain::driver::{
-    FrameStart, INITIAL_CHUNKS_LOADED, record_frame_start,
-};
+use marching_cubes::deformable_terrain::driver::{FrameStart, record_frame_start};
 #[cfg(feature = "debug")]
 use marching_cubes::deformable_terrain::driver_debug_ui::{spawn_debug_texts, update_debug_texts};
-use marching_cubes::deformable_terrain::file_loader::setup_chunk_loading;
 use marching_cubes::deformable_terrain::plugin::{
     DeformableTerrainConfig, DeformableTerrainPlugin, HeightSource,
 };
@@ -41,17 +37,8 @@ use marching_cubes::lighting::lighting_main::{
 use marching_cubes::ore_bank::{
     deliver_ore_at_shaft_top, load_delivered_copper, save_delivered_copper, sell_held_ore_on_death,
 };
-use marching_cubes::player::headlamp::{aim_headlamp, toggle_headlamp};
-use marching_cubes::player::player::{
-    CameraController, KeyBindings, camera_look, camera_zoom, free_cam_movement, grab_on_click,
-    handle_focus_change, initial_grab_cursor, player_movement, spawn_free_cam_root, spawn_player,
-    sync_player_rotation, sync_terrain_center, toggle_first_person, toggle_fly_mode,
-    toggle_free_cam, validate_player_spawn,
-};
-use marching_cubes::player::player_visual::animate_player_limbs;
-use marching_cubes::player::sun_death::{
-    SunDeath, spawn_sun_flash, trigger_sun_death, update_sun_death,
-};
+use marching_cubes::player::plugin::PlayerPlugin;
+use marching_cubes::player::sun_death::SunDeath;
 use marching_cubes::player::tools::{handle_hand_input, select_tool};
 use marching_cubes::settings::settings_driver::{load_settings, save_monitor_on_move};
 use marching_cubes::ui::configurable_settings::{
@@ -82,9 +69,7 @@ fn main() {
         })
         .insert_resource(FrameStart(Instant::now()))
         .insert_resource(configurable_settings)
-        .insert_resource(KeyBindings::default())
         .insert_resource(load_delivered_copper())
-        .insert_resource(CameraController::default())
         .insert_resource(WinitSettings {
             focused_mode: update_mode,
             unfocused_mode: update_mode,
@@ -125,6 +110,7 @@ fn main() {
                 height_source: HeightSource::Flat(1.0),
                 // height_source: HeightSource::Noise(NoiseHeightConfig::default()),
             },
+            PlayerPlugin,
             // LogDiagnosticsPlugin::default(),
             // RapierDebugRenderPlugin::default(),
         ))
@@ -137,13 +123,8 @@ fn main() {
                 spawn_crosshair,
                 spawn_tool_bar,
                 spawn_copper_counter,
-                spawn_sun_flash,
-                spawn_player.after(setup_chunk_loading).after(setup_camera),
-                // spawn_minimap.after(spawn_player),
-                initial_grab_cursor,
                 setup_lighting,
                 setup_camera,
-                spawn_free_cam_root,
                 setup_elevator,
                 #[cfg(feature = "debug")]
                 spawn_debug_texts,
@@ -158,14 +139,6 @@ fn main() {
                 (select_tool, handle_digging_input, handle_hand_input)
                     .chain()
                     .run_if(not(resource_exists::<SunDeath>)),
-                toggle_first_person,
-                camera_zoom,
-                camera_look,
-                player_movement.run_if(not(resource_exists::<SunDeath>)),
-                sync_terrain_center.after(player_movement),
-                validate_player_spawn
-                    .after(PhysicsSet::SyncBackend)
-                    .run_if(|| !INITIAL_CHUNKS_LOADED.load(Ordering::Relaxed)),
                 save_monitor_on_move,
                 #[cfg(feature = "debug")]
                 draw_cluster_debug,
@@ -177,9 +150,6 @@ fn main() {
                 draw_voxel_surface_debug,
                 menu_toggle,
                 menu_update.after(menu_toggle),
-                handle_focus_change,
-                grab_on_click,
-                toggle_fly_mode,
                 apply_settings_changes,
             ),
         )
@@ -187,11 +157,6 @@ fn main() {
             Update,
             (
                 spawn_lanterns.run_if(resource_exists::<InitialAreaBuilt>),
-                toggle_free_cam,
-                free_cam_movement,
-                sync_player_rotation.after(camera_look),
-                aim_headlamp.after(camera_look),
-                toggle_headlamp,
                 update_tool_bar,
                 deliver_ore_at_shaft_top.after(update_elevator),
                 sell_held_ore_on_death
@@ -199,9 +164,6 @@ fn main() {
                     .after(deliver_ore_at_shaft_top),
                 save_delivered_copper.after(sell_held_ore_on_death),
                 update_copper_counter.after(sell_held_ore_on_death),
-                trigger_sun_death.after(update_elevator),
-                update_sun_death.after(trigger_sun_death),
-                animate_player_limbs.after(player_movement),
                 #[cfg(feature = "debug")]
                 update_debug_texts,
             ),

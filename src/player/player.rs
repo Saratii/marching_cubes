@@ -9,7 +9,10 @@ use bevy::{
     prelude::*,
     window::{CursorGrabMode, CursorOptions, PrimaryWindow, WindowFocused},
 };
-use bevy_rapier3d::prelude::*;
+use bevy_rapier3d::{
+    parry::{query::ShapeCastOptions, shape::Ball},
+    prelude::*,
+};
 
 use crate::{
     build_initial_area::ROOM_DEPTH,
@@ -17,6 +20,7 @@ use crate::{
     conversions::world_pos_to_chunk_coord,
     deformable_terrain::{
         chunk_entity_map::ChunkEntityMap,
+        ore_debris::OreDebris,
         driver::INITIAL_CHUNKS_LOADED,
         file_loader::get_project_root,
         plugin::{ChunkTag, MoveableCenter, TerrainHeightSource},
@@ -37,6 +41,9 @@ const MIN_ZOOM_SPEED: f32 = 0.5;
 const MAX_ZOOM_SPEED: f32 = 180.0;
 const MOUSE_SENSITIVITY: f32 = 0.002;
 const MIN_PITCH: f32 = -1.5;
+const CAMERA_COLLISION_RADIUS: f32 = 0.3;
+const CAMERA_COLLISION_PADDING: f32 = 0.1;
+const MIN_CAMERA_COLLISION_DISTANCE: f32 = 1.0;
 const MAX_PITCH: f32 = 1.5;
 const BASE_GRAVITY: f32 = -9.81;
 const JUMP_IMPULSE: f32 = 7.0;
@@ -79,6 +86,7 @@ pub struct CameraController {
     pub yaw: f32,
     pub pitch: f32,
     pub distance: f32,
+    pub collided_distance: f32,
     pub is_first_person: bool,
     pub is_cursor_grabbed: bool,
     pub player_yaw: f32,
@@ -91,6 +99,7 @@ impl Default for CameraController {
             yaw: 0.0,
             pitch: 0.2,
             distance: CAMERA_3RD_PERSON_OFFSET.length(),
+            collided_distance: CAMERA_3RD_PERSON_OFFSET.length(),
             is_first_person: true,
             is_cursor_grabbed: false,
             player_yaw: 0.0,
@@ -263,7 +272,7 @@ pub fn toggle_first_person(
         } else {
             camera_controller.is_first_person = false;
             camera_controller.distance = CAMERA_3RD_PERSON_OFFSET.length();
-            update_camera_position(&mut camera_transform, &camera_controller);
+            camera_controller.collided_distance = CAMERA_3RD_PERSON_OFFSET.length();
             let mut player_visibility = player_visibility.iter_mut().next().unwrap();
             *player_visibility = Visibility::Visible;
         }
@@ -272,7 +281,6 @@ pub fn toggle_first_person(
 
 pub fn camera_zoom(
     mut scroll_events: MessageReader<MouseWheel>,
-    mut camera_transform_query: Query<&mut Transform, With<MainCameraTag>>,
     mut camera_controller: ResMut<CameraController>,
     free_cam: Res<FreeCamMode>,
 ) {
@@ -282,18 +290,16 @@ pub fn camera_zoom(
     {
         return;
     }
-    let mut camera_transform = camera_transform_query.iter_mut().next().unwrap();
     for event in scroll_events.read() {
-        let current_distance = camera_transform.translation.length();
-        let t = (current_distance - MIN_ZOOM_DISTANCE) / (MAX_ZOOM_DISTANCE - MIN_ZOOM_DISTANCE);
+        //zoom from where the camera actually is, so scrolling out against a wall
+        //cannot bank distance that a later scroll in has to spend first
+        let distance = camera_controller
+            .distance
+            .min(camera_controller.collided_distance);
+        let t = (distance - MIN_ZOOM_DISTANCE) / (MAX_ZOOM_DISTANCE - MIN_ZOOM_DISTANCE);
         let zoom_speed = MIN_ZOOM_SPEED + t * (MAX_ZOOM_SPEED - MIN_ZOOM_SPEED);
-        let zoom_delta = event.y * zoom_speed;
-        let new_distance =
-            (current_distance - zoom_delta).clamp(MIN_ZOOM_DISTANCE, MAX_ZOOM_DISTANCE);
-        camera_controller.distance = new_distance;
-        let zoom_factor = new_distance / current_distance;
-        camera_transform.translation *= zoom_factor;
-        update_camera_position(&mut camera_transform, &camera_controller)
+        camera_controller.distance =
+            (distance - event.y * zoom_speed).clamp(MIN_ZOOM_DISTANCE, MAX_ZOOM_DISTANCE);
     }
 }
 
@@ -323,25 +329,56 @@ pub fn camera_look(
                 angles_changed = true;
             }
         }
-        if angles_changed {
+        if angles_changed && (free_cam.is_active || camera_controller.is_first_person) {
             let mut camera_transform = camera_transform_query.iter_mut().next().unwrap();
-            if free_cam.is_active {
-                update_first_person_camera(&mut camera_transform, &camera_controller);
-            } else if camera_controller.is_first_person {
-                update_first_person_camera(&mut camera_transform, &camera_controller);
-            } else {
-                update_camera_position(&mut camera_transform, &camera_controller);
-            }
+            update_first_person_camera(&mut camera_transform, &camera_controller);
         }
     }
 }
 
-fn update_camera_position(camera_transform: &mut Transform, controller: &CameraController) {
-    let yaw_rotation = Quat::from_rotation_y(controller.yaw);
-    let pitch_rotation = Quat::from_rotation_x(controller.pitch);
-    let rotation = yaw_rotation * pitch_rotation;
-    let offset = rotation * Vec3::new(0.0, 0.0, controller.distance);
-    camera_transform.translation = offset;
+/// Keeps the third person camera outside of the world instead of letting it
+/// swing through walls: the orbit offset is shape cast out from the player and
+/// the camera is parked wherever that cast first hits something solid.
+pub fn update_third_person_camera(
+    rapier_context: ReadRapierContext,
+    mut camera_controller: ResMut<CameraController>,
+    free_cam: Res<FreeCamMode>,
+    player_query: Query<(Entity, &Transform), (With<PlayerTag>, Without<MainCameraTag>)>,
+    mut camera_transform_query: Query<&mut Transform, With<MainCameraTag>>,
+    debris_query: Query<(), With<OreDebris>>,
+) {
+    if camera_controller.is_first_person || free_cam.is_active {
+        return;
+    }
+    let (Ok((player_entity, player_transform)), Ok(mut camera_transform), Ok(context)) = (
+        player_query.single(),
+        camera_transform_query.single_mut(),
+        rapier_context.single(),
+    ) else {
+        return;
+    };
+    let rotation = Quat::from_rotation_y(camera_controller.yaw)
+        * Quat::from_rotation_x(camera_controller.pitch);
+    let direction = rotation * Vec3::Z;
+    let ignore_debris = |entity: Entity| !debris_query.contains(entity);
+    let hit = context.cast_shape(
+        player_transform.translation,
+        Quat::IDENTITY,
+        direction,
+        &Ball::new(CAMERA_COLLISION_RADIUS),
+        ShapeCastOptions::with_max_time_of_impact(camera_controller.distance),
+        QueryFilter::default()
+            .exclude_collider(player_entity)
+            .predicate(&ignore_debris),
+    );
+    let distance = match hit {
+        Some((_, hit)) => (hit.time_of_impact - CAMERA_COLLISION_PADDING)
+            .max(MIN_CAMERA_COLLISION_DISTANCE)
+            .min(camera_controller.distance),
+        None => camera_controller.distance,
+    };
+    camera_controller.collided_distance = distance;
+    camera_transform.translation = direction * distance;
     camera_transform.look_at(Vec3::ZERO, Vec3::Y);
 }
 
